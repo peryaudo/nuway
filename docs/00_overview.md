@@ -1,0 +1,99 @@
+# nuway — Toy Autonomous Driving Stack on CARLA
+
+**Status:** planning document, v1 (2026-09-02)
+**Audience:** Claude Code and human contributors. Read this file first, then `01_directory_structure.md`, then `02_interfaces.md`, then the milestone you are working on.
+
+---
+
+## 1. What we are building
+
+A modular, "modern" autonomous driving stack that drives in the CARLA simulator, built from scratch on plain ROS 2 (no Autoware, no third-party AD packages) with all learned components in PyTorch. The end state is a stack that:
+
+- localizes with a factor-graph (Graph SLAM) pipeline against a prior point-cloud map,
+- perceives with a LiDAR+camera BEV fusion model (CenterPoint-style heads, temporal fusion, no Kalman filter),
+- predicts other agents' futures **jointly** with a flow-matching generative model,
+- plans with a learned planning head whose candidates are refined by QP/iLQR and chosen by a forward-simulation selector,
+- controls with linear time-varying MPC,
+- has a fully classical fallback path (FSM + Frenet lattice + QP) that never depends on learned components,
+- is scored by an automated evaluation harness compatible with the CARLA Leaderboard 2.x conventions.
+
+It is a *toy* system: small models, one workstation (RTX 3090 Ti 24 GB), CARLA 0.9.16. Correctness, debuggability and clean module boundaries are valued over peak performance.
+
+## 2. Non-negotiable design principles
+
+These apply to every milestone. Violating them requires updating this document first.
+
+1. **Every module has a ground-truth (cheat) twin.** Perception, prediction, localization and planning each have a node that publishes the same message type from CARLA ground truth. A single config switch (`use_gt.<module>: true|false`) selects which one runs. This is how we ablate and debug.
+2. **Explicit interfaces only.** No learnable feature maps cross a module boundary. Perception → planning carries an agent list and a multi-channel occupancy grid, both human-readable and visualizable. See `02_interfaces.md`.
+3. **The classical path always works.** Whatever learned component is added, the FSM + lattice + QP + MPC path from Milestone 1 stays runnable and is the fallback at runtime.
+4. **No Kalman filters.** State estimation is done with fixed-lag factor-graph smoothing (localization) and learned velocity attributes + nearest-neighbor association (perception). Where a "filter" is truly needed for high-rate control, use model-based forward propagation (extrapolation), not an EKF.
+5. **Deterministic simulation.** CARLA runs in synchronous mode, `fixed_delta_seconds = 0.05`. One process (the world manager) owns `world.tick()`. Nothing is timed by wall-clock inside the stack.
+6. **Runtime nodes in C++ (rclcpp); ML inference nodes in Python (rclpy + torch); training in Python.** Point clouds and grids are never serialized through Python.
+7. **Evaluation harness first.** Milestone 1 delivers the harness; every later milestone reports the same metrics from the same harness.
+8. **Each milestone ends with a runnable stack.** Never leave `main` in a state where `ros2 launch nuway_bringup stack.launch.py` cannot complete a route with some combination of GT toggles.
+
+## 3. Milestones
+
+| # | Name | Deliverable | Completion criterion |
+|---|------|-------------|----------------------|
+| M0 | Bring-up | CARLA native ROS 2 connection, world manager, OpenDRIVE map server, route planner, vehicle system ID, pure-pursuit + PID controller. All perception/localization from GT. | 10 routes completed in empty towns, lateral error < 0.3 m |
+| M1 | Classical planning | LTV-MPC, behavior FSM, Frenet lattice sampler, piecewise-jerk QP refinement, rule-based selector, safety layer, constant-velocity prediction, evaluation harness. | Driving score > 40 on Town03/05, 10 routes × 3 weathers, reproducible |
+| M2 | Perception data pipeline | Sensor-rich data collection, auto-labeling with visibility filtering, GT occupancy generator, WebDataset shards. | ≥ 150k labeled frames across ≥ 6 towns; dataset loader test passes |
+| M3 | BEV perception | BEVFusion-lite (LiDAR + 4 cameras), temporal fusion, CenterPoint heads with velocity, occupancy head, NN tracker, traffic light classifier. Replaces GT perception. | Vehicle mAP > 0.6; driving score drop vs GT perception < 20% |
+| M4 | Localization | KISS-ICP-style LiDAR odometry, offline mapping, scan-to-map registration, fixed-lag smoother (GTSAM), TF publisher. Replaces GT pose. **Milestone: the stack drives with zero GT.** | ATE < 0.2 m; driving score drop vs GT pose < 10% |
+| M5 | Planning data pipeline | Privileged expert planner, render-free high-throughput collection, prediction/planning labels, noise injection, open-loop eval. | ≥ 3M frames; a small model beats constant velocity on ADE@3s |
+| M6 | Flow-matching prediction | Scene encoder, flow-matching velocity net, joint multi-agent sampling. Planner remains lattice; prediction becomes learned. | Driving score ≥ M1 + 10 |
+| M7 | Learned planning head + DAgger | Ego planning head on the shared encoder, QP refinement of learned output, DAgger loop, runtime fallback logic. | Beats lattice baseline on driving score and intervention rate |
+| M8 | Forward-sim selector | Batched kinematic rollout scorer over all candidates; two-stage selection. | Measurable score gain over rule-based selector |
+| M9 | iLQR refinement | iLQR replaces QP on the ML-planner path; optional guidance in sampling. | No regression vs QP; smoother control effort |
+
+Dependencies: M0 → M1 → M2 → M3 → M4 → M5 → M6 → M7 → M8 → M9. M2 and M5 share code; M5 extends M2. M8 could be done before M7 if desired; M9 is optional.
+
+## 4. Environment
+
+| Item | Choice | Note |
+|------|--------|------|
+| OS | Ubuntu 22.04 | |
+| ROS 2 | Humble | rmw: CycloneDDS with shared memory (iceoryx) enabled |
+| CARLA | 0.9.16 (UE4) | Not 0.10.x (UE5: heavier GPU, native ROS 2 less stable) |
+| Python | 3.10 | one venv at repo root, `torch>=2.4`, CUDA 12.x |
+| GPU | RTX 3090 Ti 24 GB | shared between CARLA and inference |
+| CPU | ≥ 12 cores recommended | CARLA + Traffic Manager alone use 4–6 |
+| C++ | C++17, CMake via `ament_cmake` | Eigen, GTSAM 4.2, OSQP + osqp-eigen, nanoflann, PCL (I/O only) |
+| Build | `colcon build --symlink-install` | `pip install -e ml/` for python package |
+
+CARLA launch (development):
+```
+./CarlaUE4.sh -RenderOffScreen -quality-level=Low --ros2 -carla-rpc-port=2000
+```
+
+## 5. Compute budget (target, wall clock, single GPU shared with CARLA)
+
+| Stage | Rate | Budget |
+|-------|------|--------|
+| CARLA tick incl. 4 cams (704×256) + 32-ch LiDAR | 20 Hz sim | ≤ 35 ms |
+| LiDAR preprocessing + BEVFusion-lite (fp16) | 10 Hz | ≤ 40 ms |
+| LiDAR odometry + smoother | 10 Hz | ≤ 20 ms (CPU) |
+| Prediction (encoder + 6 Euler steps × 16 samples) | 10 Hz | ≤ 25 ms |
+| Lattice / QP / iLQR / selector | 10 Hz | ≤ 15 ms |
+| MPC | 20 Hz | ≤ 3 ms |
+
+Because CARLA is synchronous, exceeding these budgets slows the simulation but does not break correctness. Budgets exist to keep interactive development pleasant and Leaderboard timeouts safe.
+
+## 6. Conventions summary (full detail in `02_interfaces.md`)
+
+- Frames: `map`, `odom`, `base_link`, `lidar_top`, `cam_front`, `cam_left`, `cam_right`, `cam_rear`, `imu`, `gnss`. ROS REP-103 (x forward, y left, z up, right-handed). CARLA's left-handed frame is converted at the boundary and nowhere else.
+- Time: all stamps are simulation time from `/clock`. `use_sim_time: true` everywhere.
+- Ego vehicle role name: `hero`.
+- Config: one YAML per launch profile under `configs/`, overriding package defaults. GT toggles live in `configs/gt_toggles/*.yaml`.
+- Logging: every node publishes `/nuway/diag/<node>` (`nuway_msgs/NodeDiag`) with processing time per cycle.
+- Tests: C++ (gtest) and Python (pytest) unit tests must pass in `colcon test` / `pytest ml tools`. Every milestone adds an integration test runnable with `tools/eval/run_routes.py --profile <milestone>`.
+
+## 7. How Claude Code should work in this repo
+
+- Read the milestone document fully before starting. Each has a **Task list** section; work through it in order and tick items in the doc as they land.
+- Prefer small, compilable increments. Run `colcon build --packages-select <pkg>` and the package tests after every change.
+- When a spec in a milestone doc is ambiguous, choose the simplest option that satisfies the completion criterion, and record the decision in the milestone doc under **Decisions log**.
+- Do not introduce new message types or topics outside `02_interfaces.md`; propose the change there first.
+- Never commit data. `data/` is gitignored.
+- Keep `docs/` in sync with code: if you rename a node or topic, update the docs in the same commit.

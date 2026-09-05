@@ -1,6 +1,6 @@
 # Directory structure
 
-Monorepo. Two build systems coexist: `colcon` for `ros2_ws/` and `pip` for `ml/`. Tools under `tools/` are plain Python scripts that import from `nuway_ml` and the CARLA Python API.
+Monorepo. Two build systems coexist: `colcon` for `ros2_ws/` and `uv` (workspace root `pyproject.toml`, member `ml/`) for everything Python. Tools under `tools/` are plain Python scripts run through `uv run` that import from `nuway_ml` and the CARLA Python API.
 
 ```
 nuway/
@@ -43,15 +43,25 @@ nuway/
 │   ├── control/
 │   ├── perception/
 │   ├── localization/
+│   ├── eval/
+│   │   └── scoring_lb20.yaml              # Leaderboard 2.0 penalty coefficients (M1)
+│   ├── collect/
+│   │   ├── perception_v1.yaml             # M2 collection protocol
+│   │   └── planning_v1.yaml               # M6 collection protocol
 │   └── training/                          # hydra/omegaconf configs for ml/
 │
 ├── ros2_ws/
 │   ├── colcon_defaults.yaml               # Ninja, ccache, mold, compile_commands, RelWithDebInfo
 │   └── src/
 │       ├── nuway_cmake/                   # shared CMake: warnings, -Werror, NUWAY_CLANG_TIDY/SANITIZE/LTO
-│       ├── gtsam_vendor/                  # FetchContent, pinned tag+hash (M5); same pattern for osqp_vendor, nanoflann_vendor
-│       ├── nuway_msgs/                    # ALL custom messages. No msgs elsewhere.
+│       ├── carla_msgs/                    # vendored from ros-carla-msgs (leaderboard-2.0 branch); messages only (M0)
+│       ├── osqp_vendor/                   # FetchContent, pinned tag+hash (M1)
+│       ├── osqp_eigen_vendor/             # M1
+│       ├── nanoflann_vendor/              # M0
+│       ├── gtsam_vendor/                  # M5
+│       ├── nuway_msgs/                    # ALL custom messages and services. No msgs/srvs elsewhere.
 │       │   ├── msg/
+│       │   ├── srv/
 │       │   └── CMakeLists.txt
 │       ├── nuway_common/                  # C++ header-mostly library
 │       │   ├── include/nuway_common/
@@ -59,56 +69,64 @@ nuway/
 │       │   │   ├── frenet.hpp             # reference line, cartesian<->frenet
 │       │   │   ├── bicycle_model.hpp      # kinematic bicycle, discretization, jacobians
 │       │   │   ├── trajectory.hpp         # Trajectory struct, resampling, interpolation
-│       │   │   ├── carla_conv.hpp         # left-handed <-> ROS conversion (the ONLY place)
+│       │   │   ├── carla_conv.hpp         # left-handed <-> ROS conversion, GNSS <-> map (C++ side; see Rules)
 │       │   │   ├── occupancy.hpp          # multi-channel grid accessor, bilinear sample
 │       │   │   ├── diag.hpp               # NodeDiag publisher helper, scoped timer
+│       │   │   ├── qos.hpp                # the QoS profiles from 02_interfaces.md §3.10
 │       │   │   └── params.hpp             # declare/get param helpers
 │       │   └── test/
 │       ├── nuway_carla_bridge/            # python (rclpy) — talks to CARLA Python API
 │       │   ├── nuway_carla_bridge/
-│       │   │   ├── world_manager.py       # spawns hero+sensors, owns world.tick(), /clock
+│       │   │   ├── world_manager.py       # spawns hero+sensors, owns world.tick() in lockstep, /clock
 │       │   │   ├── gt_publisher.py        # GT agents, GT ego pose/odom, traffic lights
 │       │   │   ├── control_adapter.py     # ControlCommand -> CarlaEgoVehicleControl
-│       │   │   └── sensor_rig.py          # loads configs/sensors/*.json
+│       │   │   ├── sensor_rig.py          # loads configs/sensors/*.json (imports nuway_ml.common.carla_conv)
+│       │   │   └── leaderboard_agent.py   # Leaderboard 2.x ROS agent entry point (M1)
 │       │   └── launch/
 │       ├── nuway_map/                     # C++
 │       │   ├── src/
 │       │   │   ├── opendrive_parser.cpp   # OpenDRIVE -> LaneGraph
 │       │   │   ├── lane_graph.cpp         # lanes, successors, neighbors, TL/stop associations
+│       │   │   ├── tl_overrides.cpp       # loads data/maps/<town>/tl_overrides.yaml (M4)
 │       │   │   └── map_server_node.cpp    # publishes nuway_msgs/LaneGraph (latched), query srv
 │       │   └── include/nuway_map/
 │       ├── nuway_route/                   # C++: A* on lane graph, reference line builder
 │       ├── nuway_localization/            # C++
 │       │   ├── src/
 │       │   │   ├── gt_pose_node.cpp       # cheat twin (M0)
-│       │   │   ├── lidar_odometry_node.cpp        # M5
-│       │   │   ├── scan_to_map_node.cpp           # M5
-│       │   │   ├── smoother_node.cpp              # M5 (GTSAM fixed-lag)
-│       │   │   └── pose_extrapolator_node.cpp     # M5 (high-rate odom->base_link)
-│       │   └── tools/                     # offline mapping binaries
+│       │   │   ├── voxel_hash_map.cpp / icp.cpp / scan_context.cpp   # M5 libraries
+│       │   │   ├── lidar_odometry.cpp / lidar_odometry_node.cpp      # M5
+│       │   │   ├── scan_to_map.cpp / scan_to_map_node.cpp            # M5
+│       │   │   ├── smoother.cpp / smoother_node.cpp                  # M5 (GTSAM fixed-lag)
+│       │   │   └── pose_extrapolator.cpp / pose_extrapolator_node.cpp  # M5 (per-tick odom->base_link)
+│       │   └── tools/                     # map_builder, pose_graph_refine binaries (M5)
 │       ├── nuway_perception/
-│       │   ├── src/gt_perception_node.cpp # cheat twin: AgentArray + OccupancyGridMC from GT (M0/M2)
-│       │   ├── src/lidar_preproc_node.cpp # voxelize on GPU, publishes shared tensor handle (M3)
+│       │   ├── src/gt_perception_node.cpp    # cheat twin: AgentArray + OccupancyGridMC from GT (M0/M2)
+│       │   ├── src/gt_traffic_light_node.cpp # cheat twin: TrafficLightArray from GT (M0)
+│       │   ├── src/gt_occupancy.cpp          # C++ port of nuway_ml/data/gt_occupancy.py (M2)
+│       │   ├── src/lidar_preproc_node.cpp    # escalation path only: C++ pillarization if Python preproc > 8 ms (M3)
 │       │   ├── nuway_perception/          # python
-│       │   │   ├── bevfusion_node.py      # inference (M3)
+│       │   │   ├── bevfusion_node.py      # inference (M3); optionally hosts traffic_light_node (M4)
 │       │   │   ├── tracker.py             # velocity-projected NN association (M3)
 │       │   │   └── traffic_light_node.py  # crop, classify, latch (M4)
 │       │   └── launch/
 │       ├── nuway_prediction/
 │       │   ├── src/const_vel_node.cpp     # M1
-│       │   ├── src/gt_prediction_node.cpp # cheat twin: future from CARLA log replay (eval only)
-│       │   └── nuway_prediction/flow_matching_node.py   # M7
-│       ├── nuway_planning/                # C++ except learned_planner_node.py
+│       │   ├── src/gt_prediction_node.cpp # cheat twin: futures from a recorded CARLA log, replay eval only (M6)
+│       │   └── nuway_prediction/flow_matching_node.py   # M7; also hosts the M8 ego planning head
+│       ├── nuway_planning/                # C++ except gt_planning_node.py
 │       │   ├── src/
 │       │   │   ├── behavior_fsm.cpp / behavior_fsm_node.cpp      # M1
 │       │   │   ├── lattice_sampler.cpp                           # M1
+│       │   │   ├── collision_checker.cpp                         # M1
 │       │   │   ├── piecewise_jerk_qp.cpp                         # M1
 │       │   │   ├── rule_selector.cpp                             # M1
 │       │   │   ├── safety_layer_node.cpp                         # M1
 │       │   │   ├── planner_node.cpp        # orchestrates: candidates -> refine -> select
 │       │   │   ├── forward_sim_scorer.cpp  # M9
 │       │   │   └── ilqr.cpp                # M10
-│       │   ├── nuway_planning/learned_planner_node.py            # M8
+│       │   ├── nuway_planning/gt_planning_node.py   # cheat twin: M6 expert (via nuway_planning_py) as a node (M6)
+│       │   ├── python/                    # nuway_planning_py pybind module: FSM, lattice, QP, selector, collision, Frenet (M6)
 │       │   └── include/nuway_planning/
 │       ├── nuway_control/                 # C++
 │       │   ├── src/
@@ -122,7 +140,7 @@ nuway/
 │       │   │   ├── driving_score.py
 │       │   │   └── report.py
 │       │   └── routes/                    # route XMLs (leaderboard format)
-│       ├── nuway_viz/                     # marker publishers, foxglove layouts, rviz configs
+│       ├── nuway_viz/                     # marker_node.cpp, foxglove layouts, rviz configs
 │       └── nuway_bringup/
 │           ├── launch/stack.launch.py     # THE launch file; reads a profile YAML
 │           └── launch/*.launch.py         # per-subsystem launches used by stack.launch.py
@@ -132,15 +150,23 @@ nuway/
 │   ├── nuway_ml/
 │   │   ├── common/
 │   │   │   ├── geometry.py                # numpy/torch SE2 utils, must mirror nuway_common
+│   │   │   ├── frenet.py                  # mirrors nuway_common/frenet.hpp
+│   │   │   ├── carla_conv.py              # left-handed <-> ROS conversion (Python side; see Rules)
 │   │   │   ├── occupancy.py               # grid spec, world<->grid, bilinear sample (torch)
 │   │   │   ├── frames.py                  # frame conventions shared with ROS side
+│   │   │   ├── seeding.py                 # the one random-seed helper
 │   │   │   └── schema.py                  # dataset record schema (dataclasses + validation)
 │   │   ├── data/
 │   │   │   ├── webdataset_io.py           # shard writer/reader
+│   │   │   ├── labeling/
+│   │   │   │   ├── visibility.py          # M2
+│   │   │   │   ├── boxes.py               # M2
+│   │   │   │   └── traffic_lights.py      # M2
+│   │   │   ├── postprocess_run.py         # history/future fill (M2)
 │   │   │   ├── perception_dataset.py      # M2
 │   │   │   ├── planning_dataset.py        # M6
 │   │   │   ├── augment.py                 # occupancy noise, agent dropout (M6/M8)
-│   │   │   └── gt_occupancy.py            # GT occupancy generator (shared with ROS cheat node via CLI)
+│   │   │   └── gt_occupancy.py            # GT occupancy generator; reference for the C++ port (parity-tested)
 │   │   ├── perception/                    # M3
 │   │   │   ├── model/
 │   │   │   │   ├── camera_branch.py
@@ -173,9 +199,12 @@ nuway/
 │   │   │   └── train.py
 │   │   ├── planning/                      # M8
 │   │   │   ├── planning_head.py
+│   │   │   ├── forward_sim.py             # torch reference of the M9 forward simulator (tests only)
 │   │   │   ├── dagger.py
 │   │   │   └── train.py
 │   │   └── export/                        # torchscript / tensorrt export helpers
+│   ├── scripts/                           # eval_tracking.py (M3), eval_openloop.py (M6), compute_norm_stats.py (M7)
+│   ├── notebooks/                         # inspect_perception.ipynb (M2), committed without outputs
 │   └── tests/
 │
 ├── tools/
@@ -188,11 +217,18 @@ nuway/
 │   ├── collect/                           # data collection clients
 │   │   ├── collect_perception.py          # M2 (rendered)
 │   │   ├── collect_planning.py            # M6 (no rendering)
+│   │   ├── collect_dagger.py              # M8
+│   │   ├── launch_farm.sh                 # M6: N CARLA servers + collectors
 │   │   ├── expert/                        # privileged expert planner (M6)
 │   │   └── scenarios/                     # scenario/route generation helpers
-│   ├── mapping/                           # M5 offline map building
+│   ├── mapping/                           # M4/M5 offline map tooling
+│   │   ├── build_map.py                   # M5
+│   │   ├── build_static_occ.py            # M6: static occupancy raster from the M5 map
+│   │   └── verify_tl_association.py       # M4
 │   ├── eval/
 │   │   ├── run_routes.py                  # entry point for evaluation harness
+│   │   ├── run_leaderboard.sh             # M1: runs the stack under the official Leaderboard runner
+│   │   ├── eval_localization.py           # M5
 │   │   └── compare_runs.py
 │   ├── lint/                              # format_cpp.sh, tidy_cpp.sh, lint_py.sh, merge_compile_commands.py, header guard check (M0)
 │   └── viz/
@@ -200,12 +236,14 @@ nuway/
 ├── data/                                  # gitignored
 │   ├── raw/
 │   ├── shards/
-│   ├── maps/                              # point cloud maps per town (M5)
+│   ├── maps/                              # per town: .xodr, map.ply, static_occ.npz, tl_bulbs.json, tl_overrides.yaml, reports
 │   ├── checkpoints/
 │   └── eval_runs/
 │
 ├── tests/                                 # cross-cutting integration tests
+│   ├── fixtures/                          # gen_*.py generators + small committed JSON fixtures
 │   └── integration/
+├── .github/workflows/                     # CI: format, tidy, sanitizer, ruff, mypy, pytest (see docs/03 §7.4)
 ├── .clang-format                          # BasedOnStyle: Google (see docs/03)
 ├── .clang-tidy                            # google-* + naming checks, warnings are errors (see docs/03)
 ├── .pre-commit-config.yaml                # local hooks via `uv run`: clang-format, clang-tidy, gersemi, ruff, mypy
@@ -219,11 +257,12 @@ nuway/
 
 ## Rules
 
-- **`nuway_msgs` is the only package that defines messages.** Any new message requires an entry in `02_interfaces.md`.
-- **`nuway_common/carla_conv.hpp` and `nuway_carla_bridge` are the only places that know CARLA's coordinate convention.** Everything downstream is ROS-convention.
-- **`nuway_ml/common/*` must mirror `nuway_common/*`** for geometry/occupancy conventions. There is a cross-language test (`tests/integration/test_geometry_parity.py`) that runs the C++ versions through a small pybind shim and compares outputs. Keep it green.
+- **`nuway_msgs` is the only package that defines messages and services.** Any new message or service requires an entry in `02_interfaces.md`.
+- **`nuway_common/carla_conv.hpp` (C++) and `nuway_ml/common/carla_conv.py` (Python) are the only code that knows CARLA's coordinate convention.** `nuway_carla_bridge` and the collectors under `tools/collect/` call `carla_conv.py`; they contain no conversion arithmetic of their own. The two files are parity-tested against each other. Everything downstream is ROS-convention.
+- **`nuway_ml/common/*` must mirror `nuway_common/*`** for geometry/frenet/occupancy/carla_conv conventions. There is a cross-language test (`tests/integration/test_geometry_parity.py`) that runs the C++ versions through a small pybind shim and compares outputs. Keep it green.
+- **GT occupancy has one reference implementation** (`nuway_ml/data/gt_occupancy.py`) and one C++ port (`nuway_perception/src/gt_occupancy.cpp`) used by the runtime cheat node; a parity test on stored frames keeps them identical. No CLI bridge, no pybind for this function.
 - One node per file, one file per node. Nodes are thin: they parse params, subscribe/publish, and call a library class that is unit-tested without ROS.
-- Python packages inside `ros2_ws` only contain nodes and thin glue. Model code lives in `ml/nuway_ml` and is imported.
+- Python packages inside `ros2_ws` only contain nodes and thin glue. Model code and anything shared with `tools/` lives in `ml/nuway_ml` and is imported.
 - Config YAML keys are namespaced by node name. Do not read environment variables in nodes.
 - Python dependencies enter only through `uv add` (lock updated in the same commit). C++ dependencies enter only through `package.xml` + rosdep, or a `*_vendor` package. No `pip`, no submodules, no system-wide installs. See `03_style_and_conventions.md` §6.
 - All C++ is Google style and must pass `clang-format` and `clang-tidy`; all Python is PEP 8 and must pass `ruff format`, `ruff check` and `mypy`, with the root configs. See `03_style_and_conventions.md`.

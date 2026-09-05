@@ -4,7 +4,7 @@
 
 **Completion criteria**
 - [ ] No regression in driving score vs M9 (QP refinement) on the M1 protocol and scenario routes; improvement in comfort metrics (mean |jerk| ↓ ≥ 10%, max |a_lat| ↓) and in tracking error of MPC (mean lateral tracking error ↓).
-- [ ] iLQR refinement of K=8 candidates ≤ 8 ms p50 (C++, threaded), converged (cost decrease < 1e-3 relative) in ≤ 8 iterations from a learned-trajectory warm start in ≥ 95% of cycles.
+- [ ] iLQR refinement of K=8 candidates over the full 8 s horizon (N=80) ≤ 12 ms p50 (C++, threaded), converged (cost decrease < 1e-3 relative) in ≤ 8 iterations from a learned-trajectory warm start in ≥ 95% of cycles.
 - [ ] Unit tests: gradient/Hessian checks vs finite differences; regularization/line-search behavior on a contrived non-convex obstacle case; warm-start speedup measured.
 - [ ] Guidance (if enabled): sample collision rate ↓ ≥ 30% with ≤ 1.6× sampling latency; documented on/off comparison.
 
@@ -12,7 +12,7 @@
 
 ## 1. Formulation (`nuway_planning/src/ilqr.cpp`, header `ilqr.hpp`)
 
-State `x = [X, Y, ψ, v, δ]`, input `u = [a, δ̇]`, `dt = 0.1`, `N = 50` (5 s; the learned candidate's 8 s tail is used as a terminal heading/speed target only). Dynamics from `bicycle_model.hpp` (RK2), analytic Jacobians `A_t, B_t` (tests vs finite differences).
+State `x = [X, Y, ψ, v, δ]`, input `u = [a, δ̇]`, `dt = 0.1`, `N = 80` (the full 8 s horizon, so the refined output is an 81-point `Trajectory` like every other candidate and the selector's horizon-normalised terms stay comparable; `02_interfaces.md` §4). Prediction uncertainty in the far tail is handled by the time-decayed tracking weight and by the sample weighting, not by truncating the horizon. Dynamics from `bicycle_model.hpp` (RK2), analytic Jacobians `A_t, B_t` (tests vs finite differences).
 
 Cost:
 ```
@@ -35,7 +35,8 @@ Standard iLQR with:
 - Convergence: relative cost change < 1e-3 or `max_iter = 15`.
 - Input clamping after the forward pass as a hard guard (soft limits in cost do the real work).
 - Warm start: `u` sequence inverted from the learned candidate (smooth first with a 5-point moving average on `d(s)`, then invert kinematics: `δ = atan(L·κ)`, `a` from `Δv/dt`); on subsequent cycles, warm start from the previous refined solution of the matched mode, shifted by one step.
-- Output `Trajectory` at 0.1 s (states already on that grid), `source="learned"`, plus diag: iterations, final cost, regularization hits, line-search failures.
+- Output `Trajectory` at 0.1 s, 81 points (states already on that grid), `source="learned"`, `sample_index` carried over from the input candidate, plus diag: iterations, final cost, regularization hits, line-search failures.
+- Warm-start memory (previous refined solution per mode) is cleared on `ResetEvent`.
 
 Threaded over candidates (thread pool). Costs are evaluated on preinterpolated agent samples (shared read-only per cycle).
 
@@ -77,6 +78,7 @@ Implemented in the runtime node behind `prediction.guidance.enabled`; `s_0` tune
 
 - (2026-09-02) iLQR only on the learned path (good warm start, non-convex costs wanted); QP stays on the classical path (convexity, feasibility detection, determinism).
 - (2026-09-02) Gauss-Newton iLQR (no second-order dynamics terms); DDP not needed for a kinematic bicycle.
+- (2026-09-05) Full 8 s horizon (N=80) instead of 5 s: a shorter refined trajectory would win the selector's progress term and lose collision exposure for structural rather than behavioural reasons. Timing budget raised from 8 to 12 ms accordingly (`00_overview.md` §5).
 
 ## 8. Open questions
 

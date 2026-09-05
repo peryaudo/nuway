@@ -4,7 +4,7 @@
 
 **Completion criteria**
 - [ ] Driving score improves over M8 (same protocol, same checkpoints) by a measurable margin (≥ 3 points) **or** the collision rate drops by ≥ 25% at equal or better route completion.
-- [ ] Forward simulation of K=16 candidates × S=16 prediction samples × 50 steps ≤ 3 ms on GPU (torch, batched) or ≤ 8 ms on CPU (Eigen, batched over candidates).
+- [ ] Forward simulation of K=16 candidates × S=16 prediction samples × 50 steps ≤ 8 ms p50 on CPU (C++/Eigen in `planner_node`, batched over candidates, 4 threads). The torch reference implementation is for tests and is not a runtime path (`00_overview.md` principle 6).
 - [ ] Selector is deterministic; no chattering regression (mode switch rate ≤ M8).
 - [ ] Ablation table in the report: rule-only vs forward-sim, with predicted-sample agents vs reactive-IDM agents.
 
@@ -39,7 +39,7 @@ candidates (lattice + refined learned) ─► rule_selector (M1) → costs
 
 ### 2.2 Other agents
 - **Mode A (default):** positions/yaws from the prediction sample `s` at each `t` (interpolate 0.5 s → 0.1 s).
-- **Mode B (reactive):** IDM along the agent's lane (from `LaneGraph::nearestLane` + successors) with the ego treated as a potential leader (so agents brake for the ego); walkers constant velocity. Used when `prediction` is missing or when configured for ablations. Mode B implements the "others react to me" assumption; Mode A the "others follow their forecast" assumption. Config `forward_sim.agent_mode: sample | reactive | mix` (mix = average of both costs).
+- **Mode B (reactive):** IDM along the agent's lane (from `LaneGraph::NearestLane` + `Successors`) with the ego treated as a potential leader (so agents brake for the ego); walkers constant velocity. Used when `prediction` is missing or when configured for ablations. Mode B implements the "others react to me" assumption; Mode A the "others follow their forecast" assumption. Config `forward_sim.agent_mode: sample | reactive | mix` (mix = average of both costs).
 
 ### 2.3 Metrics per rollout
 | metric | definition |
@@ -91,6 +91,7 @@ Defaults: `w_col=1000, w_ttc=50, w_prox=10, w_prog=30, w_off=200, w_rule=500, w_
 ## 6. Decisions log
 
 - (2026-09-02) Forward-sim (PDM-Closed style) chosen over a learned scorer first: cheap, interpretable, strong. A learned ranking head (InfoNCE against expert) remains a documented option if the ablation shows headroom; RL is out of scope.
+- (2026-09-05) M9 depends on M8: the selector is designed and measured over lattice + learned candidates (diversity guard, M8 checkpoints). It is not reordered before M8.
 
 ## 7. Open questions
 

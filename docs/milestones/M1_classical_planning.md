@@ -1,19 +1,20 @@
 # M1 — Classical planning stack + MPC + evaluation harness
 
-**Goal:** drive in traffic with a fully classical, learned-component-free stack: behavior FSM → Frenet lattice sampler → piecewise-jerk QP refinement → rule-based selector → safety layer → LTV-MPC. Prediction is constant-velocity. This is the permanent fallback path and the baseline every later milestone is measured against.
+**Goal:** drive in traffic with a fully classical, learned-component-free stack: behavior FSM → Frenet lattice sampler → piecewise-jerk QP refinement → rule-based selector → safety layer → LTV-MPC. Prediction is constant-velocity. This is the permanent fallback path and the baseline every later milestone is measured against. M1 also delivers the **Leaderboard 2.x integration** (§3.12): the same stack runs unchanged under the official Leaderboard runner, which is what makes the overview's "Leaderboard-compatible" goal true rather than aspirational.
 
 **Completion criteria**
-- [ ] Driving score > 40 (Leaderboard 2.0 formula) averaged over Town03 + Town05, 10 routes × 3 weather presets, with Traffic Manager traffic (50 vehicles, 30 walkers), GT perception + GT localization.
-- [ ] Two runs with the same seed produce identical scores (determinism).
+- [ ] Driving score > 40 (Leaderboard 2.0 formula) averaged over Town03 + Town05, 10 routes × 3 weather presets, with Traffic Manager traffic (50 vehicles, 30 walkers), GT perception + GT localization. (This M1 number is provisional; the baseline used by M3+ is re-measured at the end of M2 with the visibility filter on, see `00_overview.md` §3.)
+- [ ] Two runs with the same seed produce bit-identical `results.csv` rows and identical per-tick `/nuway/control/command` sequences (determinism through the lockstep protocol, `02_interfaces.md` §2).
 - [ ] No collisions on any route where all agents are visible and moving ≤ 15 m/s (i.e. failures must be attributable to prediction limits, not planner bugs).
 - [ ] MPC solve time p99 < 3 ms; planner cycle p99 < 15 ms.
 - [ ] `tools/eval/run_routes.py --profile m1_classical` produces `data/eval_runs/<run_id>/report.md` + `results.csv` + per-route MCAP.
+- [ ] `tools/eval/run_leaderboard.sh --routes dev_town03.xml` runs the stack under the official Leaderboard 2.x runner (`leaderboard_evaluator.py`, ROS agent) and completes ≥ 8 of 10 routes; the Leaderboard's own driving score is within 5 points of our harness on the same routes.
 
 ---
 
 ## 1. Scope
 
-In: LTV-MPC, delay compensation, behavior FSM, lattice sampler, QP refinement (path + speed), rule-based selector, safety layer, const-vel prediction, Traffic Manager integration, infraction detection, driving score, run/compare tooling, Foxglove BEV layout.
+In: LTV-MPC, delay compensation, behavior FSM, lattice sampler, QP refinement (path + speed), rule-based selector, safety layer, const-vel prediction, Traffic Manager integration, infraction detection, driving score, run/compare tooling, Foxglove BEV layout, Leaderboard 2.x agent wrapper and runner script.
 
 Out: learned anything; forward-sim selector (M9); iLQR (M10).
 
@@ -42,7 +43,7 @@ pred ─────┘            │
 
 For each agent in `/nuway/perception/agents`: S = 1 sample, T = 16 (8 s @ 0.5 s), position = `p + v·t`, yaw constant, `sample_weight = [1.0]`. Pedestrians: same but velocity clamped to 2 m/s. Static obstacles: constant. Publishes `PredictionSamples` in `map` frame (transform from `base_link` via TF at the agents' stamp).
 
-Option flag `lane_follow: true`: for vehicles, project velocity onto the lane direction and follow the lane centerline (via `LaneGraph::nearestLane` + successors) instead of a straight line. Default on; it materially reduces false collision predictions at curves.
+Option flag `lane_follow: true`: for vehicles, project velocity onto the lane direction and follow the lane centerline (via `LaneGraph::NearestLane` + `Successors`) instead of a straight line. Default on; it materially reduces false collision predictions at curves.
 
 ### 3.2 `nuway_planning/behavior_fsm` (C++)
 
@@ -57,7 +58,7 @@ States and transitions (evaluated every cycle, hysteresis via timers):
   - `FREE` otherwise.
 - `target_speed` = min(speed limit, curvature speed, FOLLOW-derived IDM desired speed).
 - `stop_s` for STOP: stop line `s` minus 1.0 m.
-- **Yellow (dilemma zone)**: evaluated once on the green→yellow edge and then latched until the light changes or the stop line is passed, so the decision never flips mid-approach. With `d_stop` = distance to stop line, `t_yellow` = remaining yellow time (GT: `get_yellow_time() − get_elapsed_time()`; learned (M4): conservative default 3 s minus elapsed since first observation), `a_comf = 2.5`, `t_react = 0.3`:
+- **Yellow (dilemma zone)**: evaluated once on the green→yellow edge and then latched until the light changes or the stop line is passed, so the decision never flips mid-approach. With `d_stop` = distance to stop line, `t_yellow = yellow_duration − time_in_state` read from `TrafficLight.msg` (GT fills both from the CARLA API; M4 fills `yellow_duration` with a conservative default and `time_in_state` with the time since first confirmation, so `t_yellow` is a conservative estimate), `a_comf = 2.5`, `t_react = 0.3`:
   - `d_brake = v·t_react + v²/(2·a_comf)`. If `d_brake > d_stop` → cannot stop comfortably → **proceed** (treat as green).
   - else if `d_stop / max(v, 0.1) > t_yellow` → will not clear the line before red → **STOP**.
   - else → **proceed**.
@@ -69,7 +70,7 @@ IDM parameters (config): `s0=2.0, T=1.5, a=1.5, b=2.5`.
 
 ### 3.3 `nuway_planning/lattice_sampler` (C++)
 
-Frenet frame from the reference line (`nuway_common/frenet.hpp`). Ego Frenet state `(s, ṡ, s̈, d, d', d'')` from `EgoState` (use `frenet.hpp::toFrenet` with velocity/accel projection).
+Frenet frame from the reference line (`nuway_common/frenet.hpp`). Ego Frenet state `(s, ṡ, s̈, d, d', d'')` from `EgoState` (use `frenet.hpp::ToFrenet` with velocity/accel projection).
 
 **Path candidates** (lateral, over `s`): quintic polynomials `d(s)` from current `(d, d', d'')` to `(d_f, 0, 0)` at `s_f = s + Δs`.
 - `d_f` set: for KEEP: `{−1.0, −0.5, 0, 0.5, 1.0}` relative to lane center of the *target lane* (for CHANGE_*: target lane center is the neighbor lane; the `d` offset of the neighbor centerline is read from the reference line's lane geometry).
@@ -80,7 +81,7 @@ Frenet frame from the reference line (`nuway_common/frenet.hpp`). Ego Frenet sta
 - STOP: quintic to `(stop_s, 0, 0)` with horizon `{3, 5, 7}` s, plus a "hard stop" at max decel.
 - YIELD: quintic to `(s_conflict − 3, 0, 0)` plus a "go" candidate.
 
-Combine path × speed → Cartesian trajectories via `frenet.hpp::toCartesian`, resampled at 0.1 s, 8 s horizon (81 points), with `yaw`, `v`, `a`, `kappa`. Total candidates ≈ 5·3·4·3 = 180 max; prune before QP.
+Combine path × speed → Cartesian trajectories via `frenet.hpp::ToCartesian`, resampled at 0.1 s, 8 s horizon (81 points), with `yaw`, `v`, `a`, `kappa`. Total candidates ≈ 5·3·4·3 = 180 max; prune before QP.
 
 **Feasibility filter**: `|kappa| ≤ kappa_max`, `a ∈ [a_min, a_max]`, `|a_lat| ≤ 4`, path stays within `[−right_bound + w/2, left_bound − w/2]`, no collision with predictions (see 3.4).
 
@@ -134,7 +135,7 @@ Cost per candidate (all terms normalized to roughly [0, 1] before weighting; wei
 | consistency | distance to previous selected trajectory over first 2 s | 3 |
 | qp_relaxed | 1 if slack used | 30 |
 
-Select argmin. Publish `TrajectoryCandidates` with full breakdown (for the Foxglove table) and `Trajectory`.
+Select argmin. Publish `TrajectoryCandidates` with full breakdown (for the Foxglove table) and `Trajectory`. All candidates from every source are 81 points over 8 s (`02_interfaces.md` §4), so the horizon-normalised terms above compare like with like; a candidate with fewer points is rejected by the feasibility filter, not scored.
 
 ### 3.7 `nuway_planning/safety_layer_node` (C++, 20 Hz)
 
@@ -153,7 +154,9 @@ Publish `/nuway/planning/safe_trajectory` and a `NodeDiag` warning whenever it i
 ```
 Discretize with RK2 at `dt = 0.05`, horizon `N = 20` (1 s). Linearize about the reference trajectory (`safe_trajectory` resampled at `dt`, using its `a` and `kappa`→`δ_ref = atan(L κ)`), giving `A_k, B_k, c_k`.
 
-**Delay compensation**: before solving, propagate the measured state forward by `t_delay` (config, default 0.10 s: perception-to-actuation) using the last commanded inputs; use the propagated state as `x_0`, and shift the reference accordingly.
+**Delay compensation**: before solving, propagate the measured state forward by `t_delay` (config, default 0.10 s = 2 ticks: perception-to-actuation) using the last commanded inputs; use the propagated state as `x_0`, and shift the reference accordingly. The measured `δ` comes from `VehicleState.steering_angle` when `valid_steering` is true; otherwise (Leaderboard, §3.12) from the steering-lag model driven by our own commands.
+
+**Timing**: runs once per tick, triggered by `/nuway/loc/pose`, and stamps the `ControlCommand` with that tick; the world manager's lockstep gate waits for it. A solve that exceeds the tick has no effect on results, only on wall-clock speed.
 
 **QP**:
 ```
@@ -170,21 +173,21 @@ Debug: publish predicted MPC trajectory as markers.
 
 ### 3.9 Traffic in the world manager
 
-`world_manager` gains `traffic:` config: `n_vehicles`, `n_walkers`, `seed`, `tm_port`, `hybrid_physics: false`. Spawn via Traffic Manager with `tm.set_random_device_seed(seed)`, `set_global_distance_to_leading_vehicle(2.5)`, `ignore_lights_percentage(0)`. Walkers via `WalkerAIController`. All in sync mode.
+`world_manager` reads the profile's `carla.traffic:` block (`02_interfaces.md` §5): `n_vehicles`, `n_walkers`, `seed`, `tm_port`, `hybrid_physics: false`. Spawn via Traffic Manager with `tm.set_random_device_seed(seed)`, `set_global_distance_to_leading_vehicle(2.5)`, `ignore_lights_percentage(0)`. Walkers via `WalkerAIController`. All in sync mode. Traffic is despawned and respawned on every `/nuway/sim/reset` so that route N+1 never sees route N's actors.
 
 ### 3.10 Evaluation harness (`nuway_eval`, `tools/eval/`)
 
-**Route runner** (`route_runner.py`): for each (route, weather, seed): reset sim (reload town if changed), spawn traffic, set weather, run the stack (launched once per town; reset between routes via `/nuway/sim/reset` and re-publishing goals), wait until goal/timeout/blocked, collect metrics, record MCAP.
+**Route runner** (`route_runner.py`): for each (route, weather, seed): reset sim (reload town if changed), spawn traffic, set weather, run the stack (launched once per town; reset between routes via `/nuway/sim/reset`, which publishes `ResetEvent` so every stateful node clears itself, `02_interfaces.md` §7; then re-publish goals), wait until goal/timeout/blocked, collect metrics, record MCAP. A route whose lockstep gate timed out at least once is flagged `non_deterministic` in `results.csv` and excluded from the determinism criterion.
 
 **Infractions** (`infractions.py`), computed inside the process that owns the CARLA client (it has GT):
 - collisions (layout / vehicle / pedestrian) via `sensor.other.collision` attached to hero, deduplicated with 2 s cooldown per other actor
 - red light: ego crosses a stop line while the light is red (use CARLA's `traffic_light.get_stop_waypoints()` and hero transform)
 - stop sign: ego enters a stop-sign trigger volume and never falls below 0.2 m/s inside it
-- outside route lanes: fraction of route driven with hero center off the route lanes (via `LaneGraph::nearestLane` + route lane set)
+- outside route lanes: fraction of route driven with hero center off the route lanes (via `LaneGraph::NearestLane` + route lane set)
 - route deviation: > 30 m from the reference line
 - agent blocked: speed < 0.1 m/s for 90 s
 - route timeout: per-route time budget = route length / 5 m/s × 2 + 60 s
-- min speed infractions: skip in M1 (needs Leaderboard's speed-limit logic); add in M6/M8 when tuning for Leaderboard.
+- min speed infractions: ported from the Leaderboard 2.0 `MinSpeedTest` criterion (ego slower than a fraction of the surrounding traffic's speed for a sustained window), so our harness and the official runner (§3.12) count the same things.
 
 **Score** (`driving_score.py`): Leaderboard 2.0 formula: `route_completion × Π penalty_i^{n_i}` with penalties collision_pedestrian 0.50, collision_vehicle 0.60, collision_layout 0.65, red_light 0.70, stop_sign 0.80, outside_lanes scales by fraction, route_dev/blocked/timeout → completion truncated. Keep the coefficients in `configs/eval/scoring_lb20.yaml` so that a `lb21` variant can be added later.
 
@@ -196,12 +199,22 @@ Route sets: `nuway_eval/routes/dev_town03.xml`, `dev_town05.xml` (10 routes each
 
 Foxglove layout `bev_planning.json`: agents (boxes by class), predictions (polylines faded by time), lattice candidates (thin, colored by cost quantile), refined selected (thick), safe trajectory (if different), MPC predicted horizon, reference line & bounds, behavior state text, cost-breakdown table (from `TrajectoryCandidates`), diag table.
 
-`nuway_viz/marker_node.cpp` converts each of the above topics to `MarkerArray`. One node, many subscriptions.
+`nuway_viz/marker_node.cpp` converts each of the above topics to the `/nuway/viz/<layer>` `MarkerArray` topics (`02_interfaces.md` §3.9). One node, many subscriptions.
+
+### 3.12 Leaderboard 2.x integration (`nuway_carla_bridge/leaderboard_agent.py`, `tools/eval/run_leaderboard.sh`)
+
+The official Leaderboard runner owns the CARLA client, the tick, the sensors and the scoring. Our stack must therefore run without `world_manager`, `gt_publisher` and the CARLA-native `--ros2` topics. The integration is a thin ROS agent, not a second stack:
+
+- `leaderboard_agent.py` is a Leaderboard `AutonomousAgent` (`ROS2` track). `sensors()` returns the rig from `configs/sensors/rig_leaderboard.json` (same extrinsics as `rig_dev.json`, checked by a test; stays within the Leaderboard's sensor-count limits, so `cam_tl` from M4 is excluded there). `run_step(input_data, timestamp)` publishes the sensor payloads on the same `/carla/hero/*` topic names and types as the native interface, publishes `/clock` for that tick, publishes `/nuway/sim/vehicle_state` from the speedometer pseudo-sensor (`valid_steering: false`), then **blocks** until `/nuway/control/command` stamped with that tick arrives (or the watchdog fires) and returns the converted `carla.VehicleControl`. This preserves the lockstep protocol: the runner cannot tick until we have answered.
+- The map comes from the Leaderboard's OpenDRIVE pseudo-sensor on the first step, written to `data/maps/<town>.xodr` and served by `map_server` exactly as in our harness. The route is the Leaderboard's `global_plan`, converted to goals by the M0 route loader.
+- `/nuway/sim/reset` and `/nuway/sim/set_weather` are served by the agent (`setup()`/`destroy()` per route) and publish `ResetEvent` like `world_manager` does.
+- No CARLA client is opened by the stack. GT toggles are meaningless under the Leaderboard: the agent refuses to start with any `use_gt.*: true` except `localization` (Leaderboard provides no GT pose either; before M5 the localization twin is fed from the IMU/GNSS/speedometer by dead reckoning and the stack is expected to score poorly; from M5 on `m5_no_gt.yaml` is the Leaderboard profile).
+- `run_leaderboard.sh` launches the stack with `configs/profiles/leaderboard.yaml`, then the Leaderboard evaluator with `--agent leaderboard_agent.py --track ROS2`, and copies the Leaderboard's JSON results next to our `results.csv`. Scores from the two are compared in the report.
 
 ## 4. Task list
 
 1. [ ] `const_vel_node` (+ lane-follow option, unit test on a curved lane).
-2. [ ] `frenet.hpp` extensions: velocity/accel projection, `toCartesian` with `d(s)` polynomials; tests.
+2. [ ] `frenet.hpp` extensions: velocity/accel projection, `ToCartesian` with `d(s)` polynomials; tests; mirror in `nuway_ml/common/frenet.py` + parity test.
 3. [ ] `behavior_fsm` library + node + tests (scripted scenarios: lead vehicle, red light, yield at junction, route lane change).
 4. [ ] `lattice_sampler` + feasibility filter + tests (candidate count, limits respected).
 5. [ ] `collision_checker` + tests (SAT correctness vs brute force on random boxes).
@@ -209,17 +222,18 @@ Foxglove layout `bev_planning.json`: agents (boxes by class), predictions (polyl
 7. [ ] `rule_selector` + `planner_node` orchestrator; publish candidates/breakdown.
 8. [ ] `safety_layer_node` + tests (stale input, collision injection).
 9. [ ] `mpc_node` + `bicycle_model.hpp` jacobians (tests: finite-difference check) + delay compensation + fallback.
-10. [ ] Traffic spawning in world_manager; seed determinism test (two runs → identical agent trajectories for 30 s).
-11. [ ] `infractions.py`, `driving_score.py`, `route_runner.py`, `report.py`, `compare_runs.py`; route XMLs.
+10. [ ] Traffic spawning in world_manager; seed determinism test (two runs → identical agent trajectories for 30 s); traffic respawn on reset.
+11. [ ] `infractions.py` (incl. the ported min-speed criterion), `driving_score.py`, `route_runner.py` (reset event, non-deterministic flag), `report.py`, `compare_runs.py`; route XMLs; `configs/eval/scoring_lb20.yaml`.
 12. [ ] Foxglove layout + marker node.
 13. [ ] Tune: lattice sets, selector weights, MPC weights on dev routes until criteria met. Record final weights in configs and a short tuning note in the Decisions log.
-14. [ ] `tests/integration/test_m1_traffic.py` (short route, 20 vehicles, asserts no collision and completion).
+14. [ ] `tests/integration/test_m1_traffic.py` (short route, 20 vehicles, asserts no collision and completion) and `test_m1_determinism.py` (same route twice, asserts identical command sequences).
+15. [ ] `leaderboard_agent.py`, `rig_leaderboard.json` (+ parity test vs `rig_dev.json`), `configs/profiles/leaderboard.yaml`, `run_leaderboard.sh`; run the dev routes under the official runner; compare scores in the report.
 
 ## 5. Determinism checklist
 
-- Single `world.tick()` owner; all nodes consume `/clock`.
-- Planner/MPC run on timers in sim time; when the sim runs faster than wall clock, node callbacks must still run once per tick: use `world_manager`'s `realtime_factor` to pace, and in eval set it so no node reports `input_age_ms > 60`.
-- OSQP settings: `adaptive_rho: false`, fixed `max_iter`, `polish: true` for reproducibility.
+- Single `world.tick()` owner; all nodes consume `/clock`; the owner ticks only after the current tick's `ControlCommand` arrived (lockstep, `02_interfaces.md` §2). No node uses a wall-clock timer; per-2-tick nodes are input-triggered.
+- Every stateful node clears on `ResetEvent`; the harness flags routes with lockstep timeouts.
+- OSQP settings: `adaptive_rho: false`, fixed `max_iter`, `polish: true` for reproducibility; single-threaded BLAS in every node (`OMP_NUM_THREADS=1` set by the launch file, not read by nodes).
 - Random seeds: Traffic Manager, walker spawn, weather selection — all derived from the route seed.
 
 ## 6. Decisions log
@@ -227,6 +241,8 @@ Foxglove layout `bev_planning.json`: agents (boxes by class), predictions (polyl
 - (2026-09-02) QP over iLQR for the classical path: convexity, feasibility detection, deterministic runtime. iLQR arrives in M10 for the learned path only.
 - (2026-09-02) Path–speed decomposition rather than joint spatiotemporal optimization: simpler, matches Apollo, adequate for CARLA urban speeds.
 - (2026-09-05) Yellow-light handling is an explicit dilemma-zone rule with a latched decision, not "always stop" (rear-end risk, hard braking) nor "always go" (red-light infractions). The rule only consumes `TrafficLightArray`, so M4 swaps the source without touching the planner.
+- (2026-09-05) Determinism by lockstep rather than by wall-clock pacing: pacing made results depend on machine load, which made the "identical scores" criterion unmeetable. The cost is that a slow node slows the whole simulation, which is acceptable for a toy system.
+- (2026-09-05) Leaderboard integration lives in M1, not in a later milestone, so that every subsequent milestone is measured under both our harness and the official runner and no design decision can silently break Leaderboard compatibility.
 
 ## 7. Open questions
 

@@ -1,6 +1,6 @@
 # M4 — Traffic light perception (map-projected crop classifier + association + latch)
 
-**Goal:** replace GT traffic light state with a learned classifier on camera crops, without changing what the planner consumes: `traffic_light_node.py` publishes the same `/nuway/perception/traffic_lights` (`TrafficLightArray`) as `gt_perception_node`. The milestone owns everything between "a traffic light exists in the map" and "the planner knows its state": which light governs ego's lane, where it is in which camera, what state it shows, and what to report when it is no longer visible. **Prerequisites:** M0 map + GT publisher, M2 TL labels. Independent of M3 (can run in parallel); the planner-side rule for yellow lights is fixed in M1 and is not touched here.
+**Goal:** replace GT traffic light state with a learned classifier on camera crops, without changing what the planner consumes: `traffic_light_node.py` publishes the same `/nuway/perception/traffic_lights` (`TrafficLightArray`) as `gt_traffic_light_node`. The milestone owns everything between "a traffic light exists in the map" and "the planner knows its state": which light governs ego's lane, where it is in which camera, what state it shows, and what to report when it is no longer visible. **Prerequisites:** M0 map + GT publisher, M2 TL labels. The model, association and latch work (§1–§5) is independent of M3 and can proceed in parallel; the closed-loop criterion and the in-process hosting option (§6) need M3. The planner-side rule for yellow lights is fixed in M1 and is not touched here.
 
 **Completion criteria**
 - [ ] Offline (held-out Town07, all weathers): state accuracy > 0.97 on crops within 40 m, > 0.93 within 60 m; `visible` AUROC > 0.98. Report per state and per weather; night and rain separately.
@@ -33,7 +33,7 @@ Task for M0 retroactively: none; the parser already emits signals. M4 adds the v
 For each light on the route with stop line within 60 m ahead (from `/nuway/route/plan` + `LaneGraph`): bulb box center in map frame (from M2 labels: CARLA `get_light_boxes()`, stored once per town in `data/maps/<town>/tl_bulbs.json`) → `T_cam_from_map` (pose + static extrinsics) → pixel. Choose the camera with the largest projected bulb area among `cam_front`, `cam_left`, `cam_right`; crop a square of side `max(32 px, 2.5 × projected bulb height)` padded 25%, resize to 64×64. If no camera sees it (behind, above FOV, projected area < 4 px), emit no crop and let the latch (§4) answer.
 
 Camera FOV limit: with the 90° rig the light leaves `cam_front`'s upper edge at roughly 5–8 m before the stop line for a light mounted on the far side, and much earlier for a near-side pole. Two mitigations, both cheap:
-- `cam_front` pitch +10° is **not** adopted (breaks M3's BEV depth assumptions). Instead, `rig_dev.json` gains an optional fifth camera `cam_tl` (704×256, FOV 100, pitch +15°) that only this node subscribes to. Decide in §7 by measuring the "blind distance" per junction type with and without it; the completion criterion must be met without it if the latch alone suffices.
+- `cam_front` pitch +10° is **not** adopted (breaks M3's BEV depth assumptions). Instead, `rig_dev.json` gains an optional fifth camera `cam_tl` (704×256, FOV 100, pitch +15°, topic `/carla/hero/cam_tl`, `02_interfaces.md` §3.1) that only this node subscribes to. Decide in §7 by measuring the "blind distance" per junction type with and without it; the completion criterion must be met without it, because `rig_leaderboard.json` cannot carry it (the Leaderboard caps the number of RGB cameras; M1 §3.12) and the latch must therefore suffice on its own.
 - The latch, which is required regardless.
 
 Same code path is used by the M2 labeler (`crop_cam`, `crop_bbox`) so train and inference crops are identical by construction; add a test that re-cropping an M2 frame reproduces the stored bbox within 2 px.
@@ -45,7 +45,9 @@ Per light id, a small state machine that turns per-frame classifier outputs into
 - **Per-frame vote:** majority over the last 5 classifier outputs with `visible > 0.5` (a filter, not a Kalman filter; documented). A light state becomes *confirmed* after 3 agreeing votes; `confidence` = fraction of agreeing votes × mean softmax.
 - **Latch:** when the light leaves the view (no crop, or `visible < 0.5` for 3 consecutive frames) and `d_stop < 15 m`, keep publishing the last *confirmed* state with `confidence` decaying linearly to 0.5 over 4 s. Beyond 15 m, publish `unknown` (the planner treats unknown as red when it can still stop; see M1 §3.2).
 - **Release:** the latch clears when the stop line is passed (`s_ego > s_stop + 2 m`), when the light comes back into view and a new state is confirmed, or after 10 s.
-- **Latched-yellow rule:** if the latch engages on `yellow`, publish `yellow` with the elapsed time since first observation so that M1's dilemma-zone rule can compute remaining yellow time; do not upgrade a latched yellow to red on a timer (the planner already decided).
+- **Message fields:** every published light carries `time_in_state` = seconds since the current state was first *confirmed* (a lower bound on the true elapsed time), `yellow_duration` = the configured conservative default (3 s), `latched` = whether the latch is holding the state, and `confidence` as above. M1's dilemma-zone rule reads `yellow_duration − time_in_state` and therefore errs towards "will not clear in time" when the yellow was observed late.
+- **Latched-yellow rule:** if the latch engages on `yellow`, keep publishing `yellow` with `time_in_state` still counting so that the planner's remaining-yellow estimate keeps decreasing; do not upgrade a latched yellow to red on a timer (the planner already decided).
+- **Reset:** all vote buffers and latches are cleared on `ResetEvent`.
 
 The risk that the light changes while latched (green → red after ego lost sight of it within 15 m) is accepted: at that distance a light that was green at latch time can only turn yellow, and a yellow of ≥ 3 s is enough to clear the line at ≥ 5 m/s. Document this in the node.
 
@@ -61,12 +63,12 @@ The risk that the light changes while latched (green → red after ego lost sigh
 Subscribes `cam_front`, `cam_left`, `cam_right` (+ `cam_tl` if enabled), `/nuway/loc/pose`, `LaneGraph` (latched), `/nuway/route/plan`. Per cycle (10 Hz, triggered by `cam_front`):
 1. Select lights on the route within 60 m (§2 mapping, overrides applied).
 2. Project + crop (§3) for those visible in some camera; batch through the model.
-3. Latch (§4) per light; publish `TrafficLightArray` with `stop_line`, `affected_lane_ids`, `state`, `confidence`. Stamp = `cam_front` stamp.
+3. Latch (§4) per light; publish `TrafficLightArray` with `stop_line`, `affected_lane_ids`, `state`, `confidence`, `time_in_state`, `yellow_duration`, `latched`. Stamp = `cam_front` stamp.
 4. `NodeDiag` with breakdown: project, crop, model, latch; plus `n_lights`, `n_latched`.
 
-Runs inside the `bevfusion_node.py` process when `perception.tl_in_bev_process: true` (saves an image subscription and a CUDA context); standalone otherwise. Either way the topic and message are identical.
+Runs inside the `bevfusion_node.py` process when the profile sets `perception.tl_in_bev_process: true` (saves an image subscription and a CUDA context); standalone otherwise. Either way the topic and message are identical, and either way the launch alternative is selected by `use_gt.traffic_lights` alone (`02_interfaces.md` §6).
 
-Foxglove: overlay of crop boxes on `cam_front` with predicted state and latch status; a `tl_debug` image topic (only when `debug: true`).
+Foxglove: overlay of crop boxes on `cam_front` with predicted state and latch status on `/nuway/perception/tl_debug` (only when `traffic_light_node.debug: true`), plus the `tl_crops` marker layer.
 
 ## 7. Integration & evaluation
 
@@ -94,5 +96,5 @@ Foxglove: overlay of crop boxes on `cam_front` with predicted state and latch st
 
 ## 10. Open questions
 
-- Whether `cam_tl` is worth an extra rendered camera (~3 ms tick cost). Resolved by the blind-distance study.
+- Whether `cam_tl` is worth an extra rendered camera (~3 ms tick cost) for the dev rig only. Resolved by the blind-distance study; it can never be part of the Leaderboard rig.
 - Whether to add a small detector instead of map projection for robustness to localization error. Not now: M5 localization is < 0.2 m ATE, and the crop padding of 25% absorbs it.

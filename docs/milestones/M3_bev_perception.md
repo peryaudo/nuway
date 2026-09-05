@@ -5,7 +5,7 @@
 **Completion criteria**
 - [ ] Offline: vehicle mAP@BEV-IoU0.5 > 0.6, pedestrian AP@0.3 > 0.4 on a held-out town (Town07), velocity error (AVE) < 0.6 m/s for vehicles; occupancy IoU (`occupied`) > 0.6, (`drivable`) > 0.85.
 - [ ] Runtime: end-to-end perception node ≤ 40 ms p50 / 60 ms p99 (fp16, CUDA graphs or TensorRT), 10 Hz, including preprocessing and tracking.
-- [ ] Closed-loop: M1 stack with `use_gt.perception=false`, `use_gt.localization=true` scores ≥ 80% of the GT-perception score on the M1 protocol; no infraction category increases by > 2× (esp. collisions with static obstacles).
+- [ ] Closed-loop: M1 stack with `use_gt.perception=false`, `use_gt.localization=true` scores ≥ 80% of the M1 GT baseline (visibility-on, recorded at the end of M2; `00_overview.md` §3) on the M1 protocol; no infraction category increases by > 2× (esp. collisions with static obstacles).
 - [ ] Tracker: ID switches < 0.1 per agent-minute on GT-eval sequences.
 
 ---
@@ -15,7 +15,7 @@
 Design targets: ≤ 25M parameters, fp16-friendly, no custom CUDA kernels except an optional sparse-conv library (`spconv` or `torchsparse`); default path is **pillars + dense 2-D conv**, which needs nothing custom.
 
 ### 1.1 LiDAR branch (`lidar_branch.py`)
-- Input: current sweep in `base_link` `[N,4]` (x,y,z,timestamp-offset=0). Crop to grid extent, z ∈ [−3, 5].
+- Input: current sweep in `base_link` `[N,4]` (x, y, z, intensity), i.e. exactly the M2 `lidar` array and exactly what `/carla/hero/lidar_top` carries. Crop to grid extent, z ∈ [−3, 5].
 - PointPillars: pillar size 0.25 m (400×400 pillars over ±50 m), max 32 points/pillar, 10-dim point features (x,y,z, Δ to pillar center, Δ to pillar mean, |r|), PillarFeatureNet 64-dim, scatter to `[64,400,400]`.
 - 2-D backbone: 3 stages with strides {1,2,2} (channels 64,128,256), FPN-style up-fuse to `[128,200,200]` (0.5 m).
 - Hook for `spconv` VoxelNet variant behind a config flag (not required for completion).
@@ -60,25 +60,33 @@ Per frame, detections `D` (with `vel`), tracks `T` (each: last box, vel, id, age
 4. Hungarian (`scipy.optimize.linear_sum_assignment`).
 5. Matched: update box/vel from detection (no filtering), `hits += 1`, `misses = 0`, push pose to history. Unmatched track: `misses += 1`, propagate pose by its velocity; delete when `misses > 5` (0.5 s). Unmatched detection: new track (`hits = 1`).
 6. Output agents with `hits ≥ 2` (suppresses one-frame false positives), transformed back to `base_link`, with `history` filled from the ring buffer (transformed to current base_link).
+7. On `ResetEvent`: drop all tracks and reset the id counter.
+
+`scipy` enters `ml/pyproject.toml` runtime dependencies here (`uv add scipy`).
 
 Evaluation script `ml/scripts/eval_tracking.py`: run detector + tracker on held-out sequences; report ID switches, fragmentation, MOTA-lite, using GT ids.
 
 ## 4. Runtime nodes
 
-### 4.1 `lidar_preproc_node` (C++/CUDA)
-Subscribes `/carla/hero/lidar_top`, transforms to `base_link` (static TF), crops, builds pillars on GPU (custom kernel or `torch` via LibTorch), and passes a CUDA IPC handle… **Decision:** avoid IPC complexity — run preprocessing inside the Python inference node using `torch` ops (`scatter_reduce`) on the raw point array received via a zero-copy CycloneDDS+iceoryx subscription (`rclpy` with `PointCloud2` → numpy view). Keep `lidar_preproc_node.cpp` as a placeholder only if profiling shows Python preprocessing > 8 ms.
+### 4.1 LiDAR preprocessing: in the Python inference node
+
+`bevfusion_node.py` subscribes `/carla/hero/lidar_top` directly and builds pillars with `torch` ops (`scatter_reduce`) on the GPU. This is the one sanctioned place where a point cloud crosses into Python (`00_overview.md` principle 6). Two facts to keep straight:
+- `rclpy` in Humble does **not** support loaned (zero-copy) messages, so the `PointCloud2` is deserialized: ≈ 30k points × 16 bytes = 0.5 MB per sweep. Expected cost 1–3 ms; it is measured by the diag `preproc` breakdown and reported in the M3 report.
+- If deserialization + pillarization exceeds **8 ms p50**, the escalation path is `lidar_preproc_node.cpp` (C++, LibTorch pillarization, tensor handed over through CUDA IPC). It is not built unless the threshold is crossed; the decision is recorded here.
+
+The occupancy grid is likewise published from Python (it is this node's output); consumers are C++ and read it through the ordinary `OccupancyGridMC` topic.
 
 ### 4.2 `bevfusion_node.py`
-- Subscribes LiDAR + 4 images (message_filters approximate sync, slop 0.03 s) + pose.
-- Maintains the temporal queue and EMA memory (on GPU).
+- Subscribes LiDAR + 4 images (message_filters approximate sync, slop 0.03 s) + pose. Runs once per two ticks, triggered by the LiDAR message.
+- Maintains the temporal queue and EMA memory (on GPU); both are cleared on `ResetEvent`, together with the tracker.
 - Runs the model (torch.compile or TensorRT export via `nuway_ml/export/`; TensorRT is optional, target met with `torch.compile(mode="reduce-overhead")` + fp16 first).
 - Decodes, tracks, publishes `AgentArray` (base_link, stamp = LiDAR stamp) and `OccupancyGridMC` (post-processed: `unknown = 1 − occupied − free` clamped; `occupied` thresholded softly).
 - Publishes `NodeDiag` with breakdown: preproc, model, decode, track.
 
 ## 5. Integration & evaluation
 
-- Profile `m3_learned_perception.yaml`: `use_gt.perception=false`, `use_gt.traffic_lights=true`, `use_gt.localization=true`.
-- Run M1 protocol; compare with `compare_runs.py` against the M1 GT run. Investigate any route where the score drops > 30%: replay MCAP in Foxglove with GT agents overlaid on perceived ones (`nuway_viz` has a "GT vs perceived" layout).
+- Profile `m3_learned_perception.yaml`: `use_gt.perception=false`, `use_gt.traffic_lights=true` (so `gt_traffic_light_node` runs while `bevfusion_node` replaces `gt_perception_node`), `use_gt.localization=true`.
+- Run M1 protocol; compare with `compare_runs.py` against the M1 GT baseline run (visibility-on). Investigate any route where the score drops > 30%: replay MCAP in Foxglove with GT agents overlaid on perceived ones (`nuway_viz` has a "GT vs perceived" layout).
 - Planner robustness pass (if needed): if the score drop is dominated by flicker (agents appearing/disappearing), raise `hits` threshold to 3 or extend `misses`; if by static-obstacle collisions, lower the safety layer's occupancy threshold; record changes in the M1 configs with a comment.
 
 ## 6. Task list
@@ -101,6 +109,7 @@ Subscribes `/carla/hero/lidar_top`, transforms to `base_link` (static TF), crops
 - (2026-09-02) Temporal fusion by warp+concat (BEVDet4D style) with an EMA long-term memory; no GRU/attention.
 - (2026-09-02) Tracking by velocity-projected Hungarian association (CenterPoint style). Histories are stored in map frame to survive ego motion.
 - (2026-09-05) Traffic light perception moved out to its own milestone (M4): it shares no model, data, metric or training loop with BEVFusion, and its driving-score impact (red-light penalty 0.70) warrants a full design of its own.
+- (2026-09-05) Point-cloud deserialization in Python is accepted as the one exception to principle 6 (`00_overview.md`), with a measured 8 ms escalation threshold, instead of a C++/CUDA-IPC preprocessing node from day one.
 
 ## 8. Open questions
 

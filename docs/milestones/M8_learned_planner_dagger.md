@@ -3,7 +3,7 @@
 **Goal:** add an ego planning head to the M7 model that emits M candidate ego trajectories with scores; refine them with the M1 piecewise-jerk QP; select with the rule-based selector (M9 upgrades this); keep the lattice path as a live fallback; close the imitation-learning loop with DAgger against the M6 expert.
 
 **Completion criteria**
-- [ ] Closed-loop, no GT anywhere, profile `m8_learned_planner.yaml`: driving score > M7 (lattice) score on the M1 protocol **and** on the M6 scenario routes; safety-layer intervention rate < 50% of the lattice path's; comfort (mean |jerk|) not worse.
+- [ ] Closed-loop, no GT anywhere, profile `m8_learned_planner.yaml`: driving score > M7 (lattice) score on the M1 protocol **and** on the M6 scenario routes; safety-layer intervention rate < 50% of the lattice path's; comfort (mean |jerk|) not worse. The report also states the gap to the M1 GT baseline and to the M6 expert; there is no pass/fail threshold on that gap (`00_overview.md` §3), but it must be printed.
 - [ ] Fallback engages correctly in an injected-failure test (planner node killed → lattice path continues within 0.3 s; learned candidates all infeasible → lattice selected).
 - [ ] After ≥ 3 DAgger rounds: closed-loop score improves monotonically or plateaus; report shows it.
 - [ ] Learned candidates are QP-refined in ≤ 5 ms for M=8 on CPU.
@@ -29,11 +29,11 @@ Source B gives a fast, deterministic, expert-like default; Source A gives intera
 
 Training is joint with M7 (multi-task, `w_plan = 1.0`) from the M7 checkpoint, 10 epochs, then DAgger rounds (§4).
 
-## 2. Runtime (`nuway_planning/learned_planner_node.py` + `planner_node` changes)
+## 2. Runtime (`nuway_prediction/flow_matching_node.py` + `planner_node` changes)
 
-`learned_planner_node.py` (Python, hosts the model; the M7 node and this node merge into one process `nuway_prediction/flow_matching_node.py` to avoid running the encoder twice — the node publishes both `PredictionSamples` and `TrajectoryCandidates` with `source="learned"`):
-- Ego candidates (S + M = 24) at 0.5 s → interpolated to 0.1 s by a C² spline (`nuway_common/trajectory.hpp::resample`) with speed/accel from derivatives.
-- Each candidate carries the index of the prediction sample it is consistent with (Source A) or `-1` (Source B).
+There is no separate learned-planner node. The ego planning head runs inside the M7 node `nuway_prediction/flow_matching_node.py`, so the encoder runs once per cycle; the node publishes both `/nuway/prediction/samples` and `/nuway/planning/learned_candidates` (`TrajectoryCandidates`, `source="learned"`). This is the "one module, one process" case named in `00_overview.md` principle 2: the shared `context` tensor never leaves the process.
+- Ego candidates (S + M = 24) at 0.5 s → interpolated to 0.1 s by a C² spline (the Python twin of `nuway_common/trajectory.hpp::Resample`, `nuway_ml/common/trajectory.py`) with speed/accel from derivatives; 81 points each.
+- Each candidate carries `Trajectory.sample_index` = the index of the prediction sample it is consistent with (Source A) or `-1` (Source B) (`02_interfaces.md` §4).
 
 `planner_node` (C++) now:
 1. Collects candidates from all `planning.candidate_sources` (`lattice`, `learned`).
@@ -51,8 +51,8 @@ Time consistency term in the selector (`consistency` cost, M1) is raised for lea
 ## 4. DAgger loop (`nuway_ml/planning/dagger.py`, `tools/collect/collect_dagger.py`)
 
 Round r:
-1. Run the current student (full stack, no GT, profile m7) on the collection route set with the M6 scenario library, `n_routes` ≈ 200, render-free is **not** possible here (perception needs sensors) → run with rendering but at Low quality; ~4 h per round on one GPU. Alternative "cheap DAgger": run with GT perception + learned localization off, i.e. `use_gt.perception=true` with visibility, render-free — use this for rounds 1–2, then one rendered round.
-2. At every frame, also run the expert (in-process via `nuway_planning_py`, with GT) and log its trajectory + decision as the label; the student's *own* trajectory is logged too. Frames are `PlanningFrame` with `expert.*` filled by the expert and `student_traj` added.
+1. Run the current student (full stack, no GT, profile m7) on the collection route set with the M6 scenario library, `n_routes` ≈ 200, render-free is **not** possible here (perception needs sensors) → run with rendering but at Low quality; measured, not assumed: at ≈ 15 ticks/s and ≈ 3 min of sim time per route this is ≈ 12 h per round on one GPU, so rounds are run overnight. Alternative "cheap DAgger": `use_gt.perception=true`, `use_gt.traffic_lights=true`, `use_gt.localization=true`, render-free, with agent visibility from the M6 geometric raycast (§3.1) rather than the sensor-based filter (which would need the semantic LiDAR and depth cameras, i.e. rendering) — use this for rounds 1–2, then one rendered round.
+2. At every frame, also run the expert (`gt_planning_node` from M6 alongside the student, both subscribed to the same GT inputs) and log its trajectory + decision as the label; the student's *own* trajectory is logged too. Frames are `PlanningFrame` with `expert.*` filled by the expert and `student_traj` added.
 3. Aggregate: dataset_r = dataset_{r−1} ∪ new frames (weight new frames ×2 for the first epoch).
 4. Fine-tune planning head (+ encoder at 0.1× lr) for 3 epochs.
 5. Evaluate closed-loop on the dev protocol; log to `data/eval_runs/dagger_round_<r>/`.
@@ -65,12 +65,12 @@ Perception-noise curriculum: DAgger rounds decrease the synthetic occupancy/agen
 
 - `test_fallback.py` (integration): kill `flow_matching_node` mid-route → completion still succeeds, `source` transitions logged.
 - `test_qp_refine_learned.py`: learned candidate violating curvature and bounds → refined output satisfies both; deviation from the reference shape within 0.5 m at 2 s.
-- `test_candidate_provenance.py`: Source A candidates carry sample indices; collision check uses the matched sample.
+- `test_candidate_provenance.py`: Source A candidates carry `sample_index`; collision check uses the matched sample.
 
 ## 6. Task list
 
 1. [ ] `planning_head.py` + losses; multi-task config; train from M7 checkpoint (10 epochs); open-loop ego L2 report.
-2. [ ] Merge node: publish `TrajectoryCandidates(source="learned")`; spline resampling; provenance.
+2. [ ] Ego head in `flow_matching_node.py`: publish `TrajectoryCandidates(source="learned")`; spline resampling to 81 points; `sample_index` provenance.
 3. [ ] `planner_node`: multi-source collection, per-sample collision weighting, QP refinement of learned candidates with decayed tracking weight, source bias, fallback + hysteresis.
 4. [ ] Profile `m8_learned_planner.yaml`; closed-loop eval vs M7.
 5. [ ] `collect_dagger.py` (both cheap and rendered modes), `dagger.py`; run ≥ 3 rounds; report.
@@ -81,3 +81,4 @@ Perception-noise curriculum: DAgger rounds decrease the synthetic occupancy/agen
 
 - (2026-09-02) Refinement of learned output via the existing M1 QP (not iLQR) in M8. iLQR is M10.
 - (2026-09-02) Two candidate sources (joint samples + dedicated head). If the dedicated head is not pulling its weight after DAgger (never selected), drop it and document.
+- (2026-09-05) No `learned_planner_node.py`: the head lives in the prediction node. One encoder pass, one process, one ROS boundary.

@@ -7,7 +7,8 @@
 - [ ] Every frame has: 4 images, LiDAR sweep, ego pose, calibration, visible-filtered 3D boxes with velocities, 6-channel GT occupancy, traffic light crops/labels.
 - [ ] `PerceptionDataset` loads a shard at ≥ 200 frames/s with 8 workers (no decoding bottleneck for training).
 - [ ] Label sanity report: histogram of boxes per frame, class distribution, visibility rejection rate, per-town counts. Visual spot-check notebook renders 20 random frames with labels overlaid on camera and BEV.
-- [ ] `gt_perception_node` now publishes the full 6-channel occupancy from the same generator, and M1's driving score is unchanged (±2) with it.
+- [ ] `gt_perception_node` now publishes the full 6-channel occupancy from the same generator, and with `gt_perception.apply_visibility: false` M1's driving score is unchanged (±2).
+- [ ] **The baseline is re-measured**: the M1 protocol is run with `gt_perception.apply_visibility: true` and the result is recorded in the M1 Decisions log as *the* M1 GT baseline that M3, M4 and M5 compare against (`00_overview.md` §3).
 
 ---
 
@@ -24,12 +25,28 @@ collect_perception.py (CARLA client, sync mode, no ROS)
    └─ ShardWriter (WebDataset tar, 1000 frames/shard)
 ```
 
-No ROS in the collector. It talks to CARLA directly; it is faster and avoids serializing images through DDS. It **must** use the same `sensor_rig.py` and `carla_conv` logic as the runtime to guarantee identical extrinsics and frame conventions (import from `nuway_carla_bridge` as a plain Python module; it has no ROS dependency in its geometry helpers).
+No ROS in the collector. It talks to CARLA directly; it is faster and avoids serializing images through DDS. It **must** use the same rig loader and the same conversion code as the runtime to guarantee identical extrinsics and frame conventions: the rig JSON parsing and CARLA↔ROS arithmetic live in `nuway_ml/common/carla_conv.py` and `nuway_ml/common/frames.py`, which both `nuway_carla_bridge/sensor_rig.py` and the collector import (`01_directory_structure.md` rules). The collector imports nothing from `ros2_ws`.
 
 ## 2. Record schema (`nuway_ml/common/schema.py`)
 
+All records are frozen dataclasses (`03_style_and_conventions.md` §9.3); no bare `dict` fields.
+
 ```python
-@dataclass
+@dataclass(frozen=True, slots=True)
+class EgoControl:
+    throttle: float
+    brake: float
+    steer: float                  # CARLA [-1, 1]
+
+@dataclass(frozen=True, slots=True)
+class CameraCalib:
+    name: str
+    K: np.ndarray                 # [3,3]
+    T_cam_from_base: np.ndarray   # [4,4]
+    width: int
+    height: int
+
+@dataclass(frozen=True, slots=True)
 class FrameRecord:
     key: str                      # f"{town}_{run_id}_{frame_idx:06d}"
     timestamp: float              # sim seconds
@@ -38,10 +55,15 @@ class FrameRecord:
     ego_pose_map: np.ndarray      # [4,4] base_link -> map (ROS convention)
     ego_vel_body: np.ndarray      # [3]
     ego_yaw_rate: float
-    ego_control: dict             # throttle, brake, steer
-    calib: dict                   # per camera: K [3,3], T_cam_from_base [4,4]; lidar: T_lidar_from_base
-    images: dict                  # cam name -> jpeg bytes (quality 92)
-    lidar: np.ndarray             # [N,4] float16: x,y,z in lidar frame, tag (semantic id) as float
+    ego_control: EgoControl
+    cameras: tuple[CameraCalib, ...]
+    T_lidar_from_base: np.ndarray # [4,4]
+    images: dict[str, bytes]      # cam name -> jpeg bytes (quality 92); the one dict, keyed by camera name only
+    lidar: np.ndarray             # [N,4] float32: x,y,z,intensity in lidar frame — exactly what the runtime
+                                  # sensor.lidar.ray_cast publishes; this is the model input and must not
+                                  # contain label information
+    lidar_semantic: np.ndarray    # [N,5] float32: x,y,z,tag,object_idx from the label-only semantic LiDAR;
+                                  # used by the labelers and kept for re-labeling, never fed to a model
     agents: list[AgentLabel]
     occupancy: np.ndarray         # [6,200,200] float16, channels per 02_interfaces
     traffic_lights: list[TLLabel]
@@ -68,7 +90,7 @@ class TLLabel:
     crop_bbox: np.ndarray | None  # [4] xyxy pixels
 ```
 
-Shard layout (WebDataset): `{key}.json` (everything scalar/small, lists), `{key}.cam_front.jpg` …, `{key}.lidar.npy`, `{key}.occ.npy`. Shard files: `data/shards/perception/{town}/{run_id}-{shard_idx:04d}.tar`. A `manifest.json` per run lists shards, frame count, weather, traffic config, seeds.
+Shard layout (WebDataset): `{key}.json` (everything scalar/small, lists), `{key}.cam_front.jpg` …, `{key}.lidar.npy`, `{key}.lidar_sem.npy`, `{key}.occ.npy`. Shard files: `data/shards/perception/{town}/{run_id}-{shard_idx:04d}.tar`. A `manifest.json` per run lists shards, frame count, weather, traffic config, seeds. LiDAR coordinates are float32 on purpose: float16 has a spacing of about 6 cm beyond 64 m, which is a quarter of a pillar. Budget ≈ 1.2 MB per frame (two clouds ≈ 0.7 MB, occupancy 0.48 MB, images 0.15 MB), so the ≥ 150k-frame target is ≈ 200 GB and the full protocol below ≈ 700 GB; check disk before the full run.
 
 ## 3. Labelers
 
@@ -78,7 +100,7 @@ An actor is `visible` if **either**:
 - semantic LiDAR returns ≥ `min_pts[class]` points with that actor's `object_idx` (car 5, pedestrian 3, bicycle 3, static 5), **or**
 - in any camera, the actor's 3D box projects to ≥ `min_px_area` (400 px²) inside the image **and** the depth camera at the box's projected center is within `box_depth ± (box_diag/2 + 1 m)` (i.e. not occluded).
 
-Label-only sensors: `sensor.lidar.ray_cast_semantic` co-located with `lidar_top` (identical attributes), `sensor.camera.depth` co-located with each RGB camera. These are never part of the runtime rig.
+Label-only sensors: `sensor.lidar.ray_cast_semantic` co-located with `lidar_top` (identical attributes; the `lidar_top_semantic` entry with `label_only: true` in `rig_dev.json`), `sensor.camera.depth` co-located with each RGB camera (collector only, not in the rig JSON). These are never subscribed by a learned node; the semantic LiDAR is spawned at runtime only in GT-perception and mapping profiles (`02_interfaces.md` §3.1).
 
 Invisible agents are kept in the record with `visible=false` so prediction training (M6/M7) can still use them as context if desired; perception training masks them out of all losses (not just positives — they are also excluded from the negative heatmap region by a "don't care" mask of radius 1.5 × box size).
 
@@ -90,7 +112,7 @@ Class ids per `02_interfaces.md`. Traffic-cone/barrier/props tagged `static_obst
 
 ### 3.3 GT occupancy generator (`nuway_ml/data/gt_occupancy.py`)
 
-One function used by both the collector and (through a pybind or a small C++ port validated by parity test) the runtime `gt_perception_node`:
+One reference implementation used by the collector, and a C++ port (`nuway_perception/src/gt_occupancy.cpp`) used by the runtime `gt_perception_node`, kept identical by a parity test on stored frames (`01_directory_structure.md` rules):
 
 ```python
 def generate_gt_occupancy(spec: GridSpec,
@@ -154,13 +176,13 @@ Augmentation (`augment.py`, perception part): random image scale ±10%, random B
 
 ## 6. Runtime GT perception (`gt_perception_node`, full version)
 
-Subscribes GT agents, semantic LiDAR (a label-only sensor is allowed in the GT profile), lane graph. Calls the C++ port of `generate_gt_occupancy` (parity test against Python on 50 stored frames: max abs diff < 1e-3 per cell). Publishes `/nuway/perception/occupancy` at 10 Hz and agents with `visible` filtering applied (so GT perception ≈ "perfect but physically plausible" perception). Config `gt_perception.apply_visibility: true|false` to toggle omniscient mode.
+Subscribes GT agents, `/carla/hero/lidar_top_semantic` (the `label_only` rig entry, spawned because the profile has `use_gt.perception: true`), lane graph. Calls the C++ port of `generate_gt_occupancy` (parity test against Python on 50 stored frames: max abs diff < 1e-3 per cell). Publishes `/nuway/perception/occupancy` every 2nd tick and agents with `visible` filtering applied (so GT perception ≈ "perfect but physically plausible" perception). Profile key `gt_perception.apply_visibility: true|false` toggles omniscient mode (`02_interfaces.md` §5). Traffic lights are not this node's business (`gt_traffic_light_node`, M0).
 
 ## 7. Task list
 
 1. [ ] `schema.py` with validation (`FrameRecord.validate()` checks shapes/dtypes/NaN policy).
 2. [ ] `webdataset_io.py`: `ShardWriter`, `ShardReader`, manifest handling, resume.
-3. [ ] `sensor_rig.py` extension: label-only sensors; make geometry helpers ROS-free.
+3. [ ] `sensor_rig.py` extension: `label_only` entries and the profile rule for spawning them; the collector's depth cameras.
 4. [ ] `visibility.py` + tests on synthetic projections.
 5. [ ] `gt_occupancy.py` + tests; C++ port in `nuway_perception` + parity test.
 6. [ ] TL labeler + tests.
@@ -168,12 +190,13 @@ Subscribes GT agents, semantic LiDAR (a label-only sensor is allowed in the GT p
 8. [ ] `postprocess_run.py` (history/future fill), `trajectories.parquet` sidecar.
 9. [ ] `perception_dataset.py` + `augment.py` + throughput test + spot-check notebook `ml/notebooks/inspect_perception.ipynb` (committed without outputs).
 10. [ ] Run full collection; write label sanity report to `data/shards/perception/REPORT.md`.
-11. [ ] Full `gt_perception_node`; rerun M1 eval; confirm score parity.
+11. [ ] Full `gt_perception_node`; rerun M1 eval with `apply_visibility: false` (parity ±2) and with `apply_visibility: true` (record as the M1 GT baseline in the M1 Decisions log).
 
 ## 8. Decisions log
 
 - (2026-09-02) Store `future_map` in perception records even though M2 doesn't use it: avoids re-collection for M6.
 - (2026-09-02) Hero driven by Traffic Manager in M2 (viewpoint diversity, no expert needed yet). M6 switches to the expert and re-collects a planning-focused set without rendering.
+- (2026-09-05) The stored `lidar` array is the runtime sensor's output (x, y, z, intensity, float32); the semantic cloud is stored separately. Earlier drafts stored the semantic tag as the fourth channel, which would have trained the model on a channel it never sees at runtime.
 
 ## 9. Open questions
 

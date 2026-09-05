@@ -3,7 +3,7 @@
 **Goal:** replace constant-velocity prediction with a learned, joint, multi-modal prediction model: a scene encoder over agent/map/route/traffic-light/occupancy tokens and a flow-matching velocity network that generates S joint samples of all agents' futures. The ego is included in the generated tensor (for joint consistency) but the ego channel is **not** used for planning in this milestone; the planner remains M1's lattice.
 
 **Completion criteria**
-- [ ] Open-loop (held-out Town07 + 10% of other towns): vehicles minADE@8s (S=16) < 1.2 m, minFDE@8s < 2.8 m; pedestrians minADE@8s < 0.8 m; sample collision rate (agent–agent overlap within a sample) < 2%; offroad rate < 3%. Beats the M6 regression baseline on minADE.
+- [ ] Open-loop (held-out Town07 + 10% of other towns): vehicles minADE@8s (S=16) < 1.2 m, minFDE@8s < 2.8 m; pedestrians minADE@8s < 0.8 m; sample collision rate (agent–agent overlap within a sample) < 2%; offroad rate < 3%. Beats the M6 lane-follow constant-velocity baseline on minADE@3s by ≥ 40% for vehicles (this also serves as the validation of the M6 data).
 - [ ] Invariance tests pass: rotating/translating the scene rotates/translates outputs (max deviation < 5 cm); occupancy perturbation test changes predictions near the inserted obstacle.
 - [ ] Runtime: encoder + 6 Euler steps × 16 samples ≤ 25 ms p50 on the 3090 Ti in fp16, 10 Hz.
 - [ ] Closed-loop: profile `m7_learned_prediction.yaml` (no GT anywhere, lattice planner) driving score ≥ M5 score + 10 on the M1 protocol; collisions with vehicles at junctions reduced by ≥ 30% vs M5.
@@ -75,7 +75,7 @@ loss_aux = t * ( w_kin * kinematic(x1_hat) + w_col * collision(x1_hat) + w_road 
 loss = loss_fm + loss_aux
 ```
 - `aux_losses.py`: `kinematic` = penalty on |curvature| > κ_max and |accel| > 4 m/s² from finite differences (vehicles only); `collision` = soft overlap between agent discs across pairs at each t; `offroad` = `1 − drivable` sampled along each vehicle's trajectory (bilinear, differentiable) + `occupied` sampled likewise. Weights start at 0 for the first 2 epochs, ramp to `w_kin=0.1, w_col=0.5, w_road=0.5`.
-- Invisible agents (`visible=false`) are context but not loss targets.
+- Invisible agents (`visible=false`) are context but not loss targets. `visible` has the same meaning in M2 (sensor-derived) and M6 (raycast-derived) records: "the hero could plausibly perceive this agent"; the tokenizer feeds it as a feature and the loss mask reads the same flag.
 - AdamW lr 3e-4, cosine, batch 64, 30 epochs on 3M frames (≈ 1.5 days on the 3090 Ti in fp16). EMA weights 0.999 used for eval/export.
 - Validation each epoch: sample S=16 with 6 Euler steps, compute metrics from M6 §7, render 16 fixed scenes with samples.
 
@@ -83,8 +83,9 @@ Sampler (`flow_matching.py: sample`): Euler, `n_steps` configurable (train-time 
 
 ## 6. Runtime node (`nuway_prediction/flow_matching_node.py`)
 
-- Subscribes agents (base_link), lane graph (latched; tokenizer caches per-lane polylines), reference line, traffic lights, occupancy, pose.
-- Builds tokens on GPU (numpy→torch, pinned), runs encoder once, samples S=16, denormalizes, transforms to `map` frame, publishes `PredictionSamples` with `sample_weight = 1/S`. Ego channel dropped from the message (M8 publishes ego samples separately).
+- Subscribes agents (base_link), lane graph (latched; tokenizer caches per-lane polylines), reference line, traffic lights, occupancy, pose. Runs once per two ticks, triggered by the agents message. The occupancy subscription is the second sanctioned grid-into-Python case of `00_overview.md` principle 6.
+- Builds tokens on GPU (numpy→torch, pinned), runs encoder once, samples S=16, denormalizes, transforms to `map` frame, publishes `PredictionSamples` with `sample_weight = 1/S`. Ego channel dropped from the message (M8 adds the ego planning head to this same node and publishes `/nuway/planning/learned_candidates` from it).
+- Stateless across cycles except the per-lane polyline cache, which is keyed by town and survives `ResetEvent`; nothing else needs clearing.
 - Agent slot limit: nearest 31 + ego; others beyond are given constant-velocity futures by the node (published in the same message) so downstream never loses an agent.
 - `torch.compile` fp16; CUDA graph for the velocity net loop if needed. Diag breakdown: tokenize / encoder / sampling / postprocess.
 
@@ -105,7 +106,7 @@ Sampler (`flow_matching.py: sample`): Euler, `n_steps` configurable (train-time 
 5. [ ] Full training; open-loop report; step-count table.
 6. [ ] `flow_matching_node.py`; export; latency benchmark; Foxglove prediction layer (samples as faded polylines, per-agent).
 7. [ ] Closed-loop eval with lattice planner; compare vs M5; junction collision analysis.
-8. [ ] `tests/integration/test_m6.py`.
+8. [ ] `tests/integration/test_m7_learned_prediction.py` (short route, `m7_learned_prediction.yaml`, asserts completion and that `/nuway/prediction/samples` carries S=16).
 
 ## 9. Decisions log
 

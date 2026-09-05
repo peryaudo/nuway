@@ -45,7 +45,7 @@ Extra project rules:
 - ROS parameter names are `lower_snake_case` and identical to the YAML keys in `configs/` (see `02_interfaces.md`). The C++ member holding a parameter has the same name with a trailing underscore: parameter `lookahead_m` → member `lookahead_m_`.
 - Units in names when the unit is not obvious from the type: `_m`, `_mps`, `_rad`, `_s`, `_hz`. `double speed_mps`, not `double speed`.
 - Topic and frame strings are `constexpr` constants (`kTopicEgoOdom`, `kFrameBaseLink`) declared in one header per package, never string literals scattered in code.
-- Enumerators for message field values mirror the `nuway_msgs` constant names in `CamelCase` form (message `SPEED_LIMIT` ↔ enumerator `kSpeedLimit`).
+- Enumerators for message field values mirror the `nuway_msgs` constants declared in `02_interfaces.md` §4 in `kCamelCase` form (message `Agent.CLASS_PEDESTRIAN` ↔ `enum class AgentClass { kPedestrian = Agent::CLASS_PEDESTRIAN }`). The enumerator is initialised from the generated constant, never from a literal, so the two cannot drift.
 
 ### 2.2 Headers
 
@@ -55,8 +55,8 @@ Extra project rules:
   1. the header matching this `.cpp` file,
   2. C system headers (`<sys/...>`, `<cmath>` is C++),
   3. C++ standard library,
-  4. third-party libraries (`<Eigen/...>`, `<gtsam/...>`, `<rclcpp/...>`, `<nuway_msgs/...>`),
-  5. headers from other `nuway_*` packages,
+  4. third-party libraries (`<Eigen/...>`, `<gtsam/...>`, `<rclcpp/...>`, `<carla_msgs/...>`),
+  5. headers from other `nuway_*` packages, including the generated `<nuway_msgs/...>` headers,
   6. headers from the same package.
   Each group separated by a blank line, alphabetically sorted within the group.
 - Include style: `"nuway_common/frenet.hpp"` with quotes for headers in the same package; angle brackets for everything installed by another package (ROS, Eigen, other `nuway_*` packages, generated `nuway_msgs`).
@@ -145,7 +145,8 @@ Kept intentionally short. Anything not listed here follows Google.
 - Parameters are declared in the constructor via `nuway_common/params.hpp` helpers with an explicit default and a one-line description. Read once at startup; dynamic reconfigure only where a milestone doc asks for it.
 - One publisher/subscription member per topic, named `pub_<what>_` / `sub_<what>_`, e.g. `pub_cmd_`, `sub_ego_odom_`. Timers `timer_<what>_`.
 - Callbacks are private methods named `On<Message>()` (`OnEgoOdom(...)`) or `OnTimer()`. They must not block; anything above a few milliseconds goes into the library class and is timed with `nuway_common/diag.hpp`'s scoped timer.
-- QoS is set explicitly at every publisher/subscription using the profiles listed in `02_interfaces.md`. No implicit defaults.
+- QoS is set explicitly at every publisher/subscription using one of the named profiles in `02_interfaces.md` §3.11 through `nuway_common/qos.hpp` (`nuway_common::qos::kStream`, …). No implicit defaults, no inline `rclcpp::QoS` construction.
+- Every node with cross-cycle state subscribes to `/nuway/sim/reset_event` and clears it (`02_interfaces.md` §7). The header comment of every node states either what it clears on reset or that it is stateless.
 - Logging: `RCLCPP_INFO` once at startup with the resolved parameters; `RCLCPP_WARN_THROTTLE` for recurring conditions; `RCLCPP_ERROR` for conditions that also flip the `NodeDiag` status. No `std::cout` / `printf` in nodes or libraries.
 - Frame handling: every function that takes or returns a pose documents the frame in its comment (§2.7). Conversions between CARLA and ROS conventions only in `carla_conv.hpp` and `nuway_carla_bridge` (see `01_directory_structure.md` rules).
 - No environment variable reads in nodes. Everything comes from parameters.
@@ -341,8 +342,11 @@ CheckOptions:
   readability-identifier-naming.EnumConstantCase: CamelCase
   readability-identifier-naming.EnumConstantPrefix: 'k'
   readability-identifier-naming.MacroDefinitionCase: UPPER_CASE
-  # Cheap accessors are allowed to be snake_case (Google "Function Names").
-  readability-identifier-naming.MethodIgnoredRegexp: '^(get|set)_[a-z_0-9]+$|^[a-z_0-9]+$'
+  # Cheap accessors/mutators are allowed to be snake_case (Google "Function
+  # Names"): a bare member name `foo()` or a setter `set_foo()`. The regexp
+  # must not admit arbitrary snake_case methods, so it requires the accessor
+  # to be a single identifier of at most three underscore-separated words.
+  readability-identifier-naming.MethodIgnoredRegexp: '^(set_)?[a-z][a-z0-9]*(_[a-z0-9]+){0,2}$'
   # gtest macros generate identifiers we do not control.
   readability-identifier-naming.FunctionIgnoredRegexp: '^(TEST|TEST_F|TEST_P|TYPED_TEST).*'
   llvm-header-guard.HeaderFileExtensions: 'hpp'
@@ -357,6 +361,7 @@ Notes:
 
 - `llvm-header-guard` in stock form derives the expected guard from the file path. The `NUWAY_<PKG>_<FILE>_HPP_` pattern is enforced by a small script in `tools/lint/` alongside clang-tidy; the check remains enabled to catch missing guards.
 - `readability-magic-numbers` is off because planning and control code is full of justified tunables; those must still be named constants when reused (§2.1).
+- The accessor exemption is deliberately narrow: `resolution()`, `set_resolution()`, `lane_id()` pass; `compute_costs()` does not (it is a verb phrase and must be `ComputeCosts()`). Review rejects accessor-named methods that do more than return or assign a member.
 - Checks may only be disabled repo-wide in `.clang-tidy` with a comment explaining why. Inline `// NOLINT(check-name)` requires a trailing justification: `// NOLINT(bugprone-narrowing-conversions): CARLA API takes float`. Bare `// NOLINT` is rejected in review.
 - Generated code (`nuway_msgs` headers, pybind stubs) and vendored packages are excluded by `HeaderFilterRegex` and by not being under `nuway_*` source dirs.
 
@@ -453,8 +458,15 @@ known-first-party = ["nuway_ml", "nuway_eval", "nuway_carla_bridge", "nuway_perc
 python_version = "3.10"
 strict = true
 warn_unreachable = true
-files = ["ml/nuway_ml", "tools", "tests"]
-exclude = ["ros2_ws/(build|install|log)/", "data/"]
+# The ros2_ws Python packages are listed here so `uv run mypy` (pre-commit, CI)
+# actually checks them; the override below relaxes strictness for them.
+files = [
+  "ml/nuway_ml", "tools", "tests",
+  "ros2_ws/src/nuway_carla_bridge", "ros2_ws/src/nuway_perception",
+  "ros2_ws/src/nuway_prediction", "ros2_ws/src/nuway_planning",
+  "ros2_ws/src/nuway_eval", "ros2_ws/src/nuway_bringup", "ros2_ws/src/nuway_viz",
+]
+exclude = ["ros2_ws/(build|install|log)/", "ros2_ws/src/carla_msgs/", "data/"]
 
 [[tool.mypy.overrides]]
 module = ["carla", "carla.*", "rclpy", "rclpy.*", "rosidl_runtime_py", "nuway_msgs.*", "carla_msgs.*", "torch.*", "webdataset", "webdataset.*"]
@@ -471,7 +483,7 @@ Notes:
 
 - `ruff format` replaces Black; `ruff check` replaces flake8, isort, pyupgrade, pydocstyle and the pylint subset. No other Python linter or formatter is used, so there is exactly one configuration to keep in sync.
 - Rule groups may only be disabled repo-wide in `pyproject.toml` with a comment. Inline `# noqa: <RULE>` requires a trailing justification: `# noqa: PLR0912  -- CARLA blueprint matrix, table-driven`. Bare `# noqa` and `# type: ignore` without a rule code are rejected in review.
-- `mypy --strict` is the bar for `ml/nuway_ml`, `tools/` and `tests/`. The `ros2_ws` Python packages must still have fully typed function signatures (`disallow_untyped_defs`), but strict mode is relaxed because `rclpy` and generated message packages ship without stubs.
+- `mypy --strict` is the bar for `ml/nuway_ml`, `tools/` and `tests/`. The `ros2_ws` Python packages are in `files` too, so they are checked on every run; they must have fully typed function signatures (`disallow_untyped_defs`), but strict mode is relaxed because `rclpy` and generated message packages ship without stubs. A package missing from `files` is a bug.
 - Tool versions are pinned once, in `uv.lock` (§6.4). `.pre-commit-config.yaml` uses `repo: local` hooks that call `uv run ruff`, `uv run mypy`, `uv run clang-format`, etc., so pre-commit never carries its own second set of pins.
 
 ### 7.4 How the tools are run

@@ -9,6 +9,7 @@ nuway/
 │   ├── 00_overview.md
 │   ├── 01_directory_structure.md          # this file
 │   ├── 02_interfaces.md                   # frames, topics, messages, configs
+│   ├── 03_style_and_conventions.md        # Google C++ style, clang-format/clang-tidy, python rules
 │   └── milestones/
 │       ├── M0_bringup.md
 │       ├── M1_classical_planning.md
@@ -43,7 +44,10 @@ nuway/
 │   └── training/                          # hydra/omegaconf configs for ml/
 │
 ├── ros2_ws/
+│   ├── colcon_defaults.yaml               # Ninja, ccache, mold, compile_commands, RelWithDebInfo
 │   └── src/
+│       ├── nuway_cmake/                   # shared CMake: warnings, -Werror, NUWAY_CLANG_TIDY/SANITIZE/LTO
+│       ├── gtsam_vendor/                  # FetchContent, pinned tag+hash (M4); same pattern for osqp_vendor, nanoflann_vendor
 │       ├── nuway_msgs/                    # ALL custom messages. No msgs elsewhere.
 │       │   ├── msg/
 │       │   └── CMakeLists.txt
@@ -121,8 +125,8 @@ nuway/
 │           ├── launch/stack.launch.py     # THE launch file; reads a profile YAML
 │           └── launch/*.launch.py         # per-subsystem launches used by stack.launch.py
 │
-├── ml/                                    # pip package `nuway_ml`
-│   ├── pyproject.toml
+├── ml/                                    # uv workspace member `nuway-ml` (hatchling)
+│   ├── pyproject.toml                     # package metadata + runtime deps only; no [tool.ruff]/[tool.mypy] here
 │   ├── nuway_ml/
 │   │   ├── common/
 │   │   │   ├── geometry.py                # numpy/torch SE2 utils, must mirror nuway_common
@@ -182,6 +186,7 @@ nuway/
 │   ├── eval/
 │   │   ├── run_routes.py                  # entry point for evaluation harness
 │   │   └── compare_runs.py
+│   ├── lint/                              # format_cpp.sh, tidy_cpp.sh, lint_py.sh, merge_compile_commands.py, header guard check (M0)
 │   └── viz/
 │
 ├── data/                                  # gitignored
@@ -193,9 +198,15 @@ nuway/
 │
 ├── tests/                                 # cross-cutting integration tests
 │   └── integration/
+├── .clang-format                          # BasedOnStyle: Google (see docs/03)
+├── .clang-tidy                            # google-* + naming checks, warnings are errors (see docs/03)
+├── .pre-commit-config.yaml                # local hooks via `uv run`: clang-format, clang-tidy, gersemi, ruff, mypy
+├── .clangd                                # points at merged ros2_ws/build/compile_commands.json
+├── pyproject.toml                         # uv workspace root: dependency groups, ruff, mypy, pytest config
+├── uv.lock                                # committed; the only place versions are pinned
+├── .python-version                        # 3.10
 ├── .gitignore
-├── requirements.txt
-└── setup_env.sh
+└── setup_env.sh                           # source in every shell: ROS, colcon defaults, uv venv, pre-commit
 ```
 
 ## Rules
@@ -206,3 +217,5 @@ nuway/
 - One node per file, one file per node. Nodes are thin: they parse params, subscribe/publish, and call a library class that is unit-tested without ROS.
 - Python packages inside `ros2_ws` only contain nodes and thin glue. Model code lives in `ml/nuway_ml` and is imported.
 - Config YAML keys are namespaced by node name. Do not read environment variables in nodes.
+- Python dependencies enter only through `uv add` (lock updated in the same commit). C++ dependencies enter only through `package.xml` + rosdep, or a `*_vendor` package. No `pip`, no submodules, no system-wide installs. See `03_style_and_conventions.md` §6.
+- All C++ is Google style and must pass `clang-format` and `clang-tidy`; all Python is PEP 8 and must pass `ruff format`, `ruff check` and `mypy`, with the root configs. See `03_style_and_conventions.md`.

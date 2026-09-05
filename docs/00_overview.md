@@ -1,7 +1,7 @@
 # nuway — Toy Autonomous Driving Stack on CARLA
 
 **Status:** planning document, v1 (2026-09-02)
-**Audience:** Claude Code and human contributors. Read this file first, then `01_directory_structure.md`, then `02_interfaces.md`, then the milestone you are working on.
+**Audience:** Claude Code and human contributors. Read this file first, then `01_directory_structure.md`, then `02_interfaces.md`, then `03_style_and_conventions.md`, then the milestone you are working on.
 
 ---
 
@@ -56,11 +56,12 @@ Dependencies: M0 → M1 → M2 → M3 → M4 → M5 → M6 → M7 → M8 → M9.
 | OS | Ubuntu 22.04 | |
 | ROS 2 | Humble | rmw: CycloneDDS with shared memory (iceoryx) enabled |
 | CARLA | 0.9.16 (UE4) | Not 0.10.x (UE5: heavier GPU, native ROS 2 less stable) |
-| Python | 3.10 | one venv at repo root, `torch>=2.4`, CUDA 12.x |
+| Python | 3.10 (system, Humble's) | `uv`-managed venv at repo root (`uv sync`, `uv.lock` committed, system site packages for rclpy), `torch>=2.4`, CUDA 12.x |
 | GPU | RTX 3090 Ti 24 GB | shared between CARLA and inference |
 | CPU | ≥ 12 cores recommended | CARLA + Traffic Manager alone use 4–6 |
-| C++ | C++17, CMake via `ament_cmake` | Eigen, GTSAM 4.2, OSQP + osqp-eigen, nanoflann, PCL (I/O only) |
-| Build | `colcon build --symlink-install` | `pip install -e ml/` for python package |
+| C++ | C++17, GCC 11 (Clang 17+ locally), CMake ≥ 3.22 via `ament_cmake`, Ninja + ccache + mold | Eigen, GTSAM 4.2, OSQP + osqp-eigen, nanoflann, PCL (I/O only); non-apt libs as `*_vendor` packages |
+| Build | `source setup_env.sh && colcon build` (defaults from `ros2_ws/colcon_defaults.yaml`) | `uv sync` for Python; no `pip` anywhere |
+| Tooling | clang-format/clang-tidy (LLVM ≥ 17 PyPI wheels), ruff, mypy, gersemi, pre-commit | all pinned in `uv.lock`; see `03_style_and_conventions.md` §6 |
 
 CARLA launch (development):
 ```
@@ -87,12 +88,13 @@ Because CARLA is synchronous, exceeding these budgets slows the simulation but d
 - Ego vehicle role name: `hero`.
 - Config: one YAML per launch profile under `configs/`, overriding package defaults. GT toggles live in `configs/gt_toggles/*.yaml`.
 - Logging: every node publishes `/nuway/diag/<node>` (`nuway_msgs/NodeDiag`) with processing time per cycle.
-- Tests: C++ (gtest) and Python (pytest) unit tests must pass in `colcon test` / `pytest ml tools`. Every milestone adds an integration test runnable with `tools/eval/run_routes.py --profile <milestone>`.
+- Tests: C++ (gtest) and Python (pytest) unit tests must pass in `colcon test` / `uv run pytest ml tools`. Every milestone adds an integration test runnable with `tools/eval/run_routes.py --profile <milestone>`.
 
 ## 7. How Claude Code should work in this repo
 
 - Read the milestone document fully before starting. Each has a **Task list** section; work through it in order and tick items in the doc as they land.
 - Prefer small, compilable increments. Run `colcon build --packages-select <pkg>` and the package tests after every change.
+- Style is specified in `03_style_and_conventions.md`: Google C++ Style Guide for C++, PEP 8 for Python. Run `clang-format` + `clang-tidy` after every C++ change and `ruff format` + `ruff check` + `mypy` after every Python change (root configs); all must be clean before a commit.
 - When a spec in a milestone doc is ambiguous, choose the simplest option that satisfies the completion criterion, and record the decision in the milestone doc under **Decisions log**.
 - Do not introduce new message types or topics outside `02_interfaces.md`; propose the change there first.
 - Never commit data. `data/` is gitignored.

@@ -163,17 +163,18 @@ Loads a route XML, calls `/nuway/sim/reset` at the start pose, publishes goals, 
 
 1. [ ] Vendor `carla_msgs` (leaderboard-2.0 branch) into `ros2_ws/src/`. Build.
 2. [ ] `nuway_msgs`: all messages in `02_interfaces.md`. Build.
-3. [ ] `nuway_common`: `geometry.hpp`, `carla_conv.hpp` (+ tests with known transforms), `frenet.hpp` (+ tests: round trip cartesian→frenet→cartesian on an arc within 1e-6), `trajectory.hpp`, `occupancy.hpp` (GridSpec + bilinear sample + tests), `diag.hpp`, `params.hpp`.
-4. [ ] `tools/carla/check_native_ros2.py`: start CARLA with `--ros2`, spawn a vehicle + lidar + camera with `enable_for_ros()`, verify topics appear, print frame conventions by driving forward and comparing `/carla/hero/imu` and native pose vs Python API. **Fill in `02_interfaces.md` §1.**
-5. [ ] `world_manager.py`, `sensor_rig.py`, `gt_publisher.py`, `control_adapter.py`. Verify `/clock` advances only on tick; verify static TF in Foxglove.
-6. [ ] `nuway_map`: parser (fixture test vs CARLA waypoints for Town03 and Town05), lane graph, map server. Publish a `MarkerArray` for lane centerlines in `nuway_viz`.
-7. [ ] `nuway_route`: A*, reference line builder (tests: curvature of a circular lane matches 1/R; bounds are positive; extension beyond goal), node, Leaderboard route loader.
-8. [ ] `tools/sysid/`: sweeps and fits. Produce `lincoln_mkz_2020.yaml`. Plot residuals; document residual RMS in this file's Decisions log.
-9. [ ] `nuway_control`: `LongitudinalMap` (C++ + Python parity test), pure pursuit + PID node.
-10. [ ] `gt_pose_node`, minimal `gt_perception_node`.
-11. [ ] Launch files, profile `m0_gt_all.yaml`, Foxglove layout v0 (map, ego, reference line, lookahead point).
-12. [ ] `run_routes.py` v0; 10 routes; record lateral error; iterate gains until criteria met.
-13. [ ] `tests/integration/test_m0_route.py`: launches stack on Town03 short route in CI-ish mode (`realtime_factor=0`), asserts completion and lateral error bound. Mark as `slow`.
+3. [ ] Toolchain and style tooling, exactly as specified in `03_style_and_conventions.md` §6–§7: `setup_env.sh`, root `pyproject.toml` as uv workspace (+ `ml/pyproject.toml` with hatchling, `uv.lock`, `.python-version`), `ros2_ws/colcon_defaults.yaml`, `nuway_cmake` package, `.clang-format`, `.clang-tidy`, `.clangd`, `.pre-commit-config.yaml`, `tools/lint/` (`format_cpp.sh`, `tidy_cpp.sh`, `lint_py.sh`, `merge_compile_commands.py`, header guard check), and the CI jobs (format, tidy, sanitizer, ruff, mypy, pytest). Record every pin in §6.4 (uv, LLVM wheels, ruff, mypy, torch cu12x index). Must land before task 4 (the first C++ code) and before any Python under `tools/` or `ros2_ws/`.
+4. [ ] `nuway_common`: `geometry.hpp`, `carla_conv.hpp` (+ tests with known transforms), `frenet.hpp` (+ tests: round trip cartesian→frenet→cartesian on an arc within 1e-6), `trajectory.hpp`, `occupancy.hpp` (GridSpec + bilinear sample + tests), `diag.hpp`, `params.hpp`.
+5. [ ] `tools/carla/check_native_ros2.py`: start CARLA with `--ros2`, spawn a vehicle + lidar + camera with `enable_for_ros()`, verify topics appear, print frame conventions by driving forward and comparing `/carla/hero/imu` and native pose vs Python API. **Fill in `02_interfaces.md` §1.**
+6. [ ] `world_manager.py`, `sensor_rig.py`, `gt_publisher.py`, `control_adapter.py`. Verify `/clock` advances only on tick; verify static TF in Foxglove.
+7. [ ] `nuway_map`: parser (fixture test vs CARLA waypoints for Town03 and Town05), lane graph, map server. Publish a `MarkerArray` for lane centerlines in `nuway_viz`.
+8. [ ] `nuway_route`: A*, reference line builder (tests: curvature of a circular lane matches 1/R; bounds are positive; extension beyond goal), node, Leaderboard route loader.
+9. [ ] `tools/sysid/`: sweeps and fits. Produce `lincoln_mkz_2020.yaml`. Plot residuals; document residual RMS in this file's Decisions log.
+10. [ ] `nuway_control`: `LongitudinalMap` (C++ + Python parity test), pure pursuit + PID node.
+11. [ ] `gt_pose_node`, minimal `gt_perception_node`.
+12. [ ] Launch files, profile `m0_gt_all.yaml`, Foxglove layout v0 (map, ego, reference line, lookahead point).
+13. [ ] `run_routes.py` v0; 10 routes; record lateral error; iterate gains until criteria met.
+14. [ ] `tests/integration/test_m0_route.py`: launches stack on Town03 short route in CI-ish mode (`realtime_factor=0`), asserts completion and lateral error bound. Mark as `slow`.
 
 ## 4. Testing notes
 

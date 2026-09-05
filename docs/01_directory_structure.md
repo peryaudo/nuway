@@ -15,21 +15,23 @@ nuway/
 │       ├── M1_classical_planning.md
 │       ├── M2_perception_data_pipeline.md
 │       ├── M3_bev_perception.md
-│       ├── M4_localization.md
-│       ├── M5_planning_data_pipeline.md
-│       ├── M6_flow_matching_prediction.md
-│       ├── M7_learned_planner_dagger.md
-│       ├── M8_forward_sim_selector.md
-│       └── M9_ilqr.md
+│       ├── M4_traffic_light_perception.md
+│       ├── M5_localization.md
+│       ├── M6_planning_data_pipeline.md
+│       ├── M7_flow_matching_prediction.md
+│       ├── M8_learned_planner_dagger.md
+│       ├── M9_forward_sim_selector.md
+│       └── M10_ilqr.md
 │
 ├── configs/                               # runtime configuration (YAML)
 │   ├── profiles/                          # one per launch profile
 │   │   ├── m0_gt_all.yaml
 │   │   ├── m1_classical.yaml
 │   │   ├── m3_learned_perception.yaml
-│   │   ├── m4_no_gt.yaml
-│   │   ├── m6_learned_prediction.yaml
-│   │   ├── m7_learned_planner.yaml
+│   │   ├── m4_learned_tl.yaml
+│   │   ├── m5_no_gt.yaml
+│   │   ├── m7_learned_prediction.yaml
+│   │   ├── m8_learned_planner.yaml
 │   │   └── leaderboard.yaml
 │   ├── gt_toggles/                        # small YAMLs setting use_gt.* flags
 │   ├── sensors/                           # sensor rigs (CARLA blueprint attrs + extrinsics)
@@ -47,7 +49,7 @@ nuway/
 │   ├── colcon_defaults.yaml               # Ninja, ccache, mold, compile_commands, RelWithDebInfo
 │   └── src/
 │       ├── nuway_cmake/                   # shared CMake: warnings, -Werror, NUWAY_CLANG_TIDY/SANITIZE/LTO
-│       ├── gtsam_vendor/                  # FetchContent, pinned tag+hash (M4); same pattern for osqp_vendor, nanoflann_vendor
+│       ├── gtsam_vendor/                  # FetchContent, pinned tag+hash (M5); same pattern for osqp_vendor, nanoflann_vendor
 │       ├── nuway_msgs/                    # ALL custom messages. No msgs elsewhere.
 │       │   ├── msg/
 │       │   └── CMakeLists.txt
@@ -79,10 +81,10 @@ nuway/
 │       ├── nuway_localization/            # C++
 │       │   ├── src/
 │       │   │   ├── gt_pose_node.cpp       # cheat twin (M0)
-│       │   │   ├── lidar_odometry_node.cpp        # M4
-│       │   │   ├── scan_to_map_node.cpp           # M4
-│       │   │   ├── smoother_node.cpp              # M4 (GTSAM fixed-lag)
-│       │   │   └── pose_extrapolator_node.cpp     # M4 (high-rate odom->base_link)
+│       │   │   ├── lidar_odometry_node.cpp        # M5
+│       │   │   ├── scan_to_map_node.cpp           # M5
+│       │   │   ├── smoother_node.cpp              # M5 (GTSAM fixed-lag)
+│       │   │   └── pose_extrapolator_node.cpp     # M5 (high-rate odom->base_link)
 │       │   └── tools/                     # offline mapping binaries
 │       ├── nuway_perception/
 │       │   ├── src/gt_perception_node.cpp # cheat twin: AgentArray + OccupancyGridMC from GT (M0/M2)
@@ -90,12 +92,12 @@ nuway/
 │       │   ├── nuway_perception/          # python
 │       │   │   ├── bevfusion_node.py      # inference (M3)
 │       │   │   ├── tracker.py             # velocity-projected NN association (M3)
-│       │   │   └── traffic_light_node.py  # (M3)
+│       │   │   └── traffic_light_node.py  # crop, classify, latch (M4)
 │       │   └── launch/
 │       ├── nuway_prediction/
 │       │   ├── src/const_vel_node.cpp     # M1
 │       │   ├── src/gt_prediction_node.cpp # cheat twin: future from CARLA log replay (eval only)
-│       │   └── nuway_prediction/flow_matching_node.py   # M6
+│       │   └── nuway_prediction/flow_matching_node.py   # M7
 │       ├── nuway_planning/                # C++ except learned_planner_node.py
 │       │   ├── src/
 │       │   │   ├── behavior_fsm.cpp / behavior_fsm_node.cpp      # M1
@@ -104,9 +106,9 @@ nuway/
 │       │   │   ├── rule_selector.cpp                             # M1
 │       │   │   ├── safety_layer_node.cpp                         # M1
 │       │   │   ├── planner_node.cpp        # orchestrates: candidates -> refine -> select
-│       │   │   ├── forward_sim_scorer.cpp  # M8
-│       │   │   └── ilqr.cpp                # M9
-│       │   ├── nuway_planning/learned_planner_node.py            # M7
+│       │   │   ├── forward_sim_scorer.cpp  # M9
+│       │   │   └── ilqr.cpp                # M10
+│       │   ├── nuway_planning/learned_planner_node.py            # M8
 │       │   └── include/nuway_planning/
 │       ├── nuway_control/                 # C++
 │       │   ├── src/
@@ -136,8 +138,8 @@ nuway/
 │   │   ├── data/
 │   │   │   ├── webdataset_io.py           # shard writer/reader
 │   │   │   ├── perception_dataset.py      # M2
-│   │   │   ├── planning_dataset.py        # M5
-│   │   │   ├── augment.py                 # occupancy noise, agent dropout (M5/M7)
+│   │   │   ├── planning_dataset.py        # M6
+│   │   │   ├── augment.py                 # occupancy noise, agent dropout (M6/M8)
 │   │   │   └── gt_occupancy.py            # GT occupancy generator (shared with ROS cheat node via CLI)
 │   │   ├── perception/                    # M3
 │   │   │   ├── model/
@@ -153,7 +155,13 @@ nuway/
 │   │   │   ├── decode.py                  # peak extraction, box decoding
 │   │   │   ├── metrics.py                 # mAP, occupancy IoU
 │   │   │   └── train.py
-│   │   ├── prediction/                    # M6
+│   │   ├── traffic_light/                 # M4
+│   │   │   ├── model.py                   # 4-layer crop CNN
+│   │   │   ├── projection.py              # map TL -> camera crop (shared with the node)
+│   │   │   ├── latch.py                   # visibility latch state machine (shared with the node)
+│   │   │   ├── metrics.py
+│   │   │   └── train.py
+│   │   ├── prediction/                    # M7
 │   │   │   ├── tokenizer.py               # scene -> tokens
 │   │   │   ├── scene_encoder.py
 │   │   │   ├── relpe.py                   # pairwise relative positional encoding
@@ -163,7 +171,7 @@ nuway/
 │   │   │   ├── aux_losses.py
 │   │   │   ├── metrics.py                 # ADE/FDE/minADE, collision rate
 │   │   │   └── train.py
-│   │   ├── planning/                      # M7
+│   │   ├── planning/                      # M8
 │   │   │   ├── planning_head.py
 │   │   │   ├── dagger.py
 │   │   │   └── train.py
@@ -179,10 +187,10 @@ nuway/
 │   │   └── fit_models.py
 │   ├── collect/                           # data collection clients
 │   │   ├── collect_perception.py          # M2 (rendered)
-│   │   ├── collect_planning.py            # M5 (no rendering)
-│   │   ├── expert/                        # privileged expert planner (M5)
+│   │   ├── collect_planning.py            # M6 (no rendering)
+│   │   ├── expert/                        # privileged expert planner (M6)
 │   │   └── scenarios/                     # scenario/route generation helpers
-│   ├── mapping/                           # M4 offline map building
+│   ├── mapping/                           # M5 offline map building
 │   ├── eval/
 │   │   ├── run_routes.py                  # entry point for evaluation harness
 │   │   └── compare_runs.py
@@ -192,7 +200,7 @@ nuway/
 ├── data/                                  # gitignored
 │   ├── raw/
 │   ├── shards/
-│   ├── maps/                              # point cloud maps per town (M4)
+│   ├── maps/                              # point cloud maps per town (M5)
 │   ├── checkpoints/
 │   └── eval_runs/
 │

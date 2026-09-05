@@ -15,7 +15,7 @@
 
 In: LTV-MPC, delay compensation, behavior FSM, lattice sampler, QP refinement (path + speed), rule-based selector, safety layer, const-vel prediction, Traffic Manager integration, infraction detection, driving score, run/compare tooling, Foxglove BEV layout.
 
-Out: learned anything; forward-sim selector (M8); iLQR (M9).
+Out: learned anything; forward-sim selector (M9); iLQR (M10).
 
 ## 2. Data flow
 
@@ -52,11 +52,16 @@ States and transitions (evaluated every cycle, hysteresis via timers):
 - **Lateral**: `KEEP` | `CHANGE_LEFT` | `CHANGE_RIGHT`. Change is requested when (a) the route requires it (route lane id ≠ current lane id and neighbor is on route) or (b) `overtake_enabled` and a lead vehicle is slower than `speed_limit − 3` for > 4 s and the target lane gap is clear (no agent within `[−15, +25]` m longitudinally in the target lane, using predictions at t = 0..3 s). A change commits for ≥ 3 s and aborts if the gap closes (target-lane agent predicted within 8 m).
 - **Longitudinal**: `FREE` | `FOLLOW` | `YIELD` | `STOP`.
   - `FOLLOW`: lead agent exists in current (or target) lane within 60 m ahead. Lead agent = nearest agent whose Frenet `d` is within lane half-width + 0.5 m and `s > s_ego`.
-  - `STOP`: red/yellow traffic light on the route with stop line ahead within stopping distance `v²/(2·2.5) + 5`; or stop sign not yet honored (honored = ego speed < 0.2 m/s within 3 m of stop line for 1 s); or goal reached.
+  - `STOP`: red traffic light on the route with stop line ahead within stopping distance `v²/(2·2.5) + 5`; yellow light per the dilemma-zone rule below; or stop sign not yet honored (honored = ego speed < 0.2 m/s within 3 m of stop line for 1 s); or goal reached.
   - `YIELD`: at an unsignalized junction, another agent predicted to occupy the conflict region before ego (conflict region = intersection of ego route polygon and agent predicted polygon within next 4 s). Also for pedestrians on/near crosswalks in ego path.
   - `FREE` otherwise.
 - `target_speed` = min(speed limit, curvature speed, FOLLOW-derived IDM desired speed).
 - `stop_s` for STOP: stop line `s` minus 1.0 m.
+- **Yellow (dilemma zone)**: evaluated once on the green→yellow edge and then latched until the light changes or the stop line is passed, so the decision never flips mid-approach. With `d_stop` = distance to stop line, `t_yellow` = remaining yellow time (GT: `get_yellow_time() − get_elapsed_time()`; learned (M4): conservative default 3 s minus elapsed since first observation), `a_comf = 2.5`, `t_react = 0.3`:
+  - `d_brake = v·t_react + v²/(2·a_comf)`. If `d_brake > d_stop` → cannot stop comfortably → **proceed** (treat as green).
+  - else if `d_stop / max(v, 0.1) > t_yellow` → will not clear the line before red → **STOP**.
+  - else → **proceed**.
+  - Unknown TL state (`state == 0`, or `confidence < 0.5` once M4 replaces GT): treat as red if `d_stop > d_brake`, otherwise proceed. Log the reason.
 
 Emit `BehaviorDecision` with `reason` string for logs.
 
@@ -179,7 +184,7 @@ Debug: publish predicted MPC trajectory as markers.
 - route deviation: > 30 m from the reference line
 - agent blocked: speed < 0.1 m/s for 90 s
 - route timeout: per-route time budget = route length / 5 m/s × 2 + 60 s
-- min speed infractions: skip in M1 (needs Leaderboard's speed-limit logic); add in M5/M7 when tuning for Leaderboard.
+- min speed infractions: skip in M1 (needs Leaderboard's speed-limit logic); add in M6/M8 when tuning for Leaderboard.
 
 **Score** (`driving_score.py`): Leaderboard 2.0 formula: `route_completion × Π penalty_i^{n_i}` with penalties collision_pedestrian 0.50, collision_vehicle 0.60, collision_layout 0.65, red_light 0.70, stop_sign 0.80, outside_lanes scales by fraction, route_dev/blocked/timeout → completion truncated. Keep the coefficients in `configs/eval/scoring_lb20.yaml` so that a `lb21` variant can be added later.
 
@@ -219,8 +224,9 @@ Foxglove layout `bev_planning.json`: agents (boxes by class), predictions (polyl
 
 ## 6. Decisions log
 
-- (2026-09-02) QP over iLQR for the classical path: convexity, feasibility detection, deterministic runtime. iLQR arrives in M9 for the learned path only.
+- (2026-09-02) QP over iLQR for the classical path: convexity, feasibility detection, deterministic runtime. iLQR arrives in M10 for the learned path only.
 - (2026-09-02) Path–speed decomposition rather than joint spatiotemporal optimization: simpler, matches Apollo, adequate for CARLA urban speeds.
+- (2026-09-05) Yellow-light handling is an explicit dilemma-zone rule with a latched decision, not "always stop" (rear-end risk, hard braking) nor "always go" (red-light infractions). The rule only consumes `TrafficLightArray`, so M4 swaps the source without touching the planner.
 
 ## 7. Open questions
 

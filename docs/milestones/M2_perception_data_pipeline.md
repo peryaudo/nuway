@@ -1,6 +1,6 @@
 # M2 — Perception data pipeline
 
-**Goal:** collect a labeled multi-sensor dataset from CARLA sufficient to train M3, with automatic labels that reflect what the sensors can actually see, and a ground-truth occupancy generator that is shared between the training labels and the runtime GT perception node.
+**Goal:** collect a labeled multi-sensor dataset from CARLA sufficient to train M3 and M4, with automatic labels that reflect what the sensors can actually see, and a ground-truth occupancy generator that is shared between the training labels and the runtime GT perception node.
 
 **Completion criteria**
 - [ ] ≥ 150k frames across Town01/02/03/04/05/06/07/10, ≥ 6 weather presets, day and night, traffic densities {low, medium, high}.
@@ -13,11 +13,11 @@
 
 ## 1. Design
 
-Two collection modes exist in this repo; M2 builds the rendered one. M5 builds the render-free one and reuses the same schema for everything except sensors.
+Two collection modes exist in this repo; M2 builds the rendered one. M6 builds the render-free one and reuses the same schema for everything except sensors.
 
 ```
 collect_perception.py (CARLA client, sync mode, no ROS)
-   ├─ spawn hero (autopilot via Traffic Manager for driving diversity; OR replay expert routes from M5 later)
+   ├─ spawn hero (autopilot via Traffic Manager for driving diversity; OR replay expert routes from M6 later)
    ├─ spawn sensor rig (same rig_dev.json as runtime) + semantic LiDAR + depth cams (label-only sensors)
    ├─ per tick: gather sensor data + GT actor states + TL states
    ├─ every N ticks (N=2 → 10 Hz): build a FrameRecord, run labelers, write to shard
@@ -57,7 +57,7 @@ class AgentLabel:
     n_lidar_pts: int
     cam_visible: list[str]        # cameras in which the box projects with >= min_px area and depth-visible
     history_base: np.ndarray      # [20,3] x,y,yaw at 0.1 s spacing in current base_link (NaN if unavailable)
-    future_map: np.ndarray        # [80,3] at 0.1 s in map frame (filled by post-pass, NaN beyond run end) — used by M5/M6; cheap to store now
+    future_map: np.ndarray        # [80,3] at 0.1 s in map frame (filled by post-pass, NaN beyond run end) — used by M6/M7; cheap to store now
 
 @dataclass
 class TLLabel:
@@ -80,7 +80,7 @@ An actor is `visible` if **either**:
 
 Label-only sensors: `sensor.lidar.ray_cast_semantic` co-located with `lidar_top` (identical attributes), `sensor.camera.depth` co-located with each RGB camera. These are never part of the runtime rig.
 
-Invisible agents are kept in the record with `visible=false` so prediction training (M5/M6) can still use them as context if desired; perception training masks them out of all losses (not just positives — they are also excluded from the negative heatmap region by a "don't care" mask of radius 1.5 × box size).
+Invisible agents are kept in the record with `visible=false` so prediction training (M6/M7) can still use them as context if desired; perception training masks them out of all losses (not just positives — they are also excluded from the negative heatmap region by a "don't care" mask of radius 1.5 × box size).
 
 ### 3.2 Box & velocity labels
 
@@ -115,7 +115,7 @@ For every traffic light whose stop line is within 60 m ahead on lanes reachable 
 
 ### 3.5 History/future post-pass
 
-After a run finishes, `postprocess_run.py` walks the run's frames in order and fills `history_base` and `future_map` for every agent id from the recorded per-frame poses (kept in a run-level `trajectories.parquet` sidecar written during collection: `[frame_idx, agent_id, x, y, yaw, vx, vy]` in map frame). This makes the perception shards immediately reusable for M5 without re-collection.
+After a run finishes, `postprocess_run.py` walks the run's frames in order and fills `history_base` and `future_map` for every agent id from the recorded per-frame poses (kept in a run-level `trajectories.parquet` sidecar written during collection: `[frame_idx, agent_id, x, y, yaw, vx, vy]` in map frame). This makes the perception shards immediately reusable for M6 without re-collection.
 
 ## 4. Collection protocol
 
@@ -127,7 +127,7 @@ traffic: [{vehicles: 20, walkers: 10}, {vehicles: 60, walkers: 30}, {vehicles: 1
 runs_per_combo: 1
 run_length_s: 300
 frame_stride: 2        # 10 Hz from 20 Hz sim
-hero_driver: traffic_manager      # replaced by expert in M5
+hero_driver: traffic_manager      # replaced by expert in M6
 seed_base: 1000
 ```
 Hero driven by Traffic Manager autopilot with randomized `distance_to_leading_vehicle` and `vehicle_percentage_speed_difference` per run, so viewpoints vary. Ego collisions do not stop a run (they're fine for perception data; they're flagged in the manifest).
@@ -172,8 +172,8 @@ Subscribes GT agents, semantic LiDAR (a label-only sensor is allowed in the GT p
 
 ## 8. Decisions log
 
-- (2026-09-02) Store `future_map` in perception records even though M2 doesn't use it: avoids re-collection for M5.
-- (2026-09-02) Hero driven by Traffic Manager in M2 (viewpoint diversity, no expert needed yet). M5 switches to the expert and re-collects a planning-focused set without rendering.
+- (2026-09-02) Store `future_map` in perception records even though M2 doesn't use it: avoids re-collection for M6.
+- (2026-09-02) Hero driven by Traffic Manager in M2 (viewpoint diversity, no expert needed yet). M6 switches to the expert and re-collects a planning-focused set without rendering.
 
 ## 9. Open questions
 

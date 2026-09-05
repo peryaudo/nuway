@@ -100,7 +100,7 @@ Prefix everything with `/nuway/` except CARLA-native topics.
 | `/nuway/planning/candidates` | `nuway_msgs/TrajectoryCandidates` | planner_node (all candidates with scores, for viz) |
 | `/nuway/planning/trajectory` | `nuway_msgs/Trajectory` | planner_node (selected, refined) |
 | `/nuway/planning/safe_trajectory` | `nuway_msgs/Trajectory` | safety_layer_node (what control actually follows) |
-| `/nuway/planning/learned_candidates` | `nuway_msgs/TrajectoryCandidates` | learned_planner_node (M7) |
+| `/nuway/planning/learned_candidates` | `nuway_msgs/TrajectoryCandidates` | learned_planner_node (M8) |
 
 ### 3.8 Control
 | Topic | Type | Producer |
@@ -256,7 +256,7 @@ int32 selected_index
 ```
 # PredictionSamples.msg
 std_msgs/Header header            # frame_id: "map"
-uint32[] agent_ids                # A agents (ego excluded here; ego samples in M7 go to learned_candidates)
+uint32[] agent_ids                # A agents (ego excluded here; ego samples in M8 go to learned_candidates)
 uint8 num_samples                 # S
 uint8 num_timesteps               # T
 float32 dt                        # 0.5 s
@@ -323,9 +323,9 @@ use_gt:
   traffic_lights: true
   prediction: false          # const-vel is not GT; GT prediction only in offline eval
 planning:
-  candidate_sources: [lattice]        # + learned (M7)
-  refiner: qp                          # qp | ilqr (M9)
-  selector: rule                       # rule | forward_sim (M8)
+  candidate_sources: [lattice]        # + learned (M8)
+  refiner: qp                          # qp | ilqr (M10)
+  selector: rule                       # rule | forward_sim (M9)
 control:
   controller: mpc                      # pure_pursuit | mpc
 ```

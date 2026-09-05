@@ -1,11 +1,11 @@
-# M5 — Planning data pipeline (privileged expert + render-free collection)
+# M6 — Planning data pipeline (privileged expert + render-free collection)
 
-**Goal:** produce a large prediction/planning dataset (millions of frames) with a high-quality expert as planning teacher, collected without rendering at high throughput; add planner-side augmentation and an open-loop evaluation to validate the data before M6/M7 depend on it.
+**Goal:** produce a large prediction/planning dataset (millions of frames) with a high-quality expert as planning teacher, collected without rendering at high throughput; add planner-side augmentation and an open-loop evaluation to validate the data before M7/M8 depend on it.
 
 **Completion criteria**
 - [ ] ≥ 3M frames (10 Hz) across ≥ 8 towns, all weathers (weather doesn't matter for state-only data but is logged), 3 traffic densities, scenario-runner-style scenarios (see §4).
 - [ ] Expert (privileged, GT state) achieves driving score ≥ 85 on the M1 protocol (10 routes × 3 weathers, Town03/05) and ≥ 70 on the Leaderboard-2.0-style scenario routes in §4.
-- [ ] Open-loop check: a small model (the M6 encoder with a regression head, trained for 1 day) reaches minADE@3s (K=6) < 0.6 m for vehicles, and beats constant-velocity ADE@3s by ≥ 40%.
+- [ ] Open-loop check: a small model (the M7 encoder with a regression head, trained for 1 day) reaches minADE@3s (K=6) < 0.6 m for vehicles, and beats constant-velocity ADE@3s by ≥ 40%.
 - [ ] `PlanningDataset` throughput ≥ 2000 frames/s with 8 workers.
 - [ ] Data sanity report: label coverage (fraction of agents with full 8 s future), expert intent histogram, ego speed/accel distributions, collision-free fraction of expert runs.
 
@@ -20,7 +20,7 @@
 
 ## 2. Privileged expert (`tools/collect/expert/`)
 
-A rule-based planner with GT access, in the spirit of PDM-Lite, reusing M1 components where possible (import the C++ lattice/QP via a pybind module `nuway_planning_py`, built in M5; or reimplement a simplified version in numpy — **decision: pybind the M1 planner**, so the expert and the runtime fallback share behavior).
+A rule-based planner with GT access, in the spirit of PDM-Lite, reusing M1 components where possible (import the C++ lattice/QP via a pybind module `nuway_planning_py`, built in M6; or reimplement a simplified version in numpy — **decision: pybind the M1 planner**, so the expert and the runtime fallback share behavior).
 
 Expert = M1 stack (FSM + lattice + QP + rule selector) with these privileged replacements:
 - Perception: GT agents (omniscient, no visibility filter), GT traffic lights.
@@ -52,7 +52,7 @@ class PlanningFrame:
 - `drivable`, `dynamic`, `height_max` as in M2 (height from the static map).
 - `visible_hero_view` per agent: the same 2-D raycast test hitting the agent box before any occluder.
 
-This keeps M5 frames consistent with what the M3 perception would plausibly output, without rendering.
+This keeps M6 frames consistent with what the M3 perception would plausibly output, without rendering.
 
 ## 4. Scenario coverage
 
@@ -67,13 +67,13 @@ ChauffeurNet-style perturbation is *recorded from the expert*, not synthesized:
 
 ## 6. Dataset loader & augmentation
 
-`PlanningDataset` yields token-ready tensors (see M6 §2 for the tokenizer interface): agent histories `[A,20,C]`, map polylines `[M,20,C]` (resolved from per-town LaneGraph cache by id), route `[R,C]`, TL tokens, occupancy `[6,200,200]`, ego/agent futures, masks. Normalization into ego frame at `t0` happens in the loader (`frames.py`).
+`PlanningDataset` yields token-ready tensors (see M7 §2 for the tokenizer interface): agent histories `[A,20,C]`, map polylines `[M,20,C]` (resolved from per-town LaneGraph cache by id), route `[R,C]`, TL tokens, occupancy `[6,200,200]`, ego/agent futures, masks. Normalization into ego frame at `t0` happens in the loader (`frames.py`).
 
 `augment.py` (planning part):
 - Occupancy noise: cell dropout 0–15%, Gaussian blur σ ∈ [0, 1] cell, probability squash, random "unknown" wedges.
 - Agent dropout 0–10% (visible agents), position jitter σ = 0.15 m, velocity jitter σ = 0.3 m/s, history truncation (random `history_len` ≥ 5).
 - Random SE(2) of the whole scene (only for models without built-in invariance tests; kept as an option).
-Level of noise is scheduled by the training config so M7's DAgger can turn it down as real perception data enters the mix.
+Level of noise is scheduled by the training config so M8's DAgger can turn it down as real perception data enters the mix.
 
 ## 7. Open-loop evaluation (`nuway_ml/prediction/metrics.py`, `ml/scripts/eval_openloop.py`)
 
@@ -89,8 +89,8 @@ minADE/minFDE (K = 6) at 3 s / 8 s per class, miss rate @2 m, collision rate bet
 6. [ ] `collect_planning.py`, `launch_farm.sh`, resume/manifest; perturbation recording.
 7. [ ] `PlanningDataset`, `augment.py` (planning), throughput test.
 8. [ ] `metrics.py`, `eval_openloop.py`, constant-velocity baselines.
-9. [ ] Train the M6 encoder + regression head (K=6 modes, WTA) as the data-validation model; report.
-10. [ ] Sanity report; fix schema gaps **before** M6 starts.
+9. [ ] Train the M7 encoder + regression head (K=6 modes, WTA) as the data-validation model; report.
+10. [ ] Sanity report; fix schema gaps **before** M7 starts.
 
 ## 9. Decisions log
 

@@ -142,7 +142,7 @@ This controller stays in the repo permanently as the simplest possible fallback 
 
 ### 2.8 `nuway_localization/gt_pose_node` (C++)
 
-Subscribes `/nuway/gt/ego_odom` (20 Hz). Publishes `/nuway/loc/pose` at 100 Hz by constant-velocity forward propagation between GT updates (so downstream sees the same rate profile as M4), `map→odom` (identity) and `odom→base_link` TF. Optional `noise:` params (translation σ, yaw σ, latency) to stress downstream before M4 exists.
+Subscribes `/nuway/gt/ego_odom` (20 Hz). Publishes `/nuway/loc/pose` at 100 Hz by constant-velocity forward propagation between GT updates (so downstream sees the same rate profile as M5), `map→odom` (identity) and `odom→base_link` TF. Optional `noise:` params (translation σ, yaw σ, latency) to stress downstream before M5 exists.
 
 ### 2.9 `nuway_perception/gt_perception_node` (C++) — minimal in M0
 

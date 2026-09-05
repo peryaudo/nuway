@@ -39,15 +39,16 @@ These apply to every milestone. Violating them requires updating this document f
 | M0 | Bring-up | CARLA native ROS 2 connection, world manager, OpenDRIVE map server, route planner, vehicle system ID, pure-pursuit + PID controller. All perception/localization from GT. | 10 routes completed in empty towns, lateral error < 0.3 m |
 | M1 | Classical planning | LTV-MPC, behavior FSM, Frenet lattice sampler, piecewise-jerk QP refinement, rule-based selector, safety layer, constant-velocity prediction, evaluation harness. | Driving score > 40 on Town03/05, 10 routes × 3 weathers, reproducible |
 | M2 | Perception data pipeline | Sensor-rich data collection, auto-labeling with visibility filtering, GT occupancy generator, WebDataset shards. | ≥ 150k labeled frames across ≥ 6 towns; dataset loader test passes |
-| M3 | BEV perception | BEVFusion-lite (LiDAR + 4 cameras), temporal fusion, CenterPoint heads with velocity, occupancy head, NN tracker, traffic light classifier. Replaces GT perception. | Vehicle mAP > 0.6; driving score drop vs GT perception < 20% |
-| M4 | Localization | KISS-ICP-style LiDAR odometry, offline mapping, scan-to-map registration, fixed-lag smoother (GTSAM), TF publisher. Replaces GT pose. **Milestone: the stack drives with zero GT.** | ATE < 0.2 m; driving score drop vs GT pose < 10% |
-| M5 | Planning data pipeline | Privileged expert planner, render-free high-throughput collection, prediction/planning labels, noise injection, open-loop eval. | ≥ 3M frames; a small model beats constant velocity on ADE@3s |
-| M6 | Flow-matching prediction | Scene encoder, flow-matching velocity net, joint multi-agent sampling. Planner remains lattice; prediction becomes learned. | Driving score ≥ M1 + 10 |
-| M7 | Learned planning head + DAgger | Ego planning head on the shared encoder, QP refinement of learned output, DAgger loop, runtime fallback logic. | Beats lattice baseline on driving score and intervention rate |
-| M8 | Forward-sim selector | Batched kinematic rollout scorer over all candidates; two-stage selection. | Measurable score gain over rule-based selector |
-| M9 | iLQR refinement | iLQR replaces QP on the ML-planner path; optional guidance in sampling. | No regression vs QP; smoother control effort |
+| M3 | BEV perception | BEVFusion-lite (LiDAR + 4 cameras), temporal fusion, CenterPoint heads with velocity, occupancy head, NN tracker. Replaces GT agents/occupancy. | Vehicle mAP > 0.6; driving score drop vs GT perception < 20% |
+| M4 | Traffic light perception | Map-projected crop classifier, lane–traffic-light association verified against CARLA on every town, visibility latch near the stop line. Replaces GT traffic lights. | State accuracy > 0.97 within 40 m; red-light infractions ≤ 1.5× GT |
+| M5 | Localization | KISS-ICP-style LiDAR odometry, offline mapping, scan-to-map registration, fixed-lag smoother (GTSAM), TF publisher. Replaces GT pose. **Milestone: the stack drives with zero GT.** | ATE < 0.2 m; driving score drop vs GT pose < 10% |
+| M6 | Planning data pipeline | Privileged expert planner, render-free high-throughput collection, prediction/planning labels, noise injection, open-loop eval. | ≥ 3M frames; a small model beats constant velocity on ADE@3s |
+| M7 | Flow-matching prediction | Scene encoder, flow-matching velocity net, joint multi-agent sampling. Planner remains lattice; prediction becomes learned. | Driving score ≥ M1 + 10 |
+| M8 | Learned planning head + DAgger | Ego planning head on the shared encoder, QP refinement of learned output, DAgger loop, runtime fallback logic. | Beats lattice baseline on driving score and intervention rate |
+| M9 | Forward-sim selector | Batched kinematic rollout scorer over all candidates; two-stage selection. | Measurable score gain over rule-based selector |
+| M10 | iLQR refinement | iLQR replaces QP on the ML-planner path; optional guidance in sampling. | No regression vs QP; smoother control effort |
 
-Dependencies: M0 → M1 → M2 → M3 → M4 → M5 → M6 → M7 → M8 → M9. M2 and M5 share code; M5 extends M2. M8 could be done before M7 if desired; M9 is optional.
+Dependencies: M0 → M1 → M2 → M3 → M4 → M5 → M6 → M7 → M8 → M9 → M10. M2 and M6 share code; M6 extends M2. M4 depends only on M2 (labels) and M0 (map), so it can run in parallel with M3. M9 could be done before M8 if desired; M10 is optional.
 
 ## 4. Environment
 
@@ -74,6 +75,7 @@ CARLA launch (development):
 |-------|------|--------|
 | CARLA tick incl. 4 cams (704×256) + 32-ch LiDAR | 20 Hz sim | ≤ 35 ms |
 | LiDAR preprocessing + BEVFusion-lite (fp16) | 10 Hz | ≤ 40 ms |
+| Traffic light crop + classifier | 10 Hz | ≤ 5 ms |
 | LiDAR odometry + smoother | 10 Hz | ≤ 20 ms (CPU) |
 | Prediction (encoder + 6 Euler steps × 16 samples) | 10 Hz | ≤ 25 ms |
 | Lattice / QP / iLQR / selector | 10 Hz | ≤ 15 ms |

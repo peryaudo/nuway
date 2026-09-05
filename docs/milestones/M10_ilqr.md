@@ -1,9 +1,9 @@
-# M9 — iLQR refinement on the ML-planner path (+ optional guidance)
+# M10 — iLQR refinement on the ML-planner path (+ optional guidance)
 
 **Goal:** replace the piecewise-jerk QP refinement of *learned* candidates with an iLQR refinement that optimizes the full nonlinear kinematic model jointly in space and time (no path–speed decomposition), with smooth non-convex obstacle costs derived from prediction samples and occupancy. The classical (lattice) path keeps the QP. Optionally, use the same differentiable costs as guidance inside flow-matching sampling.
 
 **Completion criteria**
-- [ ] No regression in driving score vs M8 (QP refinement) on the M1 protocol and scenario routes; improvement in comfort metrics (mean |jerk| ↓ ≥ 10%, max |a_lat| ↓) and in tracking error of MPC (mean lateral tracking error ↓).
+- [ ] No regression in driving score vs M9 (QP refinement) on the M1 protocol and scenario routes; improvement in comfort metrics (mean |jerk| ↓ ≥ 10%, max |a_lat| ↓) and in tracking error of MPC (mean lateral tracking error ↓).
 - [ ] iLQR refinement of K=8 candidates ≤ 8 ms p50 (C++, threaded), converged (cost decrease < 1e-3 relative) in ≤ 8 iterations from a learned-trajectory warm start in ≥ 95% of cycles.
 - [ ] Unit tests: gradient/Hessian checks vs finite differences; regularization/line-search behavior on a contrived non-convex obstacle case; warm-start speedup measured.
 - [ ] Guidance (if enabled): sample collision rate ↓ ≥ 30% with ≤ 1.6× sampling latency; documented on/off comparison.
@@ -25,7 +25,7 @@ l_t(x,u) = w_ref(t) · ‖p(x_t) − p_ref(t)‖²_(lon/lat weighted)          #
          + w_lim · [softplus(|δ|−δ_max) + softplus(a − a_max) + softplus(a_min − a)]      # soft input limits
 l_N(x)   = terminal versions of the tracking terms with 5× weights
 ```
-`w_ref(t) = w_0 · exp(−t / 4 s)` as in M7. Agent costs use the same per-candidate sample weighting as M7 (own sample 0.6, marginal 0.4).
+`w_ref(t) = w_0 · exp(−t / 4 s)` as in M8. Agent costs use the same per-candidate sample weighting as M8 (own sample 0.6, marginal 0.4).
 
 ## 2. Algorithm
 
@@ -69,7 +69,7 @@ Implemented in the runtime node behind `prediction.guidance.enabled`; `s_0` tune
 2. [ ] Cost terms (tracking, comfort, agent samples, occupancy, bounds, limits) with analytic derivatives; tests.
 3. [ ] Warm-start inversion from trajectories; tests.
 4. [ ] `planner_node` integration (per-source refiner), config, diag; timing.
-5. [ ] Closed-loop comparison QP vs iLQR (same checkpoints); comfort/tracking metrics; report `data/eval_runs/m9_report.md`.
+5. [ ] Closed-loop comparison QP vs iLQR (same checkpoints); comfort/tracking metrics; report `data/eval_runs/m10_report.md`.
 6. [ ] Guidance in sampler + node flag; open-loop and closed-loop on/off comparison.
 7. [ ] Update Foxglove candidate table with iLQR diag columns.
 

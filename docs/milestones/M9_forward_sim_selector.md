@@ -1,11 +1,11 @@
-# M8 — Forward-simulation selector
+# M9 — Forward-simulation selector
 
 **Goal:** replace the purely rule-based scoring of candidates with a closed-loop forward simulation of each candidate: the ego tracks the candidate with a simple controller in a lightweight simulator while other agents follow their predicted samples (or a reactive IDM fallback), and the outcome (collisions, progress, comfort, rule compliance) is scored. Two-stage selection: cheap rule scoring → top-K → forward-sim → final choice.
 
 **Completion criteria**
-- [ ] Driving score improves over M7 (same protocol, same checkpoints) by a measurable margin (≥ 3 points) **or** the collision rate drops by ≥ 25% at equal or better route completion.
+- [ ] Driving score improves over M8 (same protocol, same checkpoints) by a measurable margin (≥ 3 points) **or** the collision rate drops by ≥ 25% at equal or better route completion.
 - [ ] Forward simulation of K=16 candidates × S=16 prediction samples × 50 steps ≤ 3 ms on GPU (torch, batched) or ≤ 8 ms on CPU (Eigen, batched over candidates).
-- [ ] Selector is deterministic; no chattering regression (mode switch rate ≤ M7).
+- [ ] Selector is deterministic; no chattering regression (mode switch rate ≤ M8).
 - [ ] Ablation table in the report: rule-only vs forward-sim, with predicted-sample agents vs reactive-IDM agents.
 
 ---
@@ -76,7 +76,7 @@ Defaults: `w_col=1000, w_ttc=50, w_prox=10, w_prog=30, w_off=200, w_rule=500, w_
 
 ## 4. Evaluation
 
-- M1 protocol + M5 scenario routes with M7 checkpoints, four configs: `{rule, forward_sim} × {sample, reactive}`; plus `mix`. Report table with driving score, collision counts by type, completion, comfort, selector cycle time.
+- M1 protocol + M6 scenario routes with M8 checkpoints, four configs: `{rule, forward_sim} × {sample, reactive}`; plus `mix`. Report table with driving score, collision counts by type, completion, comfort, selector cycle time.
 - Sanity on synthetic scenes (`tests/test_forward_sim_scenarios.py`): cut-in vehicle → the "brake" candidate wins; slow lead + clear left lane → the lane-change candidate wins; pedestrian stepping in → stop candidate wins.
 
 ## 5. Task list
@@ -86,7 +86,7 @@ Defaults: `w_col=1000, w_ttc=50, w_prox=10, w_prog=30, w_off=200, w_rule=500, w_
 3. [ ] Agent Mode B (IDM along lane) in C++; tests (agent brakes for ego).
 4. [ ] `planner_node` two-stage selection, diversity guard, breakdown publishing; config `configs/planning/forward_sim.yaml`.
 5. [ ] Foxglove "sim rollout" layer.
-6. [ ] Ablation runs and report `data/eval_runs/m8_report.md`.
+6. [ ] Ablation runs and report `data/eval_runs/m9_report.md`.
 
 ## 6. Decisions log
 

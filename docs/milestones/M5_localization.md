@@ -1,4 +1,4 @@
-# M4 — Localization (LiDAR odometry + prior map + fixed-lag factor graph)
+# M5 — Localization (LiDAR odometry + prior map + fixed-lag factor graph)
 
 **Goal:** replace GT pose with a factor-graph localization pipeline: KISS-ICP-style LiDAR odometry as front-end, an offline-built point-cloud map per town, online scan-to-map registration, and a GTSAM fixed-lag smoother fusing odometry, scan-to-map, IMU preintegration, and GNSS. High-rate `odom→base_link` via IMU/wheel-speed forward propagation. **After this milestone the stack runs with `use_gt.* = false` everywhere.**
 
@@ -7,7 +7,7 @@
 - [ ] Lateral position error at 100 Hz output < 0.15 m p95 (this is what lane keeping needs).
 - [ ] `map→odom` corrections are smooth: no jump > 0.3 m / 2° between consecutive 10 Hz updates in steady state.
 - [ ] Initialization from GNSS + heading search succeeds within 3 s from a standstill anywhere on the road.
-- [ ] Closed-loop: profile `m4_no_gt.yaml` (learned perception + learned localization) scores ≥ 90% of the `m3_learned_perception` score on the M1 protocol.
+- [ ] Closed-loop: profile `m5_no_gt.yaml` (learned perception + learned traffic lights + learned localization) scores ≥ 90% of the `m4_learned_tl` score on the M1 protocol.
 - [ ] Localization node chain CPU time ≤ 20 ms per 10 Hz cycle.
 
 ---
@@ -93,7 +93,7 @@ On start or on `/nuway/sim/reset`: wait for GNSS → position prior; heading: sa
 7. [ ] `pose_extrapolator.cpp` + node; TF publishing; parity with `gt_pose_node` output rate/format.
 8. [ ] Initialization; test from 20 random spawn points.
 9. [ ] `eval_localization.py`; achieve ATE criteria; tune noise models; record in Decisions log.
-10. [ ] Profile `m4_no_gt.yaml`; closed-loop eval; report.
+10. [ ] Profile `m5_no_gt.yaml`; closed-loop eval; report.
 11. [ ] `tests/integration/test_m4_no_gt.py` (short route, learned perception + localization, asserts completion).
 
 ## 5. Decisions log

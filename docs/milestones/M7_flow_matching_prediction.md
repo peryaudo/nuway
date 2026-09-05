@@ -1,12 +1,12 @@
-# M6 — Flow-matching joint behavior prediction
+# M7 — Flow-matching joint behavior prediction
 
 **Goal:** replace constant-velocity prediction with a learned, joint, multi-modal prediction model: a scene encoder over agent/map/route/traffic-light/occupancy tokens and a flow-matching velocity network that generates S joint samples of all agents' futures. The ego is included in the generated tensor (for joint consistency) but the ego channel is **not** used for planning in this milestone; the planner remains M1's lattice.
 
 **Completion criteria**
-- [ ] Open-loop (held-out Town07 + 10% of other towns): vehicles minADE@8s (S=16) < 1.2 m, minFDE@8s < 2.8 m; pedestrians minADE@8s < 0.8 m; sample collision rate (agent–agent overlap within a sample) < 2%; offroad rate < 3%. Beats the M5 regression baseline on minADE.
+- [ ] Open-loop (held-out Town07 + 10% of other towns): vehicles minADE@8s (S=16) < 1.2 m, minFDE@8s < 2.8 m; pedestrians minADE@8s < 0.8 m; sample collision rate (agent–agent overlap within a sample) < 2%; offroad rate < 3%. Beats the M6 regression baseline on minADE.
 - [ ] Invariance tests pass: rotating/translating the scene rotates/translates outputs (max deviation < 5 cm); occupancy perturbation test changes predictions near the inserted obstacle.
 - [ ] Runtime: encoder + 6 Euler steps × 16 samples ≤ 25 ms p50 on the 3090 Ti in fp16, 10 Hz.
-- [ ] Closed-loop: profile `m6_learned_prediction.yaml` (no GT anywhere, lattice planner) driving score ≥ M4 score + 10 on the M1 protocol; collisions with vehicles at junctions reduced by ≥ 30% vs M4.
+- [ ] Closed-loop: profile `m7_learned_prediction.yaml` (no GT anywhere, lattice planner) driving score ≥ M5 score + 10 on the M1 protocol; collisions with vehicles at junctions reduced by ≥ 30% vs M5.
 
 ---
 
@@ -77,14 +77,14 @@ loss = loss_fm + loss_aux
 - `aux_losses.py`: `kinematic` = penalty on |curvature| > κ_max and |accel| > 4 m/s² from finite differences (vehicles only); `collision` = soft overlap between agent discs across pairs at each t; `offroad` = `1 − drivable` sampled along each vehicle's trajectory (bilinear, differentiable) + `occupied` sampled likewise. Weights start at 0 for the first 2 epochs, ramp to `w_kin=0.1, w_col=0.5, w_road=0.5`.
 - Invisible agents (`visible=false`) are context but not loss targets.
 - AdamW lr 3e-4, cosine, batch 64, 30 epochs on 3M frames (≈ 1.5 days on the 3090 Ti in fp16). EMA weights 0.999 used for eval/export.
-- Validation each epoch: sample S=16 with 6 Euler steps, compute metrics from M5 §7, render 16 fixed scenes with samples.
+- Validation each epoch: sample S=16 with 6 Euler steps, compute metrics from M6 §7, render 16 fixed scenes with samples.
 
-Sampler (`flow_matching.py: sample`): Euler, `n_steps` configurable (train-time eval uses 6; also report 1, 2, 4, 8, 16 in a table). Optional cost guidance hook (used in M9).
+Sampler (`flow_matching.py: sample`): Euler, `n_steps` configurable (train-time eval uses 6; also report 1, 2, 4, 8, 16 in a table). Optional cost guidance hook (used in M10).
 
 ## 6. Runtime node (`nuway_prediction/flow_matching_node.py`)
 
 - Subscribes agents (base_link), lane graph (latched; tokenizer caches per-lane polylines), reference line, traffic lights, occupancy, pose.
-- Builds tokens on GPU (numpy→torch, pinned), runs encoder once, samples S=16, denormalizes, transforms to `map` frame, publishes `PredictionSamples` with `sample_weight = 1/S`. Ego channel dropped from the message (M7 publishes ego samples separately).
+- Builds tokens on GPU (numpy→torch, pinned), runs encoder once, samples S=16, denormalizes, transforms to `map` frame, publishes `PredictionSamples` with `sample_weight = 1/S`. Ego channel dropped from the message (M8 publishes ego samples separately).
 - Agent slot limit: nearest 31 + ego; others beyond are given constant-velocity futures by the node (published in the same message) so downstream never loses an agent.
 - `torch.compile` fp16; CUDA graph for the velocity net loop if needed. Diag breakdown: tokenize / encoder / sampling / postprocess.
 
@@ -104,16 +104,16 @@ Sampler (`flow_matching.py: sample`): Euler, `n_steps` configurable (train-time 
 4. [ ] `train.py`, config, `compute_norm_stats.py`; short overfit run on 1k frames (loss → ~0, samples reproduce futures).
 5. [ ] Full training; open-loop report; step-count table.
 6. [ ] `flow_matching_node.py`; export; latency benchmark; Foxglove prediction layer (samples as faded polylines, per-agent).
-7. [ ] Closed-loop eval with lattice planner; compare vs M4; junction collision analysis.
+7. [ ] Closed-loop eval with lattice planner; compare vs M5; junction collision analysis.
 8. [ ] `tests/integration/test_m6.py`.
 
 ## 9. Decisions log
 
 - (2026-09-02) Flow matching (rectified-flow parametrization, x-independent linear path, logit-normal t) instead of DDPM/DDIM: fewer sampling steps, simpler code; same guidance capability.
 - (2026-09-02) One token per agent for the whole trajectory in the velocity net (T folded into the feature dim). Time-tokenized variant deferred.
-- (2026-09-02) Ego is generated jointly but unused in M6 planning.
+- (2026-09-02) Ego is generated jointly but unused in M7 planning.
 
 ## 10. Open questions
 
 - S=16 vs 32 samples: latency vs coverage. Measure minADE vs S on validation; pick the knee.
-- Whether route tokens leak "GT-like" intent for the ego channel that other agents shouldn't see. They should only attend to the ego's slots… leave as is (all tokens visible) unless ego-conditioning artifacts appear in M7.
+- Whether route tokens leak "GT-like" intent for the ego channel that other agents shouldn't see. They should only attend to the ego's slots… leave as is (all tokens visible) unless ego-conditioning artifacts appear in M8.

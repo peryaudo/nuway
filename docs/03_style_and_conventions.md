@@ -106,7 +106,7 @@ Extra project rules:
 - `//` comments only. No `/* */` blocks except for the license/file header if one is ever added.
 - Every header starts with a one-paragraph comment stating what the file provides and which milestone introduced it. Every non-trivial class and every public function has a comment describing *what* it does and its contract (units, frames, preconditions, failure behavior), not *how*.
 - Doxygen markup is not used. Plain sentences, full stops.
-- `TODO(username): text` or `TODO(M4): text` for work deferred to a milestone. No bare `TODO`.
+- `TODO(username): text` or `TODO(M5): text` for work deferred to a milestone. No bare `TODO`.
 - Comment frames and units at every boundary: `// Pose of base_link in map frame, ROS convention (x forward, y left).`
 
 ### 2.8 Formatting
@@ -574,7 +574,7 @@ Extra project rules:
 
 - PEP 257 docstrings (`convention = "pep257"`): one-line summary in the imperative, blank line, then details. Every public module, class and function has one; private helpers when non-obvious.
 - State frames, units, and shapes at every interface, exactly as in C++ (§2.7): `"""Return agent poses in the map frame (ROS convention), shape (N, 3) as x, y, yaw_rad."""`
-- `# TODO(username): text` or `# TODO(M4): text`. No bare `TODO`.
+- `# TODO(username): text` or `# TODO(M5): text`. No bare `TODO`.
 - Module docstring first line states what the module provides and which milestone introduced it.
 
 ### 9.5 Language and library rules

@@ -1,12 +1,11 @@
 # M3 — BEV perception (BEVFusion-lite + temporal fusion + CenterPoint heads + occupancy)
 
-**Goal:** replace GT perception with a learned LiDAR+camera BEV model that outputs the same `AgentArray` (with velocities, IDs, and history) and `OccupancyGridMC`, plus a traffic-light classifier. No Kalman filter: velocities are regressed by the network; IDs come from velocity-projected nearest-neighbor association.
+**Goal:** replace GT perception with a learned LiDAR+camera BEV model that outputs the same `AgentArray` (with velocities, IDs, and history) and `OccupancyGridMC`. Traffic lights stay on GT in this milestone (learned in M4). No Kalman filter: velocities are regressed by the network; IDs come from velocity-projected nearest-neighbor association.
 
 **Completion criteria**
 - [ ] Offline: vehicle mAP@BEV-IoU0.5 > 0.6, pedestrian AP@0.3 > 0.4 on a held-out town (Town07), velocity error (AVE) < 0.6 m/s for vehicles; occupancy IoU (`occupied`) > 0.6, (`drivable`) > 0.85.
-- [ ] Traffic light state accuracy > 0.97 on crops within 40 m.
 - [ ] Runtime: end-to-end perception node ≤ 40 ms p50 / 60 ms p99 (fp16, CUDA graphs or TensorRT), 10 Hz, including preprocessing and tracking.
-- [ ] Closed-loop: M1 stack with `use_gt.perception=false`, `use_gt.localization=true` scores ≥ 80% of the GT-perception score on the M1 protocol; no infraction category increases by > 2× (esp. collisions with static obstacles and red lights).
+- [ ] Closed-loop: M1 stack with `use_gt.perception=false`, `use_gt.localization=true` scores ≥ 80% of the GT-perception score on the M1 protocol; no infraction category increases by > 2× (esp. collisions with static obstacles).
 - [ ] Tracker: ID switches < 0.1 per agent-minute on GT-eval sequences.
 
 ---
@@ -45,9 +44,6 @@ Concat-and-conv, no recurrence:
 
 **Occupancy head** (`occupancy_head.py`): 2 × 3×3 conv → `[6,200,200]`; sigmoid for probability channels (BCE + Dice for `occupied`, `free`, `drivable`, `dynamic`), softmax constraint for `occupied/free/unknown` triple (train as 3-way CE, derive `unknown`), L1 for `height_max` on occupied cells. Loss weights: occupied 2, free 1, drivable 1, dynamic 0.5, height 0.5.
 
-### 1.6 Traffic light classifier (`traffic_light.py`)
-Separate tiny CNN (4 conv layers, 64×64 crop, 4-class softmax + `visible` logit). Crops at runtime come from projecting map TL positions (`LaneGraph` + `T_map_from_base` + camera intrinsics) into `cam_front` (and `cam_left/right` at junctions). Trained on M2 TL labels with color jitter and random crop offsets ±20%.
-
 ## 2. Training (`nuway_ml/perception/train.py`)
 
 - Config `configs/training/bevfusion_lite.yaml` (OmegaConf). AMP fp16, AdamW lr 2e-4 (backbone 1e-4), cosine, 24 epochs, batch 4 with grad accumulation 2, EMA weights 0.999.
@@ -79,12 +75,9 @@ Subscribes `/carla/hero/lidar_top`, transforms to `base_link` (static TF), crops
 - Decodes, tracks, publishes `AgentArray` (base_link, stamp = LiDAR stamp) and `OccupancyGridMC` (post-processed: `unknown = 1 − occupied − free` clamped; `occupied` thresholded softly).
 - Publishes `NodeDiag` with breakdown: preproc, model, decode, track.
 
-### 4.3 `traffic_light_node.py`
-Subscribes `cam_front` (+ `cam_left/right` when `behavior` indicates a junction or when TL azimuth > 40°), lane graph, pose, and `/nuway/route/plan`. For TLs on the route within 60 m: project, crop, classify, publish `TrafficLightArray` with `confidence`. Temporal smoothing: majority vote over last 5 frames (a filter, but not a Kalman filter; document it).
-
 ## 5. Integration & evaluation
 
-- Profile `m3_learned_perception.yaml`: `use_gt.perception=false`, `use_gt.traffic_lights=false`, `use_gt.localization=true`.
+- Profile `m3_learned_perception.yaml`: `use_gt.perception=false`, `use_gt.traffic_lights=true`, `use_gt.localization=true`.
 - Run M1 protocol; compare with `compare_runs.py` against the M1 GT run. Investigate any route where the score drops > 30%: replay MCAP in Foxglove with GT agents overlaid on perceived ones (`nuway_viz` has a "GT vs perceived" layout).
 - Planner robustness pass (if needed): if the score drop is dominated by flicker (agents appearing/disappearing), raise `hits` threshold to 3 or extend `misses`; if by static-obstacle collisions, lower the safety layer's occupancy threshold; record changes in the M1 configs with a comment.
 
@@ -96,19 +89,19 @@ Subscribes `cam_front` (+ `cam_left/right` when `behavior` indicates a junction 
 4. [ ] `occupancy_head.py`, `centerpoint_head.py`, `bevfusion.py` (assembly, config-driven).
 5. [ ] `metrics.py`: mAP (BEV IoU), AVE, occupancy IoU; test against toy cases.
 6. [ ] `train.py` with staged schedule; run stage A; inspect; B; C.
-7. [ ] `traffic_light.py` model + training script.
-8. [ ] `tracker.py` + `eval_tracking.py`.
-9. [ ] `export/` (torch.compile config; optional TensorRT via `torch_tensorrt`), latency benchmark script.
-10. [ ] `bevfusion_node.py`, `traffic_light_node.py`, launch wiring, profile YAML.
-11. [ ] Closed-loop eval; write `data/eval_runs/m3_report.md` comparing to M1.
-12. [ ] Foxglove layout "GT vs perceived".
+7. [ ] `tracker.py` + `eval_tracking.py`.
+8. [ ] `export/` (torch.compile config; optional TensorRT via `torch_tensorrt`), latency benchmark script.
+9. [ ] `bevfusion_node.py`, launch wiring, profile YAML.
+10. [ ] Closed-loop eval; write `data/eval_runs/m3_report.md` comparing to M1.
+11. [ ] Foxglove layout "GT vs perceived".
 
 ## 7. Decisions log
 
 - (2026-09-02) PointPillars over sparse voxels: no custom CUDA dependency; 0.25 m pillars are sufficient at CARLA scale.
 - (2026-09-02) Temporal fusion by warp+concat (BEVDet4D style) with an EMA long-term memory; no GRU/attention.
 - (2026-09-02) Tracking by velocity-projected Hungarian association (CenterPoint style). Histories are stored in map frame to survive ego motion.
+- (2026-09-05) Traffic light perception moved out to its own milestone (M4): it shares no model, data, metric or training loop with BEVFusion, and its driving-score impact (red-light penalty 0.70) warrants a full design of its own.
 
 ## 8. Open questions
 
-- Whether camera branch is worth its ~10 ms at 704×256. Decide by ablation on night/rain: if LiDAR-only within 3 mAP, keep camera only for TL classification.
+- Whether camera branch is worth its ~10 ms at 704×256. Decide by ablation on night/rain: if LiDAR-only within 3 mAP, drop the camera branch here (M4 uses the cameras independently).

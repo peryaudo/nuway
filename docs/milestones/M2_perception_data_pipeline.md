@@ -7,7 +7,8 @@
 - [ ] Every frame has: 4 images, LiDAR sweep, ego pose, calibration, visible-filtered 3D boxes with velocities, 6-channel GT occupancy, traffic light crops/labels.
 - [ ] `PerceptionDataset` loads a shard at ≥ 200 frames/s with 8 workers (no decoding bottleneck for training).
 - [ ] Label sanity report: histogram of boxes per frame, class distribution, visibility rejection rate, per-town counts. Visual spot-check notebook renders 20 random frames with labels overlaid on camera and BEV.
-- [ ] `gt_perception_node` now publishes the full 6-channel occupancy from the same generator, and with `gt_perception.apply_visibility: false` M1's driving score is unchanged (±2).
+- [ ] `gt_perception_node.py` now publishes the full 6-channel occupancy from the same generator the collector uses, and with `gt_perception.apply_visibility: false` M1's driving score is unchanged (±2).
+- [ ] `generate_gt_occupancy` sustains the closed-loop budget: p99 < 100 ms per call at 10 Hz on the dev workstation, measured from `/nuway/diag/gt_perception_node`. Above that, vectorize the DDA before considering a C++ port (`00_overview.md` §2.6 would have to change first).
 - [ ] **The baseline is re-measured**: the M1 protocol is run with `gt_perception.apply_visibility: true` and the result is recorded in the M1 Decisions log as *the* M1 GT baseline that M3, M4 and M5 compare against (`00_overview.md` §3).
 
 ---
@@ -112,7 +113,7 @@ Class ids per `02_interfaces.md`. Traffic-cone/barrier/props tagged `static_obst
 
 ### 3.3 GT occupancy generator (`nuway_ml/data/gt_occupancy.py`)
 
-One reference implementation used by the collector, and a C++ port (`nuway_perception/src/gt_occupancy.cpp`) used by the runtime `gt_perception_node`, kept identical by a parity test on stored frames (`01_directory_structure.md` rules):
+**One implementation, two callers**: the offline collector and the runtime `gt_perception_node.py` both import this function directly. There is no C++ port and no parity test — that duplication is exactly what made the GT perception twin Python (`00_overview.md` §2.6, `M0_bringup.md` §5). Because it is single-sourced, the occupancy the model trains on and the occupancy the GT stack drives on cannot drift:
 
 ```python
 def generate_gt_occupancy(spec: GridSpec,
@@ -121,6 +122,8 @@ def generate_gt_occupancy(spec: GridSpec,
                           lane_polygons_base: list[np.ndarray],
                           ego_footprint: np.ndarray) -> np.ndarray:  # [6,H,W]
 ```
+Because a runtime node now imports it, `gt_occupancy.py` must stay **import-light**: `numpy` and the numpy half of `nuway_ml.common` only. No `torch`, no `webdataset`, no CARLA client, no `hydra`/`wandb`, no `nuway_ml.viz` — the same rule those already live under (`03_style_and_conventions.md` §6.1). The no-torch part matters most: it is what keeps the GT-only profiles runnable without the `ml` runtime deps (`M0_bringup.md` §2.9). Enforced by a test that imports the module in an env without torch.
+
 Channels:
 - `occupied`: cells containing ≥ 1 semantic-LiDAR return with tag in {Building, Fence, Wall, Pole, Static, Dynamic-not-agent, Vegetation (z>0.3), TrafficSign, GuardRail, Other} **or** inside a `static_obstacle` agent box. Rasterize by point binning; then apply 3×3 max to close gaps. Exclude points with z > 3.5 m (overhangs).
 - `free`: cells traversed by the ray from the LiDAR origin to each return (2-D DDA on the BEV grid, only for returns with tag Road/Sidewalk/Ground and z < 0.5 m), minus `occupied`. Also everything inside the ego footprint.
@@ -174,9 +177,9 @@ Previous-frame LiDAR is resolved by key arithmetic inside the same run (frame_id
 
 Augmentation (`augment.py`, perception part): random image scale ±10%, random BEV rotation ±15° and flip (applied consistently to LiDAR, boxes, occupancy), LiDAR point dropout 0–20%, per-image color jitter.
 
-## 6. Runtime GT perception (`gt_perception_node`, full version)
+## 6. Runtime GT perception (`gt_perception_node.py`, full version)
 
-Subscribes GT agents, `/carla/hero/lidar_top_semantic` (the `label_only` rig entry, spawned because the profile has `use_gt.perception: true`), lane graph. Calls the C++ port of `generate_gt_occupancy` (parity test against Python on 50 stored frames: max abs diff < 1e-3 per cell). Publishes `/nuway/perception/occupancy` every 2nd tick and agents with `visible` filtering applied (so GT perception ≈ "perfect but physically plausible" perception). Profile key `gt_perception.apply_visibility: true|false` toggles omniscient mode (`02_interfaces.md` §5). Traffic lights are not this node's business (`gt_traffic_light_node`, M0).
+Subscribes GT agents, `/carla/hero/lidar_top_semantic` (the `label_only` rig entry, spawned because the profile has `use_gt.perception: true`), lane graph. Calls `generate_gt_occupancy` (§3.3) directly — same function object the collector calls, no port, no bridge. Publishes `/nuway/perception/occupancy` every 2nd tick and agents with `visible` filtering applied (so GT perception ≈ "perfect but physically plausible" perception). Profile key `gt_perception.apply_visibility: true|false` toggles omniscient mode (`02_interfaces.md` §5). Traffic lights are not this node's business (`gt_traffic_light_node`, M0).
 
 ## 7. Task list
 
@@ -184,19 +187,20 @@ Subscribes GT agents, `/carla/hero/lidar_top_semantic` (the `label_only` rig ent
 2. [ ] `webdataset_io.py`: `ShardWriter`, `ShardReader`, manifest handling, resume.
 3. [ ] `sensor_rig.py` extension: `label_only` entries and the profile rule for spawning them; the collector's depth cameras.
 4. [ ] `visibility.py` + tests on synthetic projections.
-5. [ ] `gt_occupancy.py` + tests; C++ port in `nuway_perception` + parity test.
+5. [ ] `gt_occupancy.py` + tests. No C++ port: `gt_perception_node.py` imports it.
 6. [ ] TL labeler + tests.
 7. [ ] `collect_perception.py` with `--config`, `--resume`, `--dry-run 50` (writes 50 frames and renders a debug PNG per frame).
 8. [ ] `postprocess_run.py` (history/future fill), `trajectories.parquet` sidecar.
 9. [ ] `perception_dataset.py` + `augment.py` + throughput test + spot-check notebook `ml/notebooks/inspect_perception.ipynb` (committed without outputs).
 10. [ ] Run full collection; write label sanity report to `data/shards/perception/REPORT.md`.
-11. [ ] Full `gt_perception_node`; rerun M1 eval with `apply_visibility: false` (parity ±2) and with `apply_visibility: true` (record as the M1 GT baseline in the M1 Decisions log).
+11. [ ] Full `gt_perception_node.py` (+ diag timing check per the completion criteria); rerun M1 eval with `apply_visibility: false` (parity ±2) and with `apply_visibility: true` (record as the M1 GT baseline in the M1 Decisions log).
 
 ## 8. Decisions log
 
 - (2026-09-02) Store `future_map` in perception records even though M2 doesn't use it: avoids re-collection for M6.
 - (2026-09-02) Hero driven by Traffic Manager in M2 (viewpoint diversity, no expert needed yet). M6 switches to the expert and re-collects a planning-focused set without rendering.
 - (2026-09-05) The stored `lidar` array is the runtime sensor's output (x, y, z, intensity, float32); the semantic cloud is stored separately. Earlier drafts stored the semantic tag as the fourth channel, which would have trained the model on a channel it never sees at runtime.
+- (2026-09-06) **No C++ port of `generate_gt_occupancy`.** The earlier plan had `gt_occupancy.py` as reference and `gt_occupancy.cpp` as a runtime port held together by a 50-frame parity test. Dropped: point binning, a 3×3 close, 2-D DDA ray casting and soft-edged lane rasterization is a lot of code to maintain twice for one consumer, and a parity test is an admission that the two *can* drift. `gt_perception_node.py` imports the reference (`M0_bringup.md` §5). The Python cost is bounded — collection already runs this function 150k times offline, and closed loop it is ~1.9k calls per route under lockstep, which cannot change results.
 
 ## 9. Open questions
 

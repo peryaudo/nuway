@@ -72,7 +72,7 @@ Evaluation script `ml/scripts/eval_tracking.py`: run detector + tracker on held-
 
 ### 4.1 LiDAR preprocessing: in the Python inference node
 
-`bevfusion_node.py` subscribes `/carla/hero/lidar_top` directly and builds pillars with `torch` ops (`scatter_reduce`) on the GPU. This is the one sanctioned place where a point cloud crosses into Python (`00_overview.md` principle 6). Two facts to keep straight:
+`bevfusion_node.py` subscribes `/carla/hero/lidar_top` directly and builds pillars with `torch` ops (`scatter_reduce`) on the GPU. This is one of the two sanctioned places where a point cloud crosses into Python (`00_overview.md` principle 6) — the other is `gt_perception_node.py`, which reads the semantic cloud on the GT path and never runs alongside this node. Two facts to keep straight:
 - `rclpy` in Humble does **not** support loaned (zero-copy) messages, so the `PointCloud2` is deserialized: ≈ 30k points × 16 bytes = 0.5 MB per sweep. Expected cost 1–3 ms; it is measured by the diag `preproc` breakdown and reported in the M3 report.
 - If deserialization + pillarization exceeds **8 ms p50**, the escalation path is `lidar_preproc_node.cpp` (C++, LibTorch pillarization, tensor handed over through CUDA IPC). It is not built unless the threshold is crossed; the decision is recorded here.
 

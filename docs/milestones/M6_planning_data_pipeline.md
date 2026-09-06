@@ -34,7 +34,7 @@ Expert must be deterministic given the seed.
 ### 2.1 GT twins for prediction and planning
 
 - `nuway_planning/gt_planning_node.py` wraps the expert (through `nuway_planning_py`) as a ROS node: subscribes `/nuway/gt/agents`, `/nuway/gt/traffic_lights`, `/nuway/loc/pose`, the lane graph and reference line; publishes `/nuway/planning/behavior`, `/nuway/planning/candidates` and `/nuway/planning/trajectory` with `source="gt"`. Selected by `use_gt.planning: true`; the safety layer and MPC downstream are unchanged. Its purpose is ablation (how much of a closed-loop loss is planning versus perception) and DAgger labelling in-stack (M8).
-- `nuway_prediction/gt_prediction_node.cpp` publishes `PredictionSamples` (S = 1, weight 1) by reading each agent's *actual* future from a recorded run. It can only run in **log replay** (`tools/eval/run_routes.py --replay <mcap>`, which feeds the recorded `/nuway/gt/agents` stream with an 8 s lookahead); in a live simulation the future does not exist yet, and the launch file refuses `use_gt.prediction: true` without `--replay`. Its purpose is the upper bound for prediction-dependent metrics in open-loop planner evaluation.
+- `nuway_prediction/gt_prediction_node.py` (rclpy; Python because it is a cheat twin that runs only in replay eval, `00_overview.md` §2.6) publishes `PredictionSamples` (S = 1, weight 1) by reading each agent's *actual* future from a recorded run. It can only run in **log replay** (`tools/eval/run_routes.py --replay <mcap>`, which feeds the recorded `/nuway/gt/agents` stream with an 8 s lookahead); in a live simulation the future does not exist yet, and the launch file refuses `use_gt.prediction: true` without `--replay`. Its purpose is the upper bound for prediction-dependent metrics in open-loop planner evaluation.
 
 ## 3. Record schema (`schema.py` additions)
 
@@ -93,7 +93,7 @@ minADE/minFDE (K = 6) at 3 s / 8 s per class, miss rate @2 m, collision rate bet
 
 1. [ ] `nuway_planning_py` pybind module exposing FSM, lattice, QP, selector, collision checker, Frenet utils.
 2. [ ] Expert with extensions; deterministic; eval on M1 protocol (≥ 85) and scenario routes (≥ 70). Fix M1 planner bugs found here (they are shared).
-3. [ ] `gt_planning_node.py` (+ `use_gt.planning` launch wiring) and `gt_prediction_node.cpp` (+ `--replay` mode in `run_routes.py`, launch refusal outside replay); M1 protocol with `use_gt.planning: true` reproduces the expert score.
+3. [ ] `gt_planning_node.py` (+ `use_gt.planning` launch wiring) and `gt_prediction_node.py` (+ `--replay` mode in `run_routes.py`, launch refusal outside replay); M1 protocol with `use_gt.planning: true` reproduces the expert score.
 4. [ ] `tools/mapping/build_static_occ.py`: per-town `static_occ.npz` from the M5 semantic map.
 5. [ ] `generate_from_geometry` + raycast visibility + tests; consistency test vs M2 sensor-derived occupancy on 100 aligned frames (IoU of `occupied` > 0.7); per-frame generation time ≤ 1 ms.
 6. [ ] Scenario library (≥ 8 scenario types) + unit smoke tests (each spawns and ticks 100 steps).
@@ -110,3 +110,4 @@ minADE/minFDE (K = 6) at 3 s / 8 s per class, miss rate @2 m, collision rate bet
 - (2026-09-05) Occupancy is not stored in planning shards; it is regenerated deterministically in the loader from the static map and the agent list. Saves ≈ 1.4 TB.
 - (2026-09-05) Static occupancy comes from the M5 semantic map, not from M2 shards: M5 now precedes M6, its mapping routes cover every lane, and the Traffic-Manager-driven M2 hero did not.
 - (2026-09-05) The prediction and planning GT twins live here because both need the expert and the recorded futures that M6 produces.
+- (2026-09-06) Both twins delivered here are Python. `gt_planning_node.py` was always going to be (the expert is Python behind `nuway_planning_py`); `gt_prediction_node` moves from C++ to rclpy under the cheat-twin rule (`00_overview.md` §2.6). It is the clearest case in the repo: the launch file refuses `use_gt.prediction: true` outside `--replay`, so it never runs in a live simulation at all.

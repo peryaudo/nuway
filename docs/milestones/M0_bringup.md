@@ -152,11 +152,17 @@ This controller stays in the repo permanently as the simplest possible fallback 
 
 Subscribes `/nuway/gt/ego_odom` (every tick). Publishes `/nuway/loc/pose` every tick (same rate and message layout as the M5 `pose_extrapolator_node`, so downstream never notices the swap), `map→odom` (identity) and `odom→base_link` TF. Optional `noise:` params (translation σ, yaw σ, latency in ticks) to stress downstream before M5 exists.
 
-### 2.9 `nuway_perception/gt_perception_node` and `gt_traffic_light_node` (C++) — minimal in M0
+### 2.9 `nuway_perception/gt_perception_node.py` and `gt_traffic_light_node.py` (rclpy) — minimal in M0
 
-`gt_perception_node`: republishes `/nuway/gt/agents` transformed into `base_link` as `/nuway/perception/agents`. Occupancy grid: M0 publishes a grid with only `drivable` filled from the lane graph (rasterize lane polygons) and `free = drivable`, others zero. Full GT occupancy comes in M2.
+Both are Python, against the C++-runtime default, per `00_overview.md` §2.6: they are cheat twins, and the grid logic they will grow in M2 must stay single-sourced with `nuway_ml/data/gt_occupancy.py`. They import `nuway_ml.common` (`occupancy.GridSpec`, `geometry`) the way `sensor_rig.py` already imports `nuway_ml.common.carla_conv`.
 
-`gt_traffic_light_node`: republishes `/nuway/gt/traffic_lights` as `/nuway/perception/traffic_lights` unchanged. It is a separate node so that `use_gt.perception` and `use_gt.traffic_lights` are independent launch choices (`02_interfaces.md` §6).
+**Neither may pull in torch.** The GT-only stack (M0–M2) must run on a machine with no `ml/` runtime deps installed beyond numpy, and an M0 profile that fails to launch without CUDA would be a bad trade for a cheat twin. Concretely: `GridSpec` and the world↔grid arithmetic in `nuway_ml/common/occupancy.py` are numpy and stay numpy; `bilinear_sample()` is the only torch function there and imports torch inside the function body, not at module scope. Same rule for `gt_occupancy.py` (M2 §3.3). A test imports both modules in an env without torch and asserts success.
+
+Lockstep makes the runtime cost bounded: `world_manager` blocks until the tick's `ControlCommand` arrives, so a slower node lengthens wall clock and never changes results (`00_overview.md` §2.5).
+
+`gt_perception_node.py`: republishes `/nuway/gt/agents` transformed into `base_link` as `/nuway/perception/agents`. Occupancy grid: M0 publishes a grid with only `drivable` filled from the lane graph (rasterize lane polygons) and `free = drivable`, others zero. Full GT occupancy comes in M2, from `generate_gt_occupancy` directly.
+
+`gt_traffic_light_node.py`: republishes `/nuway/gt/traffic_lights` as `/nuway/perception/traffic_lights` unchanged. It is a separate node so that `use_gt.perception` and `use_gt.traffic_lights` are independent launch choices (`02_interfaces.md` §6).
 
 ### 2.10 Launch & profiles
 
@@ -181,7 +187,7 @@ Loads a route XML, calls `/nuway/sim/reset` at the start pose, publishes goals, 
 8. [ ] `nuway_route`: A*, reference line builder (tests: curvature of a circular lane matches 1/R; bounds are positive; extension beyond goal), node, Leaderboard route loader.
 9. [ ] `tools/sysid/`: sweeps and fits. Produce `lincoln_mkz_2020.yaml`. Plot residuals; document residual RMS in this file's Decisions log.
 10. [ ] `nuway_control`: `LongitudinalMap` (C++ + Python parity test), pure pursuit + PID node.
-11. [ ] `gt_pose_node`, minimal `gt_perception_node`, `gt_traffic_light_node`; all three handle `reset_event`.
+11. [ ] `gt_pose_node` (C++), minimal `gt_perception_node.py`, `gt_traffic_light_node.py`; all three handle `reset_event`.
 12. [ ] Launch files, profile `m0_gt_all.yaml`, Foxglove layout v0 (map, ego, reference line, lookahead point).
 13. [ ] `run_routes.py` v0; 10 routes; record lateral error; iterate gains until criteria met.
 14. [ ] `tests/integration/test_m0_route.py`: launches stack on Town03 short route in CI-ish mode (`realtime_factor=0`), asserts completion and lateral error bound. Mark as `slow`.
@@ -197,6 +203,7 @@ Loads a route XML, calls `/nuway/sim/reset` at the start pose, publishes goals, 
 - (2026-09-02) Vehicle: `vehicle.lincoln.mkz_2020` — same as Leaderboard default.
 - (2026-09-02) Camera rig: 4 × 704×256, FOV 90. Leaderboard allows more; we stay light for GPU budget.
 - (2026-09-02) LiDAR: 32 channels, 600k pts/s at 20 Hz ≈ 30k pts/sweep. Increase to 64 ch only if M3 detection recall on pedestrians is insufficient.
+- (2026-09-06) **Cheat twins are Python; `gt_pose_node` is the exception.** `gt_perception_node` and `gt_traffic_light_node` move to rclpy (and `gt_prediction_node` in M6). The deciding argument is not "fixtures should be simple" — these twins are the production path for M0–M4 and the measured baseline for M3/M4/M5 — but **single-sourcing**: the M2 occupancy generator would otherwise be implemented twice and held together by a parity test forever (M2 §3.3). Lockstep means the wall-clock cost cannot change results, and the closed-loop cost is bounded (~1.9k grids per route, occupancy every 2nd tick). `gt_pose_node` stays C++: it runs every tick, its publication is what triggers the controller (§2.7), it must stay swap-identical with the M5 `pose_extrapolator_node`, and it has no duplicated implementation to remove — there is no simplicity to win, only per-tick overhead on the tightest path in the stack.
 
 ## 6. Open questions
 

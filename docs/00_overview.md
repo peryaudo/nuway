@@ -56,22 +56,48 @@ Dependencies: M0 → M1 → M2 → M3 → M4 → M5 → M6 → M7 → M8 → M9 
 
 | Item | Choice | Note |
 |------|--------|------|
-| OS | Ubuntu 22.04 | |
-| ROS 2 | Humble | rmw: CycloneDDS with shared memory (iceoryx) enabled |
-| CARLA | 0.9.16 (UE4) | Not 0.10.x (UE5: heavier GPU, native ROS 2 less stable) |
-| Python | 3.10 (system, Humble's) | `uv`-managed venv at repo root (`uv sync`, `uv.lock` committed, system site packages for rclpy), `torch>=2.4`, CUDA 12.x |
+| OS | Ubuntu 24.04 LTS (noble) | glibc 2.39 |
+| ROS 2 | Jazzy | rmw: CycloneDDS with shared memory (iceoryx) enabled |
+| CARLA | 0.9.16 (UE4) | Not 0.10.x (UE5: heavier GPU, native ROS 2 less stable). **Must run at default (Epic) quality — see below** |
+| Python | 3.12 (system, Jazzy's) | `uv`-managed venv at repo root (`uv sync`, `uv.lock` committed, system site packages for rclpy), `torch>=2.4`, CUDA 12.x. CARLA 0.9.16 publishes a `cp312` client wheel, so the client matches Jazzy's interpreter |
 | GPU | RTX 3090 Ti 24 GB | shared between CARLA and inference |
-| CPU | ≥ 12 cores recommended | CARLA + Traffic Manager alone use 4–6 |
-| C++ | C++17, GCC 11 (Clang 17+ locally), CMake ≥ 3.22 via `ament_cmake`, Ninja + ccache + mold | Eigen, GTSAM 4.2, OSQP + osqp-eigen, nanoflann, PCL (I/O only); non-apt libs as `*_vendor` packages |
+| CPU | Ryzen 9 5950X, 16 cores / 32 threads (≥ 12 cores recommended) | CARLA + Traffic Manager alone use 4–6 |
+| C++ | C++17, GCC 13 (Clang 18 locally), CMake ≥ 3.28 via `ament_cmake`, Ninja + ccache + mold | Eigen, GTSAM 4.2, OSQP + osqp-eigen, nanoflann, PCL (I/O only); non-apt libs as `*_vendor` packages |
 | Build | `source setup_env.sh && colcon build` (defaults from `ros2_ws/colcon_defaults.yaml`) | `uv sync` for Python; no `pip` anywhere |
-| Tooling | clang-format/clang-tidy (LLVM ≥ 17 PyPI wheels), ruff, mypy, gersemi, pre-commit | all pinned in `uv.lock`; see `03_style_and_conventions.md` §6 |
+| Tooling | clang-format/clang-tidy (LLVM ≥ 18 PyPI wheels), ruff, mypy, gersemi, pre-commit | all pinned in `uv.lock`; see `03_style_and_conventions.md` §6 |
 | Training tooling | Hydra (config management, `configs/training/`), Weights & Biases (losses, metrics, run configs; project `nuway`) | `train` dependency group; see `03_style_and_conventions.md` §9.7. Runtime nodes depend on neither |
 | Visualization | Foxglove (live) + matplotlib/`Agg` renders to PNG (headless) | `viz` dependency group; `02_interfaces.md` §8. Every layer exists in both back-ends; the headless one needs neither CARLA nor ROS |
 
 CARLA launch (development):
 ```
-./CarlaUE4.sh -RenderOffScreen -quality-level=Low --ros2 -carla-rpc-port=2000
+./CarlaUE4.sh -RenderOffScreen --ros2 -carla-rpc-port=2000
 ```
+
+**No `-quality-level=Low`.** Verified on the dev box: with `-quality-level=Low`, the first
+`client.load_world(<town>)` segfaults the server inside UE4.26's Vulkan RHI —
+`FVulkanVertexInputStateInfo::Generate()` is handed a null `VertexDeclaration` from the async
+pipeline-compile task (`FCompilePipelineStateTask`) while the outgoing map's RHI resources are
+being torn down. It reproduces on every map change and is not affected by `--ros2`,
+`map_layers`, or `r.AsyncPipelineCompile`. Since CARLA 0.9.16 also ignores the map name given
+on the command line (it always boots `Town10HD_Opt`), `load_world` is the only way to select a
+town, so low quality is simply unusable here. At default (Epic) quality, map switching is
+stable: a 7-load soak across Town01/03/05/10HD passes.
+
+The cost of that is speed. Measured with the M0 rig (4 × 800×450 RGB + 32-beam LiDAR +
+semantic LiDAR + IMU + GNSS, all at 20 Hz), synchronous mode, `fixed_delta_seconds = 0.05`:
+
+| Town | tick rate | vs. realtime |
+|------|-----------|--------------|
+| Town01 | 41 FPS | 2.05× |
+| Town03 | 26 FPS | 1.29× |
+| Town05 | 21 FPS | 1.07× |
+| Town10HD | 15 FPS | 0.78× |
+
+Low quality would have been ~3× faster (45 FPS vs 14 FPS on Town10HD with the same rig), so the
+crash costs real wall-clock in the M2/M6 collection farms. It does **not** affect correctness:
+the stack is lockstep and nothing is timed by wall-clock (§2.5), so a sub-realtime tick rate
+only makes a route take longer, never behave differently. CARLA itself holds ≈ 7.2 GB of the
+24 GB of VRAM at this quality, leaving ≈ 17 GB for training and inference.
 
 ## 5. Compute budget (target, wall clock, single GPU shared with CARLA)
 

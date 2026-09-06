@@ -171,18 +171,18 @@ Modern, pinned, identical on every developer machine and in CI. This section is 
 ### 6.1 Python: `uv`
 
 - [`uv`](https://docs.astral.sh/uv/) is the only Python environment and dependency tool. `pip`, `venv`, `virtualenv`, `conda`, `poetry`, `pipx` and `requirements*.txt` are not used. Install uv once with the official installer (`curl -LsSf https://astral.sh/uv/install.sh | sh`); its version is pinned in `.github/workflows/*.yml` via `astral-sh/setup-uv` and recorded in the table in §6.4.
-- **Layout.** The repository root `pyproject.toml` is a uv workspace root and holds all tool configuration (§7.3). `ml/` is the single workspace member and the only installable package (`nuway-ml`, build backend `hatchling`). `tools/` and `tests/` are not packages; they run through `uv run` with `ml/` importable. `uv.lock` is committed and is the source of truth for every version. `.python-version` pins `3.10`.
+- **Layout.** The repository root `pyproject.toml` is a uv workspace root and holds all tool configuration (§7.3). `ml/` is the single workspace member and the only installable package (`nuway-ml`, build backend `hatchling`). `tools/` and `tests/` are not packages; they run through `uv run` with `ml/` importable. `uv.lock` is committed and is the source of truth for every version. `.python-version` pins `3.12`.
 - **Dependency groups** in the root `pyproject.toml`: `dev` (ruff, mypy, pytest, pytest-cov, pre-commit, `clang-format`, `clang-tidy`, `gersemi`), `carla` (the CARLA 0.9.16 client wheel), `train` (`hydra-core`, `wandb`), `viz` (`matplotlib`, `rosbags`). `uv sync` installs `dev` by default; `uv sync --group carla --group train --group viz` for a full workstation. `nuway_ml.viz` is the one subpackage whose imports are not guaranteed present: like `hydra` and `wandb` it must never be imported by a runtime node (§9.7, `02_interfaces.md` §8), which is what lets `render_bag.py` run in an environment with neither CARLA nor ROS. Runtime dependencies of the model code (`torch`, `numpy`, `webdataset`, …) live in `ml/pyproject.toml` `[project.dependencies]`.
 - **PyTorch** is pinned to a CUDA 12.x wheel index through `[[tool.uv.index]]` (`explicit = true`) plus `[tool.uv.sources]`, so `uv sync` never pulls the CPU-only wheel by accident. The exact `cu12x` index is decided in M0 against the workstation driver and recorded in §6.4.
-- **ROS 2 interop.** ROS Humble's `rclpy`, `rosidl_runtime_py` and the generated `nuway_msgs` bindings live in Ubuntu 22.04's system Python 3.10 and cannot be installed from PyPI. The venv is therefore created from the system interpreter with system site packages visible: `uv venv --python /usr/bin/python3.10 --system-site-packages`, then `uv sync` populates it. `[tool.uv] python-preference = "only-system"` prevents uv from downloading its own interpreter, which would break the ABI match with ROS. `setup_env.sh` does this in the right order (source ROS, create venv, sync, source `ros2_ws/install/setup.bash`).
+- **ROS 2 interop.** ROS Jazzy's `rclpy`, `rosidl_runtime_py` and the generated `nuway_msgs` bindings live in Ubuntu 24.04's system Python 3.12 and cannot be installed from PyPI. The venv is therefore created from the system interpreter with system site packages visible: `uv venv --python /usr/bin/python3.12 --system-site-packages`, then `uv sync` populates it. `[tool.uv] python-preference = "only-system"` prevents uv from downloading its own interpreter, which would break the ABI match with ROS. `setup_env.sh` does this in the right order (source ROS, create venv, sync, source `ros2_ws/install/setup.bash`).
 - **Commands.** `uv sync` to create or update the environment; `uv run <cmd>` for every tool and script (`uv run pytest ml`, `uv run ruff check .`, `uv run tools/eval/run_routes.py`); `uv add <pkg>` / `uv add --group dev <pkg>` to add dependencies, which updates `uv.lock` in the same commit; `uv lock --upgrade-package <pkg>` for controlled upgrades. Never `pip install`, never edit `.venv` by hand, never `uv pip` outside of debugging.
 - **Launch files and rclpy nodes** are executed by `ros2 launch` / `ros2 run` from a shell where the venv is activated (`setup_env.sh` does `source .venv/bin/activate`), so they see both ROS and the locked dependencies. Nodes must not assume a global Python; anything not in `uv.lock` or the ROS distribution is unavailable.
 - `pre-commit` is installed from the `dev` group and run as `uv run pre-commit install` once, then automatically on commit. Its hooks call the tools through `uv run` so pre-commit, the editor, `tools/lint/*.sh` and CI use the exact same binaries.
 
 ### 6.2 C++: compilers, build, dependencies
 
-- **Compiler.** GCC 11.4 (Ubuntu 22.04 default, ROS Humble ABI) is the reference compiler for CI and release builds. Clang 17+ is supported for local builds (`CC=clang-17 CXX=clang++-17`) and is what clang-tidy models; code must compile warning-free on both. C++17, no extensions (§2.6).
-- **Build system.** `colcon` over `ament_cmake`, CMake ≥ 3.22, **Ninja** generator, **ccache** compiler launcher, **mold** linker. These are configured once in `ros2_ws/colcon_defaults.yaml`, exported as `COLCON_DEFAULTS_FILE` by `setup_env.sh`, so a bare `colcon build` is already correct:
+- **Compiler.** GCC 13.3 (Ubuntu 24.04 default, ROS Jazzy ABI) is the reference compiler for CI and release builds. Clang 18 is supported for local builds (`CC=clang-18 CXX=clang++-18`) and is what clang-tidy models; code must compile warning-free on both. C++17, no extensions (§2.6).
+- **Build system.** `colcon` over `ament_cmake`, CMake ≥ 3.28, **Ninja** generator, **ccache** compiler launcher, **mold** linker. These are configured once in `ros2_ws/colcon_defaults.yaml`, exported as `COLCON_DEFAULTS_FILE` by `setup_env.sh`, so a bare `colcon build` is already correct:
 
   ```yaml
   # ros2_ws/colcon_defaults.yaml
@@ -203,8 +203,14 @@ Modern, pinned, identical on every developer machine and in CI. This section is 
 
   `ninja-build`, `ccache` and `mold` come from apt and are listed in `setup_env.sh`'s prerequisite check. Use `make` nowhere.
 - **`nuway_cmake` package.** A tiny `ament_cmake` package that every `nuway_*` C++ package depends on (`<buildtool_depend>nuway_cmake</buildtool_depend>`). It provides `nuway_target_defaults(<target>)`, which sets: `CXX_STANDARD 17`, `CXX_EXTENSIONS OFF`; warnings `-Wall -Wextra -Wpedantic -Wshadow -Wnon-virtual-dtor -Wold-style-cast -Woverloaded-virtual -Wnull-dereference -Wdouble-promotion -Wformat=2 -Werror` (`-Werror` disabled with `-DNUWAY_WERROR=OFF` for third-party debugging only); third-party include directories marked `SYSTEM`; and the options `NUWAY_CLANG_TIDY=ON|OFF` (sets `CMAKE_CXX_CLANG_TIDY` to the uv-managed wheel binary described below), `NUWAY_SANITIZE=<none|address,undefined|thread>` and `NUWAY_LTO=ON|OFF`. Packages do not set compiler flags themselves. `CMakeLists.txt` files are formatted by `gersemi` (pinned in the `dev` group, enforced in pre-commit).
-- **Dependencies.** Resolution order: (1) ROS/Ubuntu apt via `rosdep` (`rclcpp`, Eigen, PCL, gtest, tf2, …); (2) an `<lib>_vendor` `ament_cmake` package under `ros2_ws/src/` for anything not in Humble's apt (GTSAM 4.2, OSQP, osqp-eigen, nanoflann), following the ROS vendor-package convention: CMake `FetchContent` pinned to a release **tag and commit hash**, built once as part of the workspace, exported with `ament_export_targets`. No git submodules, no system-wide `make install`, no `find_package` of something that rosdep cannot install. Every dependency is declared in `package.xml` so `rosdep install --from-paths ros2_ws/src -yi` fully prepares a fresh machine.
-- **clang-format and clang-tidy** are installed from their PyPI wheels (`clang-format`, `clang-tidy`, LLVM ≥ 17) pinned in the `dev` dependency group and invoked as `uv run clang-format` / `uv run clang-tidy`. This gives byte-identical formatting and diagnostics in the editor, pre-commit, `tools/lint/` and CI regardless of what apt provides (Ubuntu 22.04 ships LLVM 14, which is not used). `nuway_cmake` resolves `CMAKE_CXX_CLANG_TIDY` to `.venv/bin/clang-tidy` for the same reason.
+- **Dependencies.** Resolution order: (1) ROS/Ubuntu apt via `rosdep` (`rclcpp`, Eigen, PCL, gtest, tf2, …); (2) an `<lib>_vendor` `ament_cmake` package under `ros2_ws/src/` for anything not in Jazzy's apt, following the ROS vendor-package convention: CMake `FetchContent` pinned to a release **tag and commit hash**, built once as part of the workspace, exported with `ament_export_targets`. No git submodules, no system-wide `make install`, no `find_package` of something that rosdep cannot install. Every dependency is declared in `package.xml` so `rosdep install --from-paths ros2_ws/src -yi` fully prepares a fresh machine.
+
+  On Jazzy/noble most of the math stack resolves at step (1), unlike on Humble: `ros-jazzy-gtsam`
+  (4.2.0, the version this project pinned), `ros-jazzy-osqp-vendor` (0.2.0) and Ubuntu's
+  `libnanoflann-dev` (1.5.4) are all packaged. **`osqp-eigen` is the only one still vendored** —
+  it is packaged neither in the ROS index nor in Ubuntu. Prefer the apt package in every case;
+  a `*_vendor` package for something rosdep can install is a rule violation, not a shortcut.
+- **clang-format and clang-tidy** are installed from their PyPI wheels (`clang-format`, `clang-tidy`, LLVM ≥ 18) pinned in the `dev` dependency group and invoked as `uv run clang-format` / `uv run clang-tidy`. This gives byte-identical formatting and diagnostics in the editor, pre-commit, `tools/lint/` and CI regardless of what apt provides (Ubuntu 24.04 ships LLVM 18; the wheels are used anyway so the version is pinned in `uv.lock` rather than by the distro). `nuway_cmake` resolves `CMAKE_CXX_CLANG_TIDY` to `.venv/bin/clang-tidy` for the same reason.
 - **Compilation database and clangd.** colcon writes one `compile_commands.json` per package under `ros2_ws/build/<pkg>/`. `tools/lint/merge_compile_commands.py` merges them into `ros2_ws/build/compile_commands.json` (run by `tools/lint/tidy_cpp.sh` and by `setup_env.sh` after a build). The root `.clangd` points at it:
 
   ```yaml
@@ -223,13 +229,13 @@ Modern, pinned, identical on every developer machine and in CI. This section is 
 
 `setup_env.sh` (idempotent, safe to `source` in every shell) does, in order:
 
-1. Verify prerequisites: Ubuntu 22.04, `/opt/ros/humble`, `uv`, `ninja`, `ccache`, `mold`, `cmake ≥ 3.22`, `gcc-11`; print the install command for anything missing and stop.
-2. `source /opt/ros/humble/setup.bash`; `export COLCON_DEFAULTS_FILE=$REPO/ros2_ws/colcon_defaults.yaml`; `export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp`.
-3. Create `.venv` if absent (`uv venv --python /usr/bin/python3.10 --system-site-packages`), then `uv sync` (with `--group carla --group train` when `NUWAY_FULL=1`).
+1. Verify prerequisites: Ubuntu 24.04, `/opt/ros/jazzy`, `uv`, `ninja`, `ccache`, `mold`, `cmake ≥ 3.28`, `gcc-13`; print the install command for anything missing and stop.
+2. `source /opt/ros/jazzy/setup.bash`; `export COLCON_DEFAULTS_FILE=$REPO/ros2_ws/colcon_defaults.yaml`; `export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp`.
+3. Create `.venv` if absent (`uv venv --python /usr/bin/python3.12 --system-site-packages`), then `uv sync` (with `--group carla --group train` when `NUWAY_FULL=1`).
 4. `source .venv/bin/activate`; `source ros2_ws/install/setup.bash` if the workspace has been built.
 5. `uv run pre-commit install` if the git hook is missing.
 
-CI uses the same script inside the `ros:humble` container so there is one definition of "the environment".
+CI uses the same script inside the `ros:jazzy` container so there is one definition of "the environment".
 
 ### 6.4 Pinned versions
 
@@ -237,12 +243,12 @@ Decided in M0 and kept current here whenever `uv.lock` or the workflows change a
 
 | Tool | Pin | Where pinned |
 |------|-----|--------------|
-| Ubuntu / ROS 2 | 22.04 / Humble | `00_overview.md` §4, CI image `ros:humble` |
-| Python | 3.10 (system) | `.python-version`, `[project] requires-python` |
+| Ubuntu / ROS 2 | 24.04 / Jazzy | `00_overview.md` §4, CI image `ros:jazzy` |
+| Python | 3.12 (system) | `.python-version`, `[project] requires-python` |
 | uv | ≥ 0.5, exact in CI | `astral-sh/setup-uv@vN` with `version:` |
-| GCC | 11.4 | apt (distro default) |
-| CMake / Ninja / ccache / mold | ≥ 3.22 / ≥ 1.10 / ≥ 4.5 / ≥ 1.0 | apt (distro default) |
-| clang-format, clang-tidy (PyPI wheels) | ≥ 17, exact in lock | `pyproject.toml` `dev` group, `uv.lock` |
+| GCC | 13.3 | apt (distro default) |
+| CMake / Ninja / ccache / mold | ≥ 3.28 / ≥ 1.11 / ≥ 4.9 / ≥ 2.30 | apt (distro default) |
+| clang-format, clang-tidy (PyPI wheels) | ≥ 18, exact in lock | `pyproject.toml` `dev` group, `uv.lock` |
 | ruff, mypy, pytest, pre-commit, gersemi | exact in lock | `pyproject.toml` `dev` group, `uv.lock` |
 | torch | ≥ 2.4, `cu12x` index | `ml/pyproject.toml`, `[[tool.uv.index]]` |
 | hydra-core, wandb | exact in lock | `pyproject.toml` `train` group, `uv.lock` |
@@ -375,13 +381,13 @@ The uv workspace root (§6.1) and the single place for Python tool configuration
 [project]
 name = "nuway"
 version = "0.0.0"
-requires-python = "==3.10.*"
+requires-python = "==3.12.*"
 dependencies = ["nuway-ml"]
 
 [dependency-groups]
 dev = [
   "ruff", "mypy", "pytest", "pytest-cov", "pre-commit",
-  "clang-format", "clang-tidy",   # LLVM >= 17 wheels; exact pins in uv.lock
+  "clang-format", "clang-tidy",   # LLVM >= 18 wheels; exact pins in uv.lock
   "gersemi",
 ]
 carla = ["carla==0.9.16"]
@@ -389,7 +395,7 @@ train = ["hydra-core", "wandb"]   # config management and run/metric logging (§
 
 [tool.uv]
 package = false                    # the root is not installable
-python-preference = "only-system"  # must be Humble's /usr/bin/python3.10
+python-preference = "only-system"  # must be Jazzy's /usr/bin/python3.12
 
 [tool.uv.workspace]
 members = ["ml"]
@@ -409,7 +415,7 @@ addopts = "--strict-markers"
 markers = ["slow: minutes-long", "carla: needs a running CARLA server", "gpu: needs CUDA"]
 
 [tool.ruff]
-target-version = "py310"
+target-version = "py312"
 line-length = 88
 extend-exclude = ["ros2_ws/build", "ros2_ws/install", "ros2_ws/log", "ros2_ws/src/carla_msgs", "data"]
 
@@ -423,7 +429,7 @@ select = [
   "F",         # pyflakes
   "I",         # isort
   "N",         # pep8-naming
-  "UP",        # pyupgrade (3.10 idioms)
+  "UP",        # pyupgrade (3.12 idioms)
   "B",         # bugbear
   "D",         # pydocstyle
   "ANN",       # type annotations required
@@ -457,7 +463,7 @@ convention = "pep257"
 known-first-party = ["nuway_ml", "nuway_eval", "nuway_carla_bridge", "nuway_perception", "nuway_prediction", "nuway_planning", "nuway_bringup", "nuway_viz"]
 
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.12"
 strict = true
 warn_unreachable = true
 # The ros2_ws Python packages are listed here so `uv run mypy` (pre-commit, CI)
@@ -498,7 +504,7 @@ All tools are the `uv`-managed binaries from §6 (`uv run clang-format`, `uv run
 | Pre-commit | `pre-commit` (`repo: local` hooks via `uv run`): `clang-format --dry-run --Werror` on staged C++ files; `clang-tidy` on staged `.cpp` files using the merged `compile_commands.json`; `gersemi --check` on staged `CMakeLists.txt`/`*.cmake`; `ruff format --check` and `ruff check` on staged `.py` files; `mypy` on the packages containing staged `.py` files | every commit |
 | Local full run | C++: `tools/lint/format_cpp.sh [--fix]` and `tools/lint/tidy_cpp.sh [--fix]` (wraps `run-clang-tidy -p ros2_ws/build`). Python: `tools/lint/lint_py.sh [--fix]` (runs `ruff format`, `ruff check`, `mypy` from the repo root) | before pushing; Claude Code after every change |
 | Build / test | C++: every `nuway_*` `ament_cmake` package sets `CMAKE_EXPORT_COMPILE_COMMANDS ON` and honors `-DNUWAY_CLANG_TIDY=ON` which sets `CMAKE_CXX_CLANG_TIDY` so `colcon build` fails on tidy errors. Python: `pytest` runs with `--strict-markers`; ruff and mypy are separate CI jobs, not pytest plugins | opt-in locally, on in CI |
-| CI | `ros:humble` container, `setup_env.sh`, uv cache keyed on `uv.lock`. C++: format + gersemi check on the full tree; `colcon build --cmake-args -DNUWAY_CLANG_TIDY=ON`; a second build + `colcon test` with `-DNUWAY_SANITIZE=address,undefined`. Python: `uv run ruff format --check .`, `uv run ruff check .`, `uv run mypy`, `uv run pytest -m "not slow and not carla and not gpu"` | every push / PR |
+| CI | `ros:jazzy` container, `setup_env.sh`, uv cache keyed on `uv.lock`. C++: format + gersemi check on the full tree; `colcon build --cmake-args -DNUWAY_CLANG_TIDY=ON`; a second build + `colcon test` with `-DNUWAY_SANITIZE=address,undefined`. Python: `uv run ruff format --check .`, `uv run ruff check .`, `uv run mypy`, `uv run pytest -m "not slow and not carla and not gpu"` | every push / PR |
 
 Expected local workflow for a C++ change:
 
@@ -556,7 +562,7 @@ Applies to `ml/`, `tools/`, `tests/`, and the rclpy packages and launch files in
 
 - [PEP 8](https://peps.python.org/pep-0008/) for code layout and naming, [PEP 257](https://peps.python.org/pep-0257/) for docstrings, [PEP 484](https://peps.python.org/pep-0484/)/[PEP 604](https://peps.python.org/pep-0604/) for type hints. No house style on top; `ruff` is the arbiter.
 - Formatting is fully delegated to `ruff format` (Black-compatible): 88 columns, double quotes, trailing commas as the formatter decides. Never hand-format. `# fmt: off` / `# fmt: on` only around literal tables, always paired.
-- Python 3.10 exactly (`target-version = "py310"`): use `match`, `X | None`, `dict[str, int]` builtins generics; no `typing.Optional`, `typing.List`. No 3.11+ features.
+- Python 3.10 exactly (`target-version = "py312"`): use `match`, `X | None`, `dict[str, int]` builtins generics; no `typing.Optional`, `typing.List`. No 3.11+ features.
 
 ### 9.2 Naming
 

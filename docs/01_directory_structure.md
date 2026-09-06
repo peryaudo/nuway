@@ -64,10 +64,9 @@ nuway/
 │   └── src/
 │       ├── nuway_cmake/                   # shared CMake: warnings, -Werror, NUWAY_CLANG_TIDY/SANITIZE/LTO
 │       ├── carla_msgs/                    # vendored from ros-carla-msgs (leaderboard-2.0 branch); messages only (M0)
-│       ├── osqp_vendor/                   # FetchContent, pinned tag+hash (M1)
-│       ├── osqp_eigen_vendor/             # M1
-│       ├── nanoflann_vendor/              # M0
-│       ├── gtsam_vendor/                  # M5
+│       ├── osqp_eigen_vendor/             # FetchContent, pinned tag+hash (M1) — the only vendored
+│       │                                  #   dep; OSQP, GTSAM and nanoflann come from apt on
+│       │                                  #   Jazzy/noble (03_style_and_conventions.md §6.2)
 │       ├── nuway_msgs/                    # ALL custom messages and services. No msgs/srvs elsewhere.
 │       │   ├── msg/
 │       │   ├── srv/
@@ -270,7 +269,7 @@ nuway/
 ├── .clangd                                # points at merged ros2_ws/build/compile_commands.json
 ├── pyproject.toml                         # uv workspace root: dependency groups, ruff, mypy, pytest config
 ├── uv.lock                                # committed; the only place versions are pinned
-├── .python-version                        # 3.10
+├── .python-version                        # 3.12
 ├── .gitignore
 └── setup_env.sh                           # source in every shell: ROS, colcon defaults, uv venv, pre-commit
 ```

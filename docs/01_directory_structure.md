@@ -114,7 +114,7 @@ nuway/
 │       │   ├── nuway_perception/          # python
 │       │   │   ├── gt_perception_node.py     # cheat twin: AgentArray + OccupancyGridMC from GT (M0/M2)
 │       │   │   ├── gt_traffic_light_node.py  # cheat twin: TrafficLightArray from GT (M0)
-│       │   │   ├── bevfusion_node.py         # inference (M3); optionally hosts traffic_light_node (M4)
+│       │   │   ├── perception_node.py        # inference (M3); optionally hosts traffic_light_node (M4)
 │       │   │   ├── tracker.py                # velocity-projected NN association (M3)
 │       │   │   └── traffic_light_node.py     # crop, classify, latch (M4)
 │       │   └── launch/
@@ -122,7 +122,7 @@ nuway/
 │       │   ├── src/const_vel_node.cpp     # M1
 │       │   └── nuway_prediction/
 │       │       ├── gt_prediction_node.py     # cheat twin: futures from a recorded CARLA log, replay eval only (M6)
-│       │       └── flow_matching_node.py     # M7; also hosts the M8 ego planning head
+│       │       └── prediction_node.py        # M7; also hosts the M8 ego planning head
 │       ├── nuway_planning/                # C++ except gt_planning_node.py
 │       │   ├── src/
 │       │   │   ├── behavior_fsm.cpp / behavior_fsm_node.cpp      # M1

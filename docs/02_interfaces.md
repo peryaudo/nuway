@@ -95,15 +95,15 @@ Semantic LiDAR and depth cameras are **never** subscribed by a learned node. In 
 ### 3.5 Perception
 | Topic | Type | Producer |
 |-------|------|----------|
-| `/nuway/perception/agents` | `nuway_msgs/AgentArray` | gt_perception_node **or** bevfusion_node (+tracker) |
-| `/nuway/perception/occupancy` | `nuway_msgs/OccupancyGridMC` | gt_perception_node **or** bevfusion_node |
+| `/nuway/perception/agents` | `nuway_msgs/AgentArray` | gt_perception_node **or** perception_node (+tracker) |
+| `/nuway/perception/occupancy` | `nuway_msgs/OccupancyGridMC` | gt_perception_node **or** perception_node |
 | `/nuway/perception/traffic_lights` | `nuway_msgs/TrafficLightArray` | gt_traffic_light_node **or** traffic_light_node |
 | `/nuway/perception/tl_debug` | `sensor_msgs/Image` | traffic_light_node, only when `traffic_light_node.debug: true` (M4) |
 
 ### 3.6 Prediction
 | Topic | Type | Producer |
 |-------|------|----------|
-| `/nuway/prediction/samples` | `nuway_msgs/PredictionSamples` | const_vel_node **or** flow_matching_node **or** gt_prediction_node (log replay only, M6) |
+| `/nuway/prediction/samples` | `nuway_msgs/PredictionSamples` | const_vel_node **or** prediction_node **or** gt_prediction_node (log replay only, M6) |
 
 ### 3.7 Planning
 | Topic | Type | Producer |
@@ -112,7 +112,7 @@ Semantic LiDAR and depth cameras are **never** subscribed by a learned node. In 
 | `/nuway/planning/candidates` | `nuway_msgs/TrajectoryCandidates` | planner_node **or** gt_planning_node (all candidates with scores, for viz) |
 | `/nuway/planning/trajectory` | `nuway_msgs/Trajectory` | planner_node **or** gt_planning_node (selected, refined) |
 | `/nuway/planning/safe_trajectory` | `nuway_msgs/Trajectory` | safety_layer_node (what control actually follows) |
-| `/nuway/planning/learned_candidates` | `nuway_msgs/TrajectoryCandidates` | flow_matching_node (M8: the ego planning head lives in the prediction process) |
+| `/nuway/planning/learned_candidates` | `nuway_msgs/TrajectoryCandidates` | prediction_node (M8: the ego planning head lives in the prediction process) |
 
 ### 3.8 Control
 | Topic | Type | Producer |
@@ -470,7 +470,7 @@ use_gt:
 gt_perception:
   apply_visibility: true               # M2; false = omniscient agents
 perception:
-  tl_in_bev_process: true              # M4; traffic_light_node hosted by bevfusion_node
+  tl_in_bev_process: true              # M4; traffic_light_node hosted by perception_node
 prediction:
   guidance:
     enabled: false                     # M10
@@ -503,9 +503,9 @@ There are five toggles: `use_gt.localization`, `use_gt.perception`, `use_gt.traf
 | toggle | GT node | learned / classical node | topics |
 |--------|---------|--------------------------|--------|
 | `localization` | `gt_pose_node` | `lidar_odometry_node` + `scan_to_map_node` + `smoother_node` + `pose_extrapolator_node` | `/nuway/loc/*`, TF |
-| `perception` | `gt_perception_node` | `bevfusion_node` | `/nuway/perception/agents`, `/nuway/perception/occupancy` |
+| `perception` | `gt_perception_node` | `perception_node` | `/nuway/perception/agents`, `/nuway/perception/occupancy` |
 | `traffic_lights` | `gt_traffic_light_node` | `traffic_light_node` | `/nuway/perception/traffic_lights` |
-| `prediction` | `gt_prediction_node` (log replay only) | `const_vel_node` or `flow_matching_node` (by `planning.candidate_sources` / profile) | `/nuway/prediction/samples` |
+| `prediction` | `gt_prediction_node` (log replay only) | `const_vel_node` or `prediction_node` (by `planning.candidate_sources` / profile) | `/nuway/prediction/samples` |
 | `planning` | `gt_planning_node` | `behavior_fsm_node` + `planner_node` | `/nuway/planning/behavior`, `candidates`, `trajectory` |
 
 Consumers never know which producer is running. GT producers must populate every field including `score = 1.0`, `confidence = 1.0` and realistic `history`. Perception and traffic lights are separate toggles served by separate nodes precisely so that any combination is a plain launch choice.

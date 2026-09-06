@@ -85,7 +85,7 @@ loss = loss_fm + loss_aux
 
 Sampler (`flow_matching.py: sample`): Euler, `n_steps` configurable (train-time eval uses 6; also report 1, 2, 4, 8, 16 in a table). Optional cost guidance hook (used in M10).
 
-## 6. Runtime node (`nuway_prediction/flow_matching_node.py`)
+## 6. Runtime node (`nuway_prediction/prediction_node.py`)
 
 - Subscribes agents (base_link), lane graph (latched; tokenizer caches per-lane polylines), reference line, traffic lights, occupancy, pose. Runs once per two ticks, triggered by the agents message. The occupancy subscription is the second sanctioned grid-into-Python case of `00_overview.md` principle 6.
 - Builds tokens on GPU (numpy→torch, pinned), runs encoder once, samples S=16, denormalizes, transforms to `map` frame, publishes `PredictionSamples` with `sample_weight = 1/S`. Ego channel dropped from the message (M8 adds the ego planning head to this same node and publishes `/nuway/planning/learned_candidates` from it).
@@ -108,7 +108,7 @@ Sampler (`flow_matching.py: sample`): Euler, `n_steps` configurable (train-time 
 3. [ ] `velocity_net.py`; `flow_matching.py` (train step, sampler, guidance hook); `aux_losses.py` + tests (differentiability, finite-difference gradient check on offroad sampling).
 4. [ ] `train.py`, config, `compute_norm_stats.py`; short overfit run on 1k frames (loss → ~0, samples reproduce futures).
 5. [ ] Full training; open-loop report; step-count table.
-6. [ ] `flow_matching_node.py`; export; latency benchmark; Foxglove prediction layer (samples as faded polylines, per-agent).
+6. [ ] `prediction_node.py`; export; latency benchmark; Foxglove prediction layer (samples as faded polylines, per-agent).
 7. [ ] Closed-loop eval with lattice planner; compare vs M5; junction collision analysis.
 8. [ ] `tests/integration/test_m7_learned_prediction.py` (short route, `m7_learned_prediction.yaml`, asserts completion and that `/nuway/prediction/samples` carries S=16).
 

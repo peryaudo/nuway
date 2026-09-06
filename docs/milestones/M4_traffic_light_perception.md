@@ -6,7 +6,7 @@
 - [ ] Offline (held-out Town07, all weathers): state accuracy > 0.97 on crops within 40 m, > 0.93 within 60 m; `visible` AUROC > 0.98. Report per state and per weather; night and rain separately.
 - [ ] Association: for every town in the M2 collection set, the lane→traffic-light mapping from the OpenDRIVE parser agrees with CARLA's `get_affected_lane_waypoints()` on 100% of signalized lanes, **or** each disagreement is resolved by the geometric fallback (§2) and listed in `data/maps/<town>/tl_association_report.md`.
 - [ ] Latch: in a scripted approach (Town03, 4 junctions × {stop, pass}), the state published while the light is out of view within 8 m of the stop line equals the last confidently observed state; no `unknown` is published inside 8 m unless the light was never seen.
-- [ ] Runtime: crop + classify + latch ≤ 5 ms p50 for up to 4 lights, 10 Hz, fp16, in the same process as `bevfusion_node.py` or standalone.
+- [ ] Runtime: crop + classify + latch ≤ 5 ms p50 for up to 4 lights, 10 Hz, fp16, in the same process as `perception_node.py` or standalone.
 - [ ] Closed-loop: profile `m4_learned_tl.yaml` (`use_gt.perception=false`, `use_gt.traffic_lights=false`, `use_gt.localization=true`) on the M1 protocol: red-light infraction count ≤ 1.5× the `m3_learned_perception` run, driving score ≥ 95% of it. Also run with `use_gt.perception=true` to isolate the TL contribution.
 
 ---
@@ -68,7 +68,7 @@ Subscribes `cam_front`, `cam_left`, `cam_right` (+ `cam_tl` if enabled), `/nuway
 3. Latch (§4) per light; publish `TrafficLightArray` with `stop_line`, `affected_lane_ids`, `state`, `confidence`, `time_in_state`, `yellow_duration`, `latched`. Stamp = `cam_front` stamp.
 4. `NodeDiag` with breakdown: project, crop, model, latch; plus `n_lights`, `n_latched`.
 
-Runs inside the `bevfusion_node.py` process when the profile sets `perception.tl_in_bev_process: true` (saves an image subscription and a CUDA context); standalone otherwise. Either way the topic and message are identical, and either way the launch alternative is selected by `use_gt.traffic_lights` alone (`02_interfaces.md` §6).
+Runs inside the `perception_node.py` process when the profile sets `perception.tl_in_bev_process: true` (saves an image subscription and a CUDA context); standalone otherwise. Either way the topic and message are identical, and either way the launch alternative is selected by `use_gt.traffic_lights` alone (`02_interfaces.md` §6).
 
 Foxglove: overlay of crop boxes on `cam_front` with predicted state and latch status on `/nuway/perception/tl_debug` (only when `traffic_light_node.debug: true`), plus the `tl_crops` marker layer.
 
@@ -84,7 +84,7 @@ Foxglove: overlay of crop boxes on `cam_front` with predicted state and latch st
 2. [ ] `projection.py` + reproduction test against M2 crop bboxes; `tl_bulbs.json` export per town.
 3. [ ] `model.py`, `metrics.py`, `train.py`; train; offline report.
 4. [ ] `latch.py` + unit tests (scripted sequences: lose sight at 6 m holding green; lose sight at 20 m → unknown; latched yellow with elapsed time; release on stop line).
-5. [ ] `traffic_light_node.py` (+ in-process option in `bevfusion_node.py`), launch wiring, profile `m4_learned_tl.yaml`.
+5. [ ] `traffic_light_node.py` (+ in-process option in `perception_node.py`), launch wiring, profile `m4_learned_tl.yaml`.
 6. [ ] Scripted latch integration test `tests/integration/test_m4_latch.py` (4 junctions × {stop, pass}).
 7. [ ] Blind-distance study; `cam_tl` decision.
 8. [ ] Closed-loop eval; `data/eval_runs/m4_report.md` with infraction triage.

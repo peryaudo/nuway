@@ -29,9 +29,9 @@ Source B gives a fast, deterministic, expert-like default; Source A gives intera
 
 Training is joint with M7 (multi-task, `w_plan = 1.0`) from the M7 checkpoint, 10 epochs, then DAgger rounds (§4). Config `configs/training/planner.yaml` composes the M7 groups plus `model/planning_head` and `stage/joint`, so the multi-task run and the M7 run differ by a defaults list rather than a forked config (`03_style_and_conventions.md` §9.7). W&B group `m8`, `job_type=train`: `train/loss_wta`, `train/loss_score`, `train/loss_div` and the inherited M7 terms are logged separately, so a regression in prediction quality caused by the joint loss is visible at the term level.
 
-## 2. Runtime (`nuway_prediction/flow_matching_node.py` + `planner_node` changes)
+## 2. Runtime (`nuway_prediction/prediction_node.py` + `planner_node` changes)
 
-There is no separate learned-planner node. The ego planning head runs inside the M7 node `nuway_prediction/flow_matching_node.py`, so the encoder runs once per cycle; the node publishes both `/nuway/prediction/samples` and `/nuway/planning/learned_candidates` (`TrajectoryCandidates`, `source="learned"`). This is the "one module, one process" case named in `00_overview.md` principle 2: the shared `context` tensor never leaves the process.
+There is no separate learned-planner node. The ego planning head runs inside the M7 node `nuway_prediction/prediction_node.py`, so the encoder runs once per cycle; the node publishes both `/nuway/prediction/samples` and `/nuway/planning/learned_candidates` (`TrajectoryCandidates`, `source="learned"`). This is the "one module, one process" case named in `00_overview.md` principle 2: the shared `context` tensor never leaves the process.
 - Ego candidates (S + M = 24) at 0.5 s → interpolated to 0.1 s by a C² spline (the Python twin of `nuway_common/trajectory.hpp::Resample`, `nuway_ml/common/trajectory.py`) with speed/accel from derivatives; 81 points each.
 - Each candidate carries `Trajectory.sample_index` = the index of the prediction sample it is consistent with (Source A) or `-1` (Source B) (`02_interfaces.md` §4).
 
@@ -63,14 +63,14 @@ Perception-noise curriculum: DAgger rounds decrease the synthetic occupancy/agen
 
 ## 5. Tests
 
-- `test_fallback.py` (integration): kill `flow_matching_node` mid-route → completion still succeeds, `source` transitions logged.
+- `test_fallback.py` (integration): kill `prediction_node` mid-route → completion still succeeds, `source` transitions logged.
 - `test_qp_refine_learned.py`: learned candidate violating curvature and bounds → refined output satisfies both; deviation from the reference shape within 0.5 m at 2 s.
 - `test_candidate_provenance.py`: Source A candidates carry `sample_index`; collision check uses the matched sample.
 
 ## 6. Task list
 
 1. [ ] `planning_head.py` + losses; multi-task config; train from M7 checkpoint (10 epochs); open-loop ego L2 report.
-2. [ ] Ego head in `flow_matching_node.py`: publish `TrajectoryCandidates(source="learned")`; spline resampling to 81 points; `sample_index` provenance.
+2. [ ] Ego head in `prediction_node.py`: publish `TrajectoryCandidates(source="learned")`; spline resampling to 81 points; `sample_index` provenance.
 3. [ ] `planner_node`: multi-source collection, per-sample collision weighting, QP refinement of learned candidates with decayed tracking weight, source bias, fallback + hysteresis.
 4. [ ] Profile `m8_learned_planner.yaml`; closed-loop eval vs M7.
 5. [ ] `collect_dagger.py` (both cheap and rendered modes), `dagger.py`; run ≥ 3 rounds; report.

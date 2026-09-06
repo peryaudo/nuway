@@ -72,13 +72,13 @@ Evaluation script `ml/scripts/eval_tracking.py`: run detector + tracker on held-
 
 ### 4.1 LiDAR preprocessing: in the Python inference node
 
-`bevfusion_node.py` subscribes `/carla/hero/lidar_top` directly and builds pillars with `torch` ops (`scatter_reduce`) on the GPU. This is one of the two sanctioned places where a point cloud crosses into Python (`00_overview.md` principle 6) — the other is `gt_perception_node.py`, which reads the semantic cloud on the GT path and never runs alongside this node. Two facts to keep straight:
+`perception_node.py` subscribes `/carla/hero/lidar_top` directly and builds pillars with `torch` ops (`scatter_reduce`) on the GPU. This is one of the two sanctioned places where a point cloud crosses into Python (`00_overview.md` principle 6) — the other is `gt_perception_node.py`, which reads the semantic cloud on the GT path and never runs alongside this node. Two facts to keep straight:
 - `rclpy` in Humble does **not** support loaned (zero-copy) messages, so the `PointCloud2` is deserialized: ≈ 30k points × 16 bytes = 0.5 MB per sweep. Expected cost 1–3 ms; it is measured by the diag `preproc` breakdown and reported in the M3 report.
 - If deserialization + pillarization exceeds **8 ms p50**, the escalation path is `lidar_preproc_node.cpp` (C++, LibTorch pillarization, tensor handed over through CUDA IPC). It is not built unless the threshold is crossed; the decision is recorded here.
 
 The occupancy grid is likewise published from Python (it is this node's output); consumers are C++ and read it through the ordinary `OccupancyGridMC` topic.
 
-### 4.2 `bevfusion_node.py`
+### 4.2 `perception_node.py`
 - Subscribes LiDAR + 4 images (message_filters approximate sync, slop 0.03 s) + pose. Runs once per two ticks, triggered by the LiDAR message.
 - Maintains the temporal queue and EMA memory (on GPU); both are cleared on `ResetEvent`, together with the tracker.
 - Runs the model (torch.compile or TensorRT export via `nuway_ml/export/`; TensorRT is optional, target met with `torch.compile(mode="reduce-overhead")` + fp16 first).
@@ -87,7 +87,7 @@ The occupancy grid is likewise published from Python (it is this node's output);
 
 ## 5. Integration & evaluation
 
-- Profile `m3_learned_perception.yaml`: `use_gt.perception=false`, `use_gt.traffic_lights=true` (so `gt_traffic_light_node` runs while `bevfusion_node` replaces `gt_perception_node`), `use_gt.localization=true`.
+- Profile `m3_learned_perception.yaml`: `use_gt.perception=false`, `use_gt.traffic_lights=true` (so `gt_traffic_light_node` runs while `perception_node` replaces `gt_perception_node`), `use_gt.localization=true`.
 - Run M1 protocol; compare with `compare_runs.py` against the M1 GT baseline run (visibility-on). Investigate any route where the score drops > 30%: replay MCAP in Foxglove with GT agents overlaid on perceived ones (`nuway_viz` has a "GT vs perceived" layout).
 - Planner robustness pass (if needed): if the score drop is dominated by flicker (agents appearing/disappearing), raise `hits` threshold to 3 or extend `misses`; if by static-obstacle collisions, lower the safety layer's occupancy threshold; record changes in the M1 configs with a comment.
 
@@ -101,7 +101,7 @@ The occupancy grid is likewise published from Python (it is this node's output);
 6. [ ] Config dataclasses + `configs/training/bevfusion.yaml` and its groups; `train.py` with the staged schedule and W&B logging; run stage A; inspect; B; C.
 7. [ ] `tracker.py` + `eval_tracking.py`.
 8. [ ] `export/` (torch.compile config; optional TensorRT via `torch_tensorrt`), latency benchmark script.
-9. [ ] `bevfusion_node.py`, launch wiring, profile YAML.
+9. [ ] `perception_node.py`, launch wiring, profile YAML.
 10. [ ] Closed-loop eval; write `data/eval_runs/m3_report.md` comparing to M1.
 11. [ ] Foxglove layout "GT vs perceived".
 

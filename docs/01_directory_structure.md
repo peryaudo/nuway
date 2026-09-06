@@ -147,7 +147,8 @@ nuway/
 │       │   │   ├── route_runner.py
 │       │   │   ├── infractions.py
 │       │   │   ├── driving_score.py
-│       │   │   └── report.py
+│       │   │   ├── report.py
+│       │   │   └── chase_writer.py        # M1; /nuway/viz/chase_cam -> chase/*.jpg (docs/02 §8.3)
 │       │   └── routes/                    # route XMLs (leaderboard format)
 │       ├── nuway_viz/                     # marker_node.cpp, foxglove layouts, rviz configs
 │       └── nuway_bringup/
@@ -167,6 +168,11 @@ nuway/
 │   │   │   ├── config.py                  # structured-config dataclasses + Hydra ConfigStore
 │   │   │   ├── run_logger.py              # the one wandb wrapper; training loops log through it
 │   │   │   └── schema.py                  # dataset record schema (dataclasses + validation)
+│   │   ├── viz/                           # M1; the one BEV drawing implementation (docs/02 §8)
+│   │   │   ├── style.py                   # colors, widths, figure geometry; Agg backend only
+│   │   │   ├── bev_draw.py                # one draw_<layer>() per §3.9 marker layer, onto an Axes
+│   │   │   ├── panel.py                   # the standard frame: BEV + header text + diag strip
+│   │   │   └── contact_sheet.py           # tile N frames into one PNG
 │   │   ├── data/
 │   │   │   ├── webdataset_io.py           # shard writer/reader
 │   │   │   ├── labeling/
@@ -242,14 +248,16 @@ nuway/
 │   │   ├── eval_localization.py           # M5
 │   │   └── compare_runs.py
 │   ├── lint/                              # format_cpp.sh, tidy_cpp.sh, lint_py.sh, merge_compile_commands.py, header guard check (M0)
-│   └── viz/
+│   └── viz/                               # M1; headless renderers (docs/02 §8); no ROS env needed
+│       ├── render_bag.py                  # MCAP -> frames/, sheets/, incidents/ PNGs
+│       └── make_video.sh                  # optional ffmpeg wrapper; MP4 is never the primary artifact
 │
 ├── data/                                  # gitignored
 │   ├── raw/
 │   ├── shards/
 │   ├── maps/                              # per town: .xodr, map.ply, static_occ.npz, tl_bulbs.json, tl_overrides.yaml, reports
 │   ├── checkpoints/                       # <experiment>/<timestamp>/: ckpts, viz/, .hydra/config.yaml
-│   └── eval_runs/
+│   └── eval_runs/                         # <run_id>/: report.md, results.csv, per-route mcap + renders (docs/02 §8)
 │
 ├── tests/                                 # cross-cutting integration tests
 │   ├── fixtures/                          # gen_*.py generators + small committed JSON fixtures
@@ -276,6 +284,7 @@ nuway/
 - Python packages inside `ros2_ws` only contain nodes and thin glue. Model code and anything shared with `tools/` lives in `ml/nuway_ml` and is imported.
 - Config YAML keys are namespaced by node name. Do not read environment variables in nodes.
 - **`configs/training/` is for Hydra only and `configs/*` elsewhere is for ROS nodes only.** Training configs are composed by Hydra from the groups above and validated against the dataclasses in `nuway_ml/common/config.py`; runtime YAMLs are loaded by ROS and never by `ml/`. A value both sides need (grid spec, class list, history length) is declared in `02_interfaces.md` and duplicated deliberately, with a parity test, not shared by importing one config from the other.
+- **Every visualization has a headless twin that writes image files under `data/`.** Foxglove layouts in `nuway_viz` are for a human at the devbox; a layer that exists only as a Foxglove panel is incomplete. The drawing code is `ml/nuway_ml/viz/` (matplotlib, `Agg`, no ROS, no GPU, no CARLA), imported by `tools/viz/render_bag.py`, by the M2 spot-check notebook and by the training-time `val/viz` renders, so a training render and an eval render of the same scene look identical. Contract in `02_interfaces.md` §8.
 - **Training metrics live in Weights & Biases, artifacts live in `data/`.** No metric CSVs, no tensorboard event files, no plots committed to the repo; a milestone's reported numbers cite a W&B run and the checkpoint directory that produced them (`03_style_and_conventions.md` §9.7).
 - Python dependencies enter only through `uv add` (lock updated in the same commit). C++ dependencies enter only through `package.xml` + rosdep, or a `*_vendor` package. No `pip`, no submodules, no system-wide installs. See `03_style_and_conventions.md` §6.
 - All C++ is Google style and must pass `clang-format` and `clang-tidy`; all Python is PEP 8 and must pass `ruff format`, `ruff check` and `mypy`, with the root configs. See `03_style_and_conventions.md`.

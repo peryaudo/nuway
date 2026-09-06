@@ -8,13 +8,14 @@
 - [ ] No collisions on any route where all agents are visible and moving ≤ 15 m/s (i.e. failures must be attributable to prediction limits, not planner bugs).
 - [ ] MPC solve time p99 < 3 ms; planner cycle p99 < 15 ms.
 - [ ] `tools/eval/run_routes.py --profile m1_classical` produces `data/eval_runs/<run_id>/report.md` + `results.csv` + per-route MCAP.
+- [ ] Every infraction row in `report.md` links a rendered incident sheet under `<route>/incidents/`, produced by the run itself with `eval.render: incidents` (`02_interfaces.md` §8.2). Rendering the same bag twice produces byte-identical PNGs.
 - [ ] `tools/eval/run_leaderboard.sh --routes dev_town03.xml` runs the stack under the official Leaderboard 2.x runner (`leaderboard_evaluator.py`, ROS agent) and completes ≥ 8 of 10 routes; the Leaderboard's own driving score is within 5 points of our harness on the same routes.
 
 ---
 
 ## 1. Scope
 
-In: LTV-MPC, delay compensation, behavior FSM, lattice sampler, QP refinement (path + speed), rule-based selector, safety layer, const-vel prediction, Traffic Manager integration, infraction detection, driving score, run/compare tooling, Foxglove BEV layout, Leaderboard 2.x agent wrapper and runner script.
+In: LTV-MPC, delay compensation, behavior FSM, lattice sampler, QP refinement (path + speed), rule-based selector, safety layer, const-vel prediction, Traffic Manager integration, infraction detection, driving score, run/compare tooling, Foxglove BEV layout and its headless twin, Leaderboard 2.x agent wrapper and runner script.
 
 Out: learned anything; forward-sim selector (M9); iLQR (M10).
 
@@ -191,15 +192,25 @@ Debug: publish predicted MPC trajectory as markers.
 
 **Score** (`driving_score.py`): Leaderboard 2.0 formula: `route_completion × Π penalty_i^{n_i}` with penalties collision_pedestrian 0.50, collision_vehicle 0.60, collision_layout 0.65, red_light 0.70, stop_sign 0.80, outside_lanes scales by fraction, route_dev/blocked/timeout → completion truncated. Keep the coefficients in `configs/eval/scoring_lb20.yaml` so that a `lb21` variant can be added later.
 
-**Report** (`report.py`): `results.csv` (one row per route run), `report.md` with per-town and overall driving score, infraction histogram, planner/controller diag summaries (p50/p99 cycle time, safety-layer intervention count, MPC failures), and links to MCAP files. `compare_runs.py A B` prints per-route deltas and a paired summary.
+**Report** (`report.py`): `results.csv` (one row per route run), `report.md` with per-town and overall driving score, infraction histogram, planner/controller diag summaries (p50/p99 cycle time, safety-layer intervention count, MPC failures), and links to MCAP files **and to the rendered incident sheets of §3.11** (relative paths, so the run directory can be copied or archived whole). `compare_runs.py A B` prints per-route deltas and a paired summary.
 
 Route sets: `nuway_eval/routes/dev_town03.xml`, `dev_town05.xml` (10 routes each, 1.5–3 km, mix of junctions, roundabout on Town03, highway on Town05). Weather presets: `ClearNoon`, `WetSunset`, `HardRainNight` (the rain/night ones only matter after M3; M1 uses them to keep the protocol fixed).
 
 ### 3.11 Visualization
 
-Foxglove layout `bev_planning.json`: agents (boxes by class), predictions (polylines faded by time), lattice candidates (thin, colored by cost quantile), refined selected (thick), safe trajectory (if different), MPC predicted horizon, reference line & bounds, behavior state text, cost-breakdown table (from `TrajectoryCandidates`), diag table.
+Two back-ends over one set of layers (`02_interfaces.md` §3.9 and §8). Live, for a human at the devbox; headless, for everyone and everything else.
 
-`nuway_viz/marker_node.cpp` converts each of the above topics to the `/nuway/viz/<layer>` `MarkerArray` topics (`02_interfaces.md` §3.9). One node, many subscriptions.
+**Live.** Foxglove layout `bev_planning.json`: agents (boxes by class), predictions (polylines faded by time), lattice candidates (thin, colored by cost quantile), refined selected (thick), safe trajectory (if different), MPC predicted horizon, reference line & bounds, behavior state text, cost-breakdown table (from `TrajectoryCandidates`), diag table.
+
+`nuway_viz/marker_node.cpp` converts each of the above topics to the `/nuway/viz/<layer>` `MarkerArray` topics. One node, many subscriptions.
+
+**Headless.** `ml/nuway_ml/viz/` draws the same layers with matplotlib (`Agg`), and `tools/viz/render_bag.py` replays a route's MCAP into PNGs without CARLA, without a display and without `rclpy` — MCAP carries the schemas, `rosbags` decodes them. This is the only way an eval result can be inspected after the fact, on CI, or by a coding agent; the contract, the output layout and the frame composition are `02_interfaces.md` §8.
+
+M1 owns this because M1 owns the eval harness: from here on, "the score dropped" is always answerable from `data/eval_runs/<run_id>/` alone.
+
+**Incident frames.** `report.py` renders `eval.incident_window` ticks around every infraction, safety-layer intervention, MPC failure and lockstep timeout, and links the resulting sheet from the row in `report.md` that reports it (§8.2). Default `eval.render: incidents`; `full` renders the whole route at `render_stride`. Adding a Foxglove layer without the matching `draw_<layer>()` in `nuway_ml/viz/bev_draw.py` is a defect, not a follow-up.
+
+**Chase camera.** `eval.chase_cam: true` adds the `cam_chase` rig entry, published on `/nuway/viz/chase_cam` and written to `<route>/chase/*.jpg` by `nuway_eval/chase_writer.py` (§8.3). Off by default, off under the Leaderboard profile. It answers "is the car doing something visibly insane" faster than any BEV.
 
 ### 3.12 Leaderboard 2.x integration (`nuway_carla_bridge/leaderboard_agent.py`, `tools/eval/run_leaderboard.sh`)
 
@@ -225,9 +236,13 @@ The official Leaderboard runner owns the CARLA client, the tick, the sensors and
 10. [ ] Traffic spawning in world_manager; seed determinism test (two runs → identical agent trajectories for 30 s); traffic respawn on reset.
 11. [ ] `infractions.py` (incl. the ported min-speed criterion), `driving_score.py`, `route_runner.py` (reset event, non-deterministic flag), `report.py`, `compare_runs.py`; route XMLs; `configs/eval/scoring_lb20.yaml`.
 12. [ ] Foxglove layout + marker node.
-13. [ ] Tune: lattice sets, selector weights, MPC weights on dev routes until criteria met. Record final weights in configs and a short tuning note in the Decisions log.
-14. [ ] `tests/integration/test_m1_traffic.py` (short route, 20 vehicles, asserts no collision and completion) and `test_m1_determinism.py` (same route twice, asserts identical command sequences).
-15. [ ] `leaderboard_agent.py`, `rig_leaderboard.json` (+ parity test vs `rig_dev.json`), `configs/profiles/leaderboard.yaml`, `run_leaderboard.sh`; run the dev routes under the official runner; compare scores in the report.
+13. [ ] `nuway_ml/viz/` (style, `draw_<layer>()` per §3.9 layer, panel, contact sheet) + tests: a fixture scene renders to a byte-identical PNG twice, and every `/nuway/viz/<layer>` name has a `draw_` function.
+14. [ ] `tools/viz/render_bag.py` (MCAP decode via `rosbags`, `--stride`/`--ticks`/`--layers`, frames + contact sheets); run it on a dev-route bag in an environment with ROS *not* sourced to prove the dependency claim.
+15. [ ] Incident rendering in `report.py`: incident tick list → `incidents/` sheets → relative links in `report.md`. `eval.render` / `incident_window` config keys.
+16. [ ] `cam_chase` rig entry, `/nuway/viz/chase_cam` publisher in `sensor_rig.py`, `chase_writer.py`; `eval.chase_cam` off in `leaderboard.yaml`.
+17. [ ] Tune: lattice sets, selector weights, MPC weights on dev routes until criteria met. Record final weights in configs and a short tuning note in the Decisions log.
+18. [ ] `tests/integration/test_m1_traffic.py` (short route, 20 vehicles, asserts no collision and completion) and `test_m1_determinism.py` (same route twice, asserts identical command sequences).
+19. [ ] `leaderboard_agent.py`, `rig_leaderboard.json` (+ parity test vs `rig_dev.json`), `configs/profiles/leaderboard.yaml`, `run_leaderboard.sh`; run the dev routes under the official runner; compare scores in the report.
 
 ## 5. Determinism checklist
 
@@ -242,6 +257,8 @@ The official Leaderboard runner owns the CARLA client, the tick, the sensors and
 - (2026-09-02) Path–speed decomposition rather than joint spatiotemporal optimization: simpler, matches Apollo, adequate for CARLA urban speeds.
 - (2026-09-05) Yellow-light handling is an explicit dilemma-zone rule with a latched decision, not "always stop" (rear-end risk, hard braking) nor "always go" (red-light infractions). The rule only consumes `TrafficLightArray`, so M4 swaps the source without touching the planner.
 - (2026-09-05) Determinism by lockstep rather than by wall-clock pacing: pacing made results depend on machine load, which made the "identical scores" criterion unmeetable. The cost is that a slow node slows the whole simulation, which is acceptable for a toy system.
+- (2026-09-05) Visualization is specified as a rendering contract with two back-ends (`02_interfaces.md` §8), not as "a Foxglove layout". A live GUI is unreadable to CI, to a post-hoc session on a bag, and to the LLM agent doing most of the work in this repo, so a Foxglove-only layer leaves the project with no way to debug a bad route except re-running it in front of a human. Renders on disk cost some MB per route in a gitignored directory; that is the whole price.
+- (2026-09-05) `eval.render` defaults to `incidents`, not `full`: a route is 6k–12k ticks, and the frames worth looking at are the ones the scorer already flagged.
 - (2026-09-05) Leaderboard integration lives in M1, not in a later milestone, so that every subsequent milestone is measured under both our harness and the official runner and no design decision can silently break Leaderboard compatibility.
 
 ## 7. Open questions

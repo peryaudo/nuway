@@ -66,6 +66,7 @@ Dependencies: M0 → M1 → M2 → M3 → M4 → M5 → M6 → M7 → M8 → M9 
 | Build | `source setup_env.sh && colcon build` (defaults from `ros2_ws/colcon_defaults.yaml`) | `uv sync` for Python; no `pip` anywhere |
 | Tooling | clang-format/clang-tidy (LLVM ≥ 17 PyPI wheels), ruff, mypy, gersemi, pre-commit | all pinned in `uv.lock`; see `03_style_and_conventions.md` §6 |
 | Training tooling | Hydra (config management, `configs/training/`), Weights & Biases (losses, metrics, run configs; project `nuway`) | `train` dependency group; see `03_style_and_conventions.md` §9.7. Runtime nodes depend on neither |
+| Visualization | Foxglove (live) + matplotlib/`Agg` renders to PNG (headless) | `viz` dependency group; `02_interfaces.md` §8. Every layer exists in both back-ends; the headless one needs neither CARLA nor ROS |
 
 CARLA launch (development):
 ```
@@ -105,6 +106,7 @@ Because CARLA is in lockstep, exceeding these budgets slows the simulation but d
 - Read the milestone document fully before starting. Each has a **Task list** section; work through it in order and tick items in the doc as they land.
 - Prefer small, compilable increments. Run `colcon build --packages-select <pkg>` and the package tests after every change.
 - Style is specified in `03_style_and_conventions.md`: Google C++ Style Guide for C++, PEP 8 for Python. Run `clang-format` + `clang-tidy` after every C++ change and `ruff format` + `ruff check` + `mypy` after every Python change (root configs); all must be clean before a commit.
+- **Look at the renders.** Foxglove is for a human at the devbox; you cannot see it. After an eval run, read `data/eval_runs/<run_id>/report.md` and open the incident sheets it links (`02_interfaces.md` §8) — they are PNGs on disk, and they are how you debug a route without a human describing it to you. `tools/viz/render_bag.py` renders any recorded bag on demand. The same holds for training: `data/checkpoints/<experiment>/<timestamp>/viz/`, not the W&B web UI.
 - When a spec in a milestone doc is ambiguous, choose the simplest option that satisfies the completion criterion, and record the decision in the milestone doc under **Decisions log**.
 - Do not introduce new message types, topics, services or profile-level config keys outside `02_interfaces.md`; propose the change there first.
 - Never commit data. `data/` is gitignored.

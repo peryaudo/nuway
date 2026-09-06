@@ -49,6 +49,9 @@ Responsibilities:
     {"id": "cam_rear",  "type": "sensor.camera.rgb", "x": -1.5, "y": 0, "z": 2.0, "yaw": 180, "attributes": {...}},
     {"id": "imu",  "type": "sensor.other.imu",  "x": 0, "y": 0, "z": 0, "attributes": {"sensor_tick": 0.05}},
     {"id": "gnss", "type": "sensor.other.gnss", "x": 0, "y": 0, "z": 0, "attributes": {"sensor_tick": 0.05}},
+    {"id": "cam_chase", "type": "sensor.camera.rgb", "viz_only": true,
+     "x": -6.0, "y": 0, "z": 3.0, "pitch": -15, "yaw": 0,
+     "attributes": {"image_size_x": 640, "image_size_y": 360, "fov": 90, "sensor_tick": 0.25}},
     {"id": "lidar_top_semantic", "type": "sensor.lidar.ray_cast_semantic", "label_only": true,
      "x": 0.0, "y": 0.0, "z": 2.4, "roll": 0, "pitch": 0, "yaw": 0,
      "attributes": {"channels": 32, "range": 75, "points_per_second": 600000, "rotation_frequency": 20,
@@ -56,7 +59,7 @@ Responsibilities:
   ]
 }
 ```
-Positions in this JSON are **CARLA convention relative to the CARLA actor origin** (that is what `carla.Transform` wants). `sensor_rig.py` converts to ROS `base_link` (rear-axle) through `nuway_ml.common.carla_conv` when publishing `/tf_static`. Note y-sign flip. `rotation_frequency` must equal the sim rate (20) so one LiDAR sweep = one tick (no partial sweeps). `sensor_tick` is 0.05 for every sensor: in synchronous mode CARLA delivers at most one sample per tick, so a smaller value only wastes render time. Entries with `label_only: true` are spawned only when the profile asks for them (`use_gt.perception: true` from M2 on, and the M5 mapping profile) and are never subscribed by a learned node.
+Positions in this JSON are **CARLA convention relative to the CARLA actor origin** (that is what `carla.Transform` wants). `sensor_rig.py` converts to ROS `base_link` (rear-axle) through `nuway_ml.common.carla_conv` when publishing `/tf_static`. Note y-sign flip. `rotation_frequency` must equal the sim rate (20) so one LiDAR sweep = one tick (no partial sweeps). `sensor_tick` is 0.05 for every sensor: in synchronous mode CARLA delivers at most one sample per tick, so a smaller value only wastes render time. Entries with `label_only: true` are spawned only when the profile asks for them (`use_gt.perception: true` from M2 on, and the M5 mapping profile) and are never subscribed by a learned node. `viz_only: true` is the same idea for visualization: `cam_chase` (M1) is spawned only when `eval.chase_cam: true`, publishes `sensor_msgs/CompressedImage` on `/nuway/viz/chase_cam` rather than under `/carla/hero/`, is excluded from `/tf_static` and from `rig_leaderboard.json`, and no node in the stack may subscribe to it (`02_interfaces.md` §8.3). It is the one sensor whose `sensor_tick` is not 0.05.
 
 ### 2.2 `nuway_carla_bridge/gt_publisher.py` (rclpy)
 

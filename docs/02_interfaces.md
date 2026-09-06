@@ -125,6 +125,7 @@ Semantic LiDAR and depth cameras are **never** subscribed by a learned node. In 
 |-------|------|----------|
 | `/nuway/diag/<node_name>` | `nuway_msgs/NodeDiag` | every node |
 | `/nuway/viz/<layer>` | `visualization_msgs/MarkerArray` | `nuway_viz/marker_node` only; layers: `lanes`, `reference_line`, `agents`, `predictions`, `candidates`, `trajectory`, `mpc_horizon`, `sim_rollout`, `tl_crops` |
+| `/nuway/viz/chase_cam` | `sensor_msgs/CompressedImage` | `nuway_carla_bridge/sensor_rig` only when `eval.chase_cam: true` (M1); a third-person view of the hero, never subscribed by any node in the stack (§8.3) |
 
 ### 3.10 Services (`nuway_msgs/srv`)
 | Service | Type | Server | Notes |
@@ -486,6 +487,10 @@ control:
 eval:
   record: true
   record_sensors: false
+  render: incidents                    # M1; off | incidents | full — headless renders, §8
+  render_stride: 10                    # ticks between frames when render: full
+  incident_window: [40, 20]            # ticks rendered before / after each infraction
+  chase_cam: false                     # M1; spawn cam_chase and publish /nuway/viz/chase_cam, §8.3
   scoring: configs/eval/scoring_lb20.yaml
 ```
 
@@ -510,4 +515,52 @@ Consumers never know which producer is running. GT producers must populate every
 - Every node wraps its callback in `nuway_common::ScopedTimer` and publishes `NodeDiag` every cycle.
 - **Reset convention.** Every node that keeps state across cycles subscribes to `/nuway/sim/reset_event` (QoS `event`) and, on receipt, drops that state before processing any message stamped at or after `ResetEvent.header.stamp`: tracker tracks and histories, temporal BEV queue and EMA memory, traffic-light latches and vote buffers, smoother graph and initialization, QP/iLQR warm starts, FSM timers and latched yellow decisions, selector consistency memory, MPC warm start, `gt_publisher` history ring buffers. A node that has no cross-cycle state documents that in its header comment. `world_manager` publishes the event before the first tick of the new episode, so the ordering is unambiguous. Nodes ignore data from a previous `episode_id`.
 - `nuway_eval` records all `/nuway/**` topics plus `/carla/hero/vehicle_control_cmd` to an MCAP bag per route when `eval.record: true`. Sensor topics recorded only if `eval.record_sensors: true`.
-- Foxglove layouts in `ros2_ws/src/nuway_viz/foxglove/` show: BEV panel (agents, occupancy, candidates, selected trajectory, prediction samples), map panel, control panel, diag table.
+- Foxglove layouts in `ros2_ws/src/nuway_viz/foxglove/` show: BEV panel (agents, occupancy, candidates, selected trajectory, prediction samples), map panel, control panel, diag table. The same layers must also be renderable headlessly to image files; that contract is §8.
+
+---
+
+## 8. Offline visualization (headless render contract)
+
+Foxglove (§3.9, `nuway_viz`) is a live GUI attached to a running stack: it serves a human sitting at the devbox. It cannot be read by CI, by a post-hoc debugging session, or by a coding agent working in this repo. So:
+
+**Every visualization has a headless twin that writes image files under `data/`.** A layer that exists only as a Foxglove panel is incomplete. Renders are PNG and camera frames are JPEG, because those are the formats every consumer — a browser, a notebook, CI, an LLM agent's file reader — can open directly. MP4 is a derived convenience artifact only (`tools/viz/make_video.sh`); nothing in the criteria of any milestone may depend on it.
+
+### 8.1 The renderer
+
+All drawing lives in `ml/nuway_ml/viz/` and is imported by everything that renders: `tools/viz/render_bag.py`, the M2 spot-check notebook, and the training-time `val/viz` frames (`03_style_and_conventions.md` §9.7). One BEV drawing implementation, one style, so a training render and an eval render of the same scene are directly comparable.
+
+- matplotlib with the `Agg` backend. No display, no GPU, no CARLA connection, no ROS node, and no `rclpy` import: bags are decoded with `rosbags` from the message schemas embedded in the MCAP, so `render_bag.py` runs anywhere the repo checks out (`viz` dependency group, `03_style_and_conventions.md` §6.1). `nuway_ml.viz` is never imported by a runtime node, exactly as `hydra` and `wandb` are not.
+- Deterministic: the same bag produces byte-identical PNGs. Fixed figure size and DPI, no wall-clock text, no random jitter in colors — a render diff between two runs is therefore meaningful.
+- The layer names drawn are exactly the `/nuway/viz/<layer>` names of §3.9. One vocabulary for both back-ends; adding a Foxglove layer without the matching `draw_<layer>()` is a defect.
+
+`tools/viz/render_bag.py --bag <path> [--out <dir>] [--stride N] [--ticks a:b] [--layers ...]` replays one route's MCAP (§7) and writes into the route's directory:
+
+```
+data/eval_runs/<run_id>/
+├── report.md
+├── results.csv
+└── <route>_<weather>_<seed>/
+    ├── run.mcap
+    ├── frames/{tick:06d}.png            # render: full only
+    ├── sheets/{first:06d}_{last:06d}.png
+    ├── incidents/{tick:06d}_<kind>.png
+    └── chase/{tick:06d}.jpg             # eval.chase_cam: true only
+```
+
+One frame is the standard panel: a BEV of the ego neighborhood (`lanes`, `reference_line`, `agents`, `predictions`, `candidates`, `trajectory`, `mpc_horizon`, `sim_rollout`) plus a header line — tick, sim time, `episode_id`, behavior state, speed and commanded acceleration/steer, any infraction firing on that tick — and a one-line diag strip with the per-node cycle times of that tick. Everything an infraction post-mortem needs is in the image; no cross-referencing another file.
+
+A route at 20 Hz is 6k–12k ticks, so `eval.render: full` (stride 10 → 2 Hz) is opt-in and `incidents` is the default. **Contact sheets** are always written: 20 frames tiled into one PNG, so a whole route is 30–60 images to skim rather than a thousand, and one `open` shows a minute of driving at a glance.
+
+### 8.2 Incident frames
+
+`report.py` already knows the tick of every infraction, safety-layer intervention, MPC failure and lockstep timeout. With `eval.render: incidents` (the default) it renders `eval.incident_window` ticks around each one — by default 40 before and 20 after, i.e. 2 s of approach and 1 s of aftermath — into `incidents/` plus one contact sheet per incident, and links them from `report.md` by relative path next to the row that reports the infraction. This is what turns "driving score dropped 8 points" into something diagnosable without re-running the route.
+
+### 8.3 Chase camera
+
+With `eval.chase_cam: true` the rig JSON gains a `cam_chase` entry (`sensor.camera.rgb`, 640×360, behind and above the hero) that `sensor_rig.py` spawns and publishes as `sensor_msgs/CompressedImage` on `/nuway/viz/chase_cam` (`diag` QoS, every 5th tick). `nuway_eval/chase_writer.py` is its only subscriber and writes `chase/{tick:06d}.jpg`. No node in the stack may subscribe to it — it is not a sensor, it is a witness.
+
+`-RenderOffScreen` (`00_overview.md` §4) does not prevent this: it suppresses the game window, not sensor rendering. The cost is one extra 640×360 render per 5 ticks, which is why it is off by default and why `record_sensors` and `chase_cam` are separate keys. Under the Leaderboard runner (M1 §3.12) it is unavailable — the agent's sensor list is fixed by the runner's limits — and `leaderboard.yaml` must set it `false`.
+
+### 8.4 Training renders
+
+Training-time visualizations follow the same rule from the other direction: `run_logger.log_images()` writes PNGs into the Hydra run directory's `viz/` **and** logs them to W&B, so a run with `logging.wandb.mode: disabled` still leaves the fixed validation scenes on disk (`03_style_and_conventions.md` §9.7). W&B is where a human compares runs; `data/checkpoints/<experiment>/<timestamp>/viz/` is where anything without a browser looks.

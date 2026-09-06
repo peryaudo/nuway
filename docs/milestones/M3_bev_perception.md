@@ -1,4 +1,4 @@
-# M3 — BEV perception (BEVFusion-lite + temporal fusion + CenterPoint heads + occupancy)
+# M3 — BEV perception (BEVFusion + temporal fusion + CenterPoint heads + occupancy)
 
 **Goal:** replace GT perception with a learned LiDAR+camera BEV model that outputs the same `AgentArray` (with velocities, IDs, and history) and `OccupancyGridMC`. Traffic lights stay on GT in this milestone (learned in M4). No Kalman filter: velocities are regressed by the network; IDs come from velocity-projected nearest-neighbor association.
 
@@ -46,7 +46,7 @@ Concat-and-conv, no recurrence:
 
 ## 2. Training (`nuway_ml/perception/train.py`)
 
-- Config `configs/training/bevfusion_lite.yaml` (OmegaConf). AMP fp16, AdamW lr 2e-4 (backbone 1e-4), cosine, 24 epochs, batch 4 with grad accumulation 2, EMA weights 0.999.
+- Config `configs/training/bevfusion.yaml` (OmegaConf). AMP fp16, AdamW lr 2e-4 (backbone 1e-4), cosine, 24 epochs, batch 4 with grad accumulation 2, EMA weights 0.999.
 - Stage A (8 epochs): LiDAR-only, no temporal (`K_prev=0`). Stage B (8 epochs): add camera branch and depth loss. Stage C (8 epochs): temporal on. Each stage starts from the previous checkpoint. This staged schedule is what makes 24 GB workable.
 - Validation every epoch: mAP (BEV IoU, per class), AVE, occupancy IoU per channel, plus a fixed set of 16 frames rendered to `data/checkpoints/<run>/viz/`.
 - Held-out: Town07 (all weathers). Report separately for day/night and rain.

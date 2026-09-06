@@ -39,7 +39,7 @@ These apply to every milestone. Violating them requires updating this document f
 | M0 | Bring-up | CARLA native ROS 2 connection, world manager, OpenDRIVE map server, route planner, vehicle system ID, pure-pursuit + PID controller. All perception/localization from GT. | 10 routes completed in empty towns, lateral error < 0.3 m |
 | M1 | Classical planning | LTV-MPC, behavior FSM, Frenet lattice sampler, piecewise-jerk QP refinement, rule-based selector, safety layer, constant-velocity prediction, evaluation harness, **Leaderboard 2.x integration** (ROS agent wrapper, external tick owner, no CARLA client in the stack). | Driving score > 40 on Town03/05, 10 routes × 3 weathers, reproducible; same stack completes a route under the official Leaderboard runner |
 | M2 | Perception data pipeline | Sensor-rich data collection, auto-labeling with visibility filtering, GT occupancy generator, WebDataset shards. | ≥ 150k labeled frames across ≥ 6 towns; dataset loader test passes |
-| M3 | BEV perception | BEVFusion-lite (LiDAR + 4 cameras), temporal fusion, CenterPoint heads with velocity, occupancy head, NN tracker. Replaces GT agents/occupancy. | Vehicle mAP > 0.6; driving score drop vs GT perception < 20% |
+| M3 | BEV perception | BEVFusion (LiDAR + 4 cameras), temporal fusion, CenterPoint heads with velocity, occupancy head, NN tracker. Replaces GT agents/occupancy. | Vehicle mAP > 0.6; driving score drop vs GT perception < 20% |
 | M4 | Traffic light perception | Map-projected crop classifier, lane–traffic-light association verified against CARLA on every town, visibility latch near the stop line. Replaces GT traffic lights. | State accuracy > 0.97 within 40 m; red-light infractions ≤ 1.5× GT |
 | M5 | Localization | KISS-ICP-style LiDAR odometry, offline mapping, scan-to-map registration, fixed-lag smoother (GTSAM), TF publisher. Replaces GT pose. **Milestone: the stack drives with zero GT.** | ATE < 0.2 m; driving score drop vs GT pose < 10% |
 | M6 | Planning data pipeline | Privileged expert planner, render-free high-throughput collection, prediction/planning labels, noise injection, open-loop eval, GT prediction and GT planning cheat nodes. | ≥ 3M frames; expert score ≥ 85; data sanity report |
@@ -76,7 +76,7 @@ CARLA launch (development):
 | Stage | Rate | Budget |
 |-------|------|--------|
 | CARLA tick incl. 4 cams (704×256) + 32-ch LiDAR | 20 Hz sim | ≤ 35 ms |
-| LiDAR preprocessing + BEVFusion-lite (fp16) | 10 Hz | ≤ 40 ms |
+| LiDAR preprocessing + BEVFusion (fp16) | 10 Hz | ≤ 40 ms |
 | Traffic light crop + classifier | 10 Hz | ≤ 5 ms |
 | LiDAR odometry + smoother | 10 Hz | ≤ 20 ms (CPU) |
 | Prediction (encoder + 6 Euler steps × 16 samples) | 10 Hz | ≤ 25 ms |

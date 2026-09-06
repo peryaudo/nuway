@@ -11,6 +11,7 @@
 - **Formatting is not a matter of taste.** `clang-format` with the repo `.clang-format` (`BasedOnStyle: Google`) is the single source of truth. Code that is not clang-format-clean does not merge.
 - **`clang-tidy` is mandatory.** Every C++ package builds with the repo `.clang-tidy`; warnings are errors in CI. Naming rules from the Google guide are machine-checked through `readability-identifier-naming`.
 - **Python follows PEP 8 and PEP 257**, enforced by `ruff` (formatter and linter) and `mypy` with the repo `pyproject.toml` (§9). Same rule as C++: code that is not `ruff format`-clean, `ruff check`-clean and `mypy`-clean does not merge.
+- **Training runs are Hydra-configured and logged to Weights & Biases** (§9.7): `configs/training/` is the Hydra config root, W&B project `nuway` holds every loss curve and the resolved config of every run. Runtime nodes depend on neither.
 - **One toolchain, pinned, reproducible.** Python environments and every developer tool (ruff, mypy, pytest, pre-commit, clang-format, clang-tidy, gersemi) are managed by `uv` from the root `pyproject.toml` + `uv.lock`. C++ builds use colcon with Ninja, ccache and mold configured once in `ros2_ws/colcon_defaults.yaml`, and a shared `nuway_cmake` package for warnings, sanitizers and clang-tidy (§6). No `pip`, no `conda`, no hand-installed LLVM, no `make`.
 - **Run the tools before every commit** (§7.4). Claude Code must run them after every change, in the same way it runs the build and the tests.
 
@@ -171,7 +172,7 @@ Modern, pinned, identical on every developer machine and in CI. This section is 
 
 - [`uv`](https://docs.astral.sh/uv/) is the only Python environment and dependency tool. `pip`, `venv`, `virtualenv`, `conda`, `poetry`, `pipx` and `requirements*.txt` are not used. Install uv once with the official installer (`curl -LsSf https://astral.sh/uv/install.sh | sh`); its version is pinned in `.github/workflows/*.yml` via `astral-sh/setup-uv` and recorded in the table in §6.4.
 - **Layout.** The repository root `pyproject.toml` is a uv workspace root and holds all tool configuration (§7.3). `ml/` is the single workspace member and the only installable package (`nuway-ml`, build backend `hatchling`). `tools/` and `tests/` are not packages; they run through `uv run` with `ml/` importable. `uv.lock` is committed and is the source of truth for every version. `.python-version` pins `3.10`.
-- **Dependency groups** in the root `pyproject.toml`: `dev` (ruff, mypy, pytest, pytest-cov, pre-commit, `clang-format`, `clang-tidy`, `gersemi`), `carla` (the CARLA 0.9.16 client wheel), `train` (wandb/tensorboard, hydra-core). `uv sync` installs `dev` by default; `uv sync --group carla --group train` for a full workstation. Runtime dependencies of the model code (`torch`, `numpy`, `webdataset`, …) live in `ml/pyproject.toml` `[project.dependencies]`.
+- **Dependency groups** in the root `pyproject.toml`: `dev` (ruff, mypy, pytest, pytest-cov, pre-commit, `clang-format`, `clang-tidy`, `gersemi`), `carla` (the CARLA 0.9.16 client wheel), `train` (`hydra-core`, `wandb`). `uv sync` installs `dev` by default; `uv sync --group carla --group train` for a full workstation. Runtime dependencies of the model code (`torch`, `numpy`, `webdataset`, …) live in `ml/pyproject.toml` `[project.dependencies]`.
 - **PyTorch** is pinned to a CUDA 12.x wheel index through `[[tool.uv.index]]` (`explicit = true`) plus `[tool.uv.sources]`, so `uv sync` never pulls the CPU-only wheel by accident. The exact `cu12x` index is decided in M0 against the workstation driver and recorded in §6.4.
 - **ROS 2 interop.** ROS Humble's `rclpy`, `rosidl_runtime_py` and the generated `nuway_msgs` bindings live in Ubuntu 22.04's system Python 3.10 and cannot be installed from PyPI. The venv is therefore created from the system interpreter with system site packages visible: `uv venv --python /usr/bin/python3.10 --system-site-packages`, then `uv sync` populates it. `[tool.uv] python-preference = "only-system"` prevents uv from downloading its own interpreter, which would break the ABI match with ROS. `setup_env.sh` does this in the right order (source ROS, create venv, sync, source `ros2_ws/install/setup.bash`).
 - **Commands.** `uv sync` to create or update the environment; `uv run <cmd>` for every tool and script (`uv run pytest ml`, `uv run ruff check .`, `uv run tools/eval/run_routes.py`); `uv add <pkg>` / `uv add --group dev <pkg>` to add dependencies, which updates `uv.lock` in the same commit; `uv lock --upgrade-package <pkg>` for controlled upgrades. Never `pip install`, never edit `.venv` by hand, never `uv pip` outside of debugging.
@@ -244,6 +245,7 @@ Decided in M0 and kept current here whenever `uv.lock` or the workflows change a
 | clang-format, clang-tidy (PyPI wheels) | ≥ 17, exact in lock | `pyproject.toml` `dev` group, `uv.lock` |
 | ruff, mypy, pytest, pre-commit, gersemi | exact in lock | `pyproject.toml` `dev` group, `uv.lock` |
 | torch | ≥ 2.4, `cu12x` index | `ml/pyproject.toml`, `[[tool.uv.index]]` |
+| hydra-core, wandb | exact in lock | `pyproject.toml` `train` group, `uv.lock` |
 | GTSAM / OSQP / osqp-eigen / nanoflann | 4.2.0 / tag / tag / tag, by commit hash | `ros2_ws/src/*_vendor/CMakeLists.txt` |
 
 ---
@@ -383,7 +385,7 @@ dev = [
   "gersemi",
 ]
 carla = ["carla==0.9.16"]
-train = ["hydra-core", "wandb", "tensorboard"]
+train = ["hydra-core", "wandb"]   # config management and run/metric logging (§9.7)
 
 [tool.uv]
 package = false                    # the root is not installable
@@ -541,7 +543,8 @@ Before declaring a Python task done:
 4. Every public function, class and module has a PEP 257 docstring stating frames, units and tensor shapes where relevant.
 5. Parity modules keep the same function names (modulo case) and argument order as their `nuway_common` twin.
 6. New code has a pytest under the package's `tests/` directory.
-7. `docs/` updated if a node, topic, parameter, CLI flag, or file was renamed.
+7. Training code composes its config through Hydra and logs through `run_logger.py`: no `argparse` in a training entry point, no `wandb` import in a training loop, every loss term logged separately (§9.7).
+8. `docs/` updated if a node, topic, parameter, CLI flag, or file was renamed.
 
 ---
 
@@ -595,7 +598,7 @@ Extra project rules:
 - No `print()` in library code or nodes (`T20`); `logging.getLogger(__name__)` in `ml/`, `self.get_logger()` in rclpy nodes. CLI entry points under `tools/` may print.
 - No bare `except:` and no `except Exception` that swallows; re-raise or convert to a domain `*Error` with `from`.
 - Errors: raise exceptions (Python's idiom, unlike our C++ rule). Public library functions document what they raise. Nodes catch at the callback boundary and report via `/nuway/diag/<node>`, never let an exception kill the executor.
-- `pathlib.Path` over `os.path`; `argparse` (or `tyro` if adopted) for CLIs; `dataclasses` or `omegaconf` structured configs for training configs, never ad-hoc dicts.
+- `pathlib.Path` over `os.path`; `argparse` for CLIs under `tools/` and `ml/scripts/`. Training entry points take no `argparse`: they are Hydra applications configured from `configs/training/` (§9.7). Configs are OmegaConf structured configs backed by dataclasses, never ad-hoc dicts.
 - `torch`: explicit `device` and `dtype` arguments, no implicit `.cuda()`; `torch.no_grad()` / `inference_mode()` in inference nodes; shapes asserted at module boundaries in debug mode. Random seeds set through one helper in `nuway_ml/common`.
 - `numpy`: `NPY` rules apply (new-style `np.random.default_rng`, no deprecated aliases).
 - Mutable default arguments never (`B006`). Comprehensions over `map`/`filter` with lambdas (`C4`).
@@ -607,3 +610,35 @@ Extra project rules:
 - Test function names read as a sentence: `test_round_trip_on_arc_within_tolerance`. Use `pytest.approx` or `np.testing.assert_allclose` with explicit tolerances, justified in a comment when not obvious.
 - Markers registered in `pyproject.toml` (`slow`, `carla`, `gpu`); `--strict-markers` is on. Tests needing CARLA or a GPU are skipped, not failed, when the resource is missing.
 - Tests are subject to `ruff format` and `ruff check` with the relaxations listed in `per-file-ignores` (§7.3); `mypy` still runs on them.
+
+### 9.7 Training runs: Hydra and Weights & Biases
+
+Every model in `ml/nuway_ml/**/train.py` (M3, M4, M7, M8) is configured by **Hydra** and logged to **Weights & Biases**. Both are in the `train` dependency group (§6.1); neither is imported by any runtime node — inference nodes read plain ROS parameters and a checkpoint, and must not depend on `hydra-core` or `wandb`.
+
+**Hydra**
+
+- `configs/training/` is the Hydra config root. Each training entry point is a Hydra application:
+
+  ```python
+  @hydra.main(version_base="1.3", config_path="../../../configs/training", config_name="bevfusion")
+  def main(cfg: DictConfig) -> None:
+      config = cast(TrainConfig, OmegaConf.to_object(cfg))
+  ```
+
+  No `argparse` in a training entry point, no config path arguments, no `os.environ` reads. Utilities under `ml/scripts/` and `tools/` stay `argparse` (§9.5).
+- **Structured configs, not free-form YAML.** The schema is a tree of frozen dataclasses in `nuway_ml/common/config.py`, registered with Hydra's `ConfigStore` under group names, so composition is type-checked at startup and `mypy` sees real attributes. `OmegaConf.to_object` converts to the dataclass before the training loop; the loop never indexes a `DictConfig` with strings.
+- **Config groups** are directories under `configs/training/`: `model/`, `data/`, `optim/`, `logging/`, `stage/`. A top-level experiment file (`bevfusion.yaml`, `traffic_light.yaml`, `fm_prediction.yaml`, `planner.yaml`) is only a `defaults:` list plus the few values it overrides. Copy-pasted blocks between experiment files are a defect: extract a group.
+- **`_self_` is listed explicitly** in every `defaults:` list, last, so overrides in the experiment file win over the groups it composes.
+- Overrides happen on the command line, never by editing a config to launch a variant: `uv run python -m nuway_ml.perception.train optim.lr=1e-4 stage=b`. Sweeps use `--multirun`. Any override worth keeping becomes a committed config in the same PR as the result it produced.
+- **Run directory.** `hydra.run.dir` is set to `data/checkpoints/${experiment}/${now:%Y%m%d_%H%M%S}` (`hydra.sweep.dir` likewise under `data/checkpoints/sweeps/`); checkpoints, `viz/` renders and Hydra's own `.hydra/config.yaml` (the fully composed config) all land there. That directory plus the git SHA is what makes a run reproducible; both are recorded in the W&B run.
+- Interpolation (`${...}`) is used for values that must agree — grid extent, class lists, history length shared between data and model — so they cannot drift. Resolvers beyond the built-ins are not registered.
+
+**Weights & Biases**
+
+- One W&B run per training run, project `nuway`, `group` = milestone (`m3`, `m4`, `m7`, `m8`), `job_type` ∈ {`train`, `dagger`, `eval`}, `name` = the Hydra run-directory basename, so a W&B run and a directory on disk always name each other.
+- `wandb.init(config=OmegaConf.to_container(cfg, resolve=True))`: the resolved config is the run's config, which makes every hyperparameter queryable and diffable across runs. Never log a hand-built subset of it.
+- **All loss and metric logging goes through `nuway_ml/common/run_logger.py`** — the one wrapper around `wandb`, in the spirit of `seeding.py`. Training loops call `logger.log_scalars(...)` / `logger.log_images(...)`; no `wandb` import outside that module and the entry points. This is what keeps tests and short debug runs able to disable logging (`logging.wandb.mode=disabled`) without touching the loop.
+- **Log every loss term separately, not just the total.** A multi-term loss (M3 heads, M7 aux losses, M8 WTA + aux) is logged as `train/loss_total` plus one scalar per term, at the same step, along with `train/lr`, `train/grad_norm` and `train/samples_per_s`. Validation metrics are logged once per epoch under `val/` with the epoch as step; the fixed visualization frames each milestone defines go up as `wandb.Image` under `val/viz`.
+- Metric names are `<split>/<snake_case>` and are stable across milestones (`val/map_vehicle`, `val/occ_iou_occupied`). Renaming a logged metric breaks every historical chart, so it is treated like renaming a message field.
+- `logging.wandb.mode` (`online` / `offline` / `disabled`) is a config field, not an environment variable. `offline` is the default when a run starts without network; `uv run wandb sync` uploads it later. Tests and CI use `disabled`.
+- W&B stores metrics and config, not data: checkpoints and shards stay in `data/` (gitignored). Only the best checkpoint of a milestone is uploaded, as a W&B artifact named `<milestone>_best`, so the number that goes in a milestone's completion criteria is traceable to a file.

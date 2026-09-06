@@ -55,8 +55,10 @@ The risk that the light changes while latched (green → red after ego lost sigh
 
 - Data: M2 `tl` crops and states, all towns except Town07. Class balance: `off` and `yellow` are rare — oversample to ≥ 10% each per epoch. `visible` negatives: random 64×64 crops around the projected bulb with offset > 50% (label `visible=0`), and crops of M2 lights whose `crop_cam=None` re-projected anyway.
 - Augmentation: color jitter (brightness ±0.4, contrast ±0.3, hue ±0.05 — must not flip red/green; assert on the augmented hue), random crop offset ±20%, random scale 0.8–1.25, motion blur (rain/night), no horizontal flip.
+- Hydra application, config `configs/training/traffic_light.yaml` (`03_style_and_conventions.md` §9.7); the augmentation and class-balance knobs above are its `data/` group, so a re-run with different jitter is a command-line override, not an edit.
 - AdamW 1e-3, cosine, 20 epochs, batch 256, fp16; 10 minutes on the 3090 Ti. EMA weights.
 - Metrics (`metrics.py`): accuracy per state / distance bin (0–20/20–40/40–60 m) / weather; visible AUROC; confusion matrix into the report.
+- W&B group `m4`. Per-step `train/loss_total`, `train/loss_state`, `train/loss_visible`, `train/lr`; per-epoch `val/acc_<state>`, `val/acc_dist_<bin>`, `val/auroc_visible` and the confusion matrix as a `wandb.plot` panel. Because the run is 10 minutes, the sweep over jitter and oversampling ratio is a Hydra `--multirun` and is read off one W&B sweep chart; best checkpoint uploaded as `m4_best`.
 
 ## 6. Runtime node (`nuway_perception/traffic_light_node.py`)
 
@@ -90,6 +92,7 @@ Foxglove: overlay of crop boxes on `cam_front` with predicted state and latch st
 
 ## 9. Decisions log
 
+- (2026-09-05) Training configuration is Hydra (structured configs in `nuway_ml/common/config.py`, groups under `configs/training/`) and run logging is Weights & Biases; tensorboard is dropped. One config system and one metrics store for every milestone, so runs are launched by override and compared on one chart. See `03_style_and_conventions.md` §9.7.
 - (2026-09-05) Separate milestone from M3: no shared model, data, metric or loop, and a larger driving-score lever (red-light penalty 0.70) than a few mAP points.
 - (2026-09-05) Runtime association comes from the map (OpenDRIVE + committed overrides), never from the CARLA client, so the node has no privileged dependency.
 - (2026-09-05) Latch semantics are decided here, dilemma-zone semantics in M1: the node reports what it knows and how confident it is; the planner decides what to do with it.

@@ -48,7 +48,16 @@ nuway/
 │   ├── collect/
 │   │   ├── perception_v1.yaml             # M2 collection protocol
 │   │   └── planning_v1.yaml               # M6 collection protocol
-│   └── training/                          # hydra/omegaconf configs for ml/
+│   └── training/                          # Hydra config root for ml/ training (03 §9.7)
+│       ├── bevfusion.yaml                 # M3 experiment: defaults list + overrides
+│       ├── traffic_light.yaml             # M4
+│       ├── fm_prediction.yaml             # M7
+│       ├── planner.yaml                   # M8 (multi-task + DAgger rounds)
+│       ├── model/                         # config groups; schemas live in nuway_ml/common/config.py
+│       ├── data/
+│       ├── optim/
+│       ├── stage/                         # M3 stage A/B/C, M8 DAgger rounds
+│       └── logging/                       # wandb project/group/mode
 │
 ├── ros2_ws/
 │   ├── colcon_defaults.yaml               # Ninja, ccache, mold, compile_commands, RelWithDebInfo
@@ -155,6 +164,8 @@ nuway/
 │   │   │   ├── occupancy.py               # grid spec, world<->grid, bilinear sample (torch)
 │   │   │   ├── frames.py                  # frame conventions shared with ROS side
 │   │   │   ├── seeding.py                 # the one random-seed helper
+│   │   │   ├── config.py                  # structured-config dataclasses + Hydra ConfigStore
+│   │   │   ├── run_logger.py              # the one wandb wrapper; training loops log through it
 │   │   │   └── schema.py                  # dataset record schema (dataclasses + validation)
 │   │   ├── data/
 │   │   │   ├── webdataset_io.py           # shard writer/reader
@@ -237,7 +248,7 @@ nuway/
 │   ├── raw/
 │   ├── shards/
 │   ├── maps/                              # per town: .xodr, map.ply, static_occ.npz, tl_bulbs.json, tl_overrides.yaml, reports
-│   ├── checkpoints/
+│   ├── checkpoints/                       # <experiment>/<timestamp>/: ckpts, viz/, .hydra/config.yaml
 │   └── eval_runs/
 │
 ├── tests/                                 # cross-cutting integration tests
@@ -264,5 +275,7 @@ nuway/
 - One node per file, one file per node. Nodes are thin: they parse params, subscribe/publish, and call a library class that is unit-tested without ROS.
 - Python packages inside `ros2_ws` only contain nodes and thin glue. Model code and anything shared with `tools/` lives in `ml/nuway_ml` and is imported.
 - Config YAML keys are namespaced by node name. Do not read environment variables in nodes.
+- **`configs/training/` is for Hydra only and `configs/*` elsewhere is for ROS nodes only.** Training configs are composed by Hydra from the groups above and validated against the dataclasses in `nuway_ml/common/config.py`; runtime YAMLs are loaded by ROS and never by `ml/`. A value both sides need (grid spec, class list, history length) is declared in `02_interfaces.md` and duplicated deliberately, with a parity test, not shared by importing one config from the other.
+- **Training metrics live in Weights & Biases, artifacts live in `data/`.** No metric CSVs, no tensorboard event files, no plots committed to the repo; a milestone's reported numbers cite a W&B run and the checkpoint directory that produced them (`03_style_and_conventions.md` §9.7).
 - Python dependencies enter only through `uv add` (lock updated in the same commit). C++ dependencies enter only through `package.xml` + rosdep, or a `*_vendor` package. No `pip`, no submodules, no system-wide installs. See `03_style_and_conventions.md` §6.
 - All C++ is Google style and must pass `clang-format` and `clang-tidy`; all Python is PEP 8 and must pass `ruff format`, `ruff check` and `mypy`, with the root configs. See `03_style_and_conventions.md`.

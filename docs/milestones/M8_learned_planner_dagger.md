@@ -27,7 +27,7 @@ Trained with winner-takes-all imitation: `L_wta = min_m ‖traj_m − expert‖`
 
 Source B gives a fast, deterministic, expert-like default; Source A gives interaction-consistent alternatives. Both feed the same refinement + selection.
 
-Training is joint with M7 (multi-task, `w_plan = 1.0`) from the M7 checkpoint, 10 epochs, then DAgger rounds (§4).
+Training is joint with M7 (multi-task, `w_plan = 1.0`) from the M7 checkpoint, 10 epochs, then DAgger rounds (§4). Config `configs/training/planner.yaml` composes the M7 groups plus `model/planning_head` and `stage/joint`, so the multi-task run and the M7 run differ by a defaults list rather than a forked config (`03_style_and_conventions.md` §9.7). W&B group `m8`, `job_type=train`: `train/loss_wta`, `train/loss_score`, `train/loss_div` and the inherited M7 terms are logged separately, so a regression in prediction quality caused by the joint loss is visible at the term level.
 
 ## 2. Runtime (`nuway_prediction/flow_matching_node.py` + `planner_node` changes)
 
@@ -54,8 +54,8 @@ Round r:
 1. Run the current student (full stack, no GT, profile m7) on the collection route set with the M6 scenario library, `n_routes` ≈ 200, render-free is **not** possible here (perception needs sensors) → run with rendering but at Low quality; measured, not assumed: at ≈ 15 ticks/s and ≈ 3 min of sim time per route this is ≈ 12 h per round on one GPU, so rounds are run overnight. Alternative "cheap DAgger": `use_gt.perception=true`, `use_gt.traffic_lights=true`, `use_gt.localization=true`, render-free, with agent visibility from the M6 geometric raycast (§3.1) rather than the sensor-based filter (which would need the semantic LiDAR and depth cameras, i.e. rendering) — use this for rounds 1–2, then one rendered round.
 2. At every frame, also run the expert (`gt_planning_node` from M6 alongside the student, both subscribed to the same GT inputs) and log its trajectory + decision as the label; the student's *own* trajectory is logged too. Frames are `PlanningFrame` with `expert.*` filled by the expert and `student_traj` added.
 3. Aggregate: dataset_r = dataset_{r−1} ∪ new frames (weight new frames ×2 for the first epoch).
-4. Fine-tune planning head (+ encoder at 0.1× lr) for 3 epochs.
-5. Evaluate closed-loop on the dev protocol; log to `data/eval_runs/dagger_round_<r>/`.
+4. Fine-tune planning head (+ encoder at 0.1× lr) for 3 epochs: `uv run python -m nuway_ml.planning.train stage=dagger dagger.round=<r>`, one W&B run per round (`job_type=dagger`, tagged `round_<r>`).
+5. Evaluate closed-loop on the dev protocol; log to `data/eval_runs/dagger_round_<r>/` and log the driving score, infraction counts and fallback rate to the same W&B run as `eval/` scalars, so the round-over-round curve that decides the stopping rule below is one chart rather than a set of directories to diff.
 
 Stopping: 3 rounds minimum; stop when the dev score improvement < 1 point for 2 rounds.
 
@@ -79,6 +79,7 @@ Perception-noise curriculum: DAgger rounds decrease the synthetic occupancy/agen
 
 ## 7. Decisions log
 
+- (2026-09-05) Training configuration is Hydra (structured configs in `nuway_ml/common/config.py`, groups under `configs/training/`) and run logging is Weights & Biases; tensorboard is dropped. One config system and one metrics store for every milestone, so runs are launched by override and compared on one chart. See `03_style_and_conventions.md` §9.7.
 - (2026-09-02) Refinement of learned output via the existing M1 QP (not iLQR) in M8. iLQR is M10.
 - (2026-09-02) Two candidate sources (joint samples + dedicated head). If the dedicated head is not pulling its weight after DAgger (never selected), drop it and document.
 - (2026-09-05) No `learned_planner_node.py`: the head lives in the prediction node. One encoder pass, one process, one ROS boundary.

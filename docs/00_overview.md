@@ -65,6 +65,7 @@ Dependencies: M0 → M1 → M2 → M3 → M4 → M5 → M6 → M7 → M8 → M9 
 | C++ | C++17, GCC 11 (Clang 17+ locally), CMake ≥ 3.22 via `ament_cmake`, Ninja + ccache + mold | Eigen, GTSAM 4.2, OSQP + osqp-eigen, nanoflann, PCL (I/O only); non-apt libs as `*_vendor` packages |
 | Build | `source setup_env.sh && colcon build` (defaults from `ros2_ws/colcon_defaults.yaml`) | `uv sync` for Python; no `pip` anywhere |
 | Tooling | clang-format/clang-tidy (LLVM ≥ 17 PyPI wheels), ruff, mypy, gersemi, pre-commit | all pinned in `uv.lock`; see `03_style_and_conventions.md` §6 |
+| Training tooling | Hydra (config management, `configs/training/`), Weights & Biases (losses, metrics, run configs; project `nuway`) | `train` dependency group; see `03_style_and_conventions.md` §9.7. Runtime nodes depend on neither |
 
 CARLA launch (development):
 ```

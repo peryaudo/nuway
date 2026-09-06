@@ -76,8 +76,12 @@ loss = loss_fm + loss_aux
 ```
 - `aux_losses.py`: `kinematic` = penalty on |curvature| > κ_max and |accel| > 4 m/s² from finite differences (vehicles only); `collision` = soft overlap between agent discs across pairs at each t; `offroad` = `1 − drivable` sampled along each vehicle's trajectory (bilinear, differentiable) + `occupied` sampled likewise. Weights start at 0 for the first 2 epochs, ramp to `w_kin=0.1, w_col=0.5, w_road=0.5`.
 - Invisible agents (`visible=false`) are context but not loss targets. `visible` has the same meaning in M2 (sensor-derived) and M6 (raycast-derived) records: "the hero could plausibly perceive this agent"; the tokenizer feeds it as a feature and the loss mask reads the same flag.
+- Hydra application, config `configs/training/fm_prediction.yaml` (`03_style_and_conventions.md` §9.7); the normalization scales above are its `data/norm` group, written by `compute_norm_stats.py` and composed in, never pasted into the model config.
 - AdamW lr 3e-4, cosine, batch 64, 30 epochs on 3M frames (≈ 1.5 days on the 3090 Ti in fp16). EMA weights 0.999 used for eval/export.
 - Validation each epoch: sample S=16 with 6 Euler steps, compute metrics from M6 §7, render 16 fixed scenes with samples.
+- W&B group `m7`. Per-step `train/loss_total`, `train/loss_fm` and each aux term separately (`train/loss_kin`, `train/loss_col`, `train/loss_road`) plus their current weights (`train/w_kin`, …) — the ramp in the first 2 epochs is the thing most likely to destabilize this run, and it is only visible if the terms and their weights are logged apart. Also `train/lr`, `train/grad_norm`, and `train/loss_fm_by_t` (the FM loss bucketed into 4 `t` bins), which is how a bad `t` distribution shows itself.
+- Per-epoch `val/minade_16`, `val/fde`, `val/collision_rate`, `val/offroad_rate` under `val/`, the 16 fixed scenes as `val/viz` images, and the step-count table (1/2/4/8/16 Euler steps) as a W&B table at the end of training. Best checkpoint uploaded as `m7_best`.
+- A 1k-frame overfit run is the same entry point with `data=overfit_1k logging.wandb.mode=disabled`; it must reach ~0 loss before a full run is launched.
 
 Sampler (`flow_matching.py: sample`): Euler, `n_steps` configurable (train-time eval uses 6; also report 1, 2, 4, 8, 16 in a table). Optional cost guidance hook (used in M10).
 
@@ -110,6 +114,7 @@ Sampler (`flow_matching.py: sample`): Euler, `n_steps` configurable (train-time 
 
 ## 9. Decisions log
 
+- (2026-09-05) Training configuration is Hydra (structured configs in `nuway_ml/common/config.py`, groups under `configs/training/`) and run logging is Weights & Biases; tensorboard is dropped. One config system and one metrics store for every milestone, so runs are launched by override and compared on one chart. See `03_style_and_conventions.md` §9.7.
 - (2026-09-02) Flow matching (rectified-flow parametrization, x-independent linear path, logit-normal t) instead of DDPM/DDIM: fewer sampling steps, simpler code; same guidance capability.
 - (2026-09-02) One token per agent for the whole trajectory in the velocity net (T folded into the feature dim). Time-tokenized variant deferred.
 - (2026-09-02) Ego is generated jointly but unused in M7 planning.

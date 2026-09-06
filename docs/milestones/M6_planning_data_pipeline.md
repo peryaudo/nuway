@@ -83,7 +83,7 @@ ChauffeurNet-style perturbation is *recorded from the expert*, not synthesized:
 - Occupancy noise: cell dropout 0–15%, Gaussian blur σ ∈ [0, 1] cell, probability squash, random "unknown" wedges.
 - Agent dropout 0–10% (visible agents), position jitter σ = 0.15 m, velocity jitter σ = 0.3 m/s, history truncation (random `history_len` ≥ 5).
 - Random SE(2) of the whole scene (only for models without built-in invariance tests; kept as an option).
-Level of noise is scheduled by the training config so M8's DAgger can turn it down as real perception data enters the mix.
+Level of noise is scheduled by the training config (the `data/augment` Hydra group, `03_style_and_conventions.md` §9.7) so M8's DAgger can turn it down per round with an override as real perception data enters the mix.
 
 ## 7. Open-loop evaluation (`nuway_ml/prediction/metrics.py`, `ml/scripts/eval_openloop.py`)
 

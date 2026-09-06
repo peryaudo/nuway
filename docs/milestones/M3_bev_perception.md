@@ -46,9 +46,11 @@ Concat-and-conv, no recurrence:
 
 ## 2. Training (`nuway_ml/perception/train.py`)
 
-- Config `configs/training/bevfusion.yaml` (OmegaConf). AMP fp16, AdamW lr 2e-4 (backbone 1e-4), cosine, 24 epochs, batch 4 with grad accumulation 2, EMA weights 0.999.
+- Hydra application, config `configs/training/bevfusion.yaml` (`03_style_and_conventions.md` §9.7): a `defaults:` list over `model/bevfusion`, `data/perception_v1`, `optim/adamw_cosine`, `stage/a`, `logging/wandb`. AMP fp16, AdamW lr 2e-4 (backbone 1e-4), cosine, 24 epochs, batch 4 with grad accumulation 2, EMA weights 0.999.
 - Stage A (8 epochs): LiDAR-only, no temporal (`K_prev=0`). Stage B (8 epochs): add camera branch and depth loss. Stage C (8 epochs): temporal on. Each stage starts from the previous checkpoint. This staged schedule is what makes 24 GB workable.
-- Validation every epoch: mAP (BEV IoU, per class), AVE, occupancy IoU per channel, plus a fixed set of 16 frames rendered to `data/checkpoints/<run>/viz/`.
+- The stages are the config group `stage/{a,b,c}` (each sets `model.use_camera`, `model.k_prev`, `optim.epochs` and `init_from`), so a stage is launched by `uv run python -m nuway_ml.perception.train stage=b` and never by editing a config. Run dir `data/checkpoints/bevfusion/<timestamp>/`, with the composed config saved under `.hydra/`.
+- W&B group `m3`, one run per stage, `job_type=train`, tagged with the stage. Per-step: `train/loss_total` plus every head term separately (`heatmap`, `offset`, `z`, `dim`, `rot`, `vel`, `depth`, `occ_occupied`, `occ_free`, `occ_drivable`, `occ_dynamic`, `occ_height`), `train/lr`, `train/grad_norm`, `train/samples_per_s`. A stage's curves must be comparable to the previous stage's, so the names do not change between stages.
+- Validation every epoch: mAP (BEV IoU, per class), AVE, occupancy IoU per channel, logged under `val/`, plus a fixed set of 16 frames rendered to `data/checkpoints/bevfusion/<run>/viz/` and logged as `val/viz` images. The mAP that decides the completion criterion is the best `val/map_vehicle` in W&B, and the checkpoint behind it is uploaded as artifact `m3_best`.
 - Held-out: Town07 (all weathers). Report separately for day/night and rain.
 
 ## 3. Tracker (`nuway_perception/tracker.py`, Python but vectorized; port to C++ later if needed)
@@ -96,7 +98,7 @@ The occupancy grid is likewise published from Python (it is this node's output);
 3. [ ] `temporal.py` + warp alignment test (synthetic feature with a "wall", ego motion, assert alignment).
 4. [ ] `occupancy_head.py`, `centerpoint_head.py`, `bevfusion.py` (assembly, config-driven).
 5. [ ] `metrics.py`: mAP (BEV IoU), AVE, occupancy IoU; test against toy cases.
-6. [ ] `train.py` with staged schedule; run stage A; inspect; B; C.
+6. [ ] Config dataclasses + `configs/training/bevfusion.yaml` and its groups; `train.py` with the staged schedule and W&B logging; run stage A; inspect; B; C.
 7. [ ] `tracker.py` + `eval_tracking.py`.
 8. [ ] `export/` (torch.compile config; optional TensorRT via `torch_tensorrt`), latency benchmark script.
 9. [ ] `bevfusion_node.py`, launch wiring, profile YAML.
@@ -105,6 +107,7 @@ The occupancy grid is likewise published from Python (it is this node's output);
 
 ## 7. Decisions log
 
+- (2026-09-05) Training configuration is Hydra (structured configs in `nuway_ml/common/config.py`, groups under `configs/training/`) and run logging is Weights & Biases; tensorboard is dropped. One config system and one metrics store for every milestone, so runs are launched by override and compared on one chart. See `03_style_and_conventions.md` §9.7.
 - (2026-09-02) PointPillars over sparse voxels: no custom CUDA dependency; 0.25 m pillars are sufficient at CARLA scale.
 - (2026-09-02) Temporal fusion by warp+concat (BEVDet4D style) with an EMA long-term memory; no GRU/attention.
 - (2026-09-02) Tracking by velocity-projected Hungarian association (CenterPoint style). Histories are stored in map frame to survive ego motion.

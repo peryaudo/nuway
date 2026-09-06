@@ -173,7 +173,7 @@ Modern, pinned, identical on every developer machine and in CI. This section is 
 - [`uv`](https://docs.astral.sh/uv/) is the only Python environment and dependency tool. `pip`, `venv`, `virtualenv`, `conda`, `poetry`, `pipx` and `requirements*.txt` are not used. Install uv once with the official installer (`curl -LsSf https://astral.sh/uv/install.sh | sh`); its version is pinned in `.github/workflows/*.yml` via `astral-sh/setup-uv` and recorded in the table in §6.4.
 - **Layout.** The repository root `pyproject.toml` is a uv workspace root and holds all tool configuration (§7.3). `ml/` is the single workspace member and the only installable package (`nuway-ml`, build backend `hatchling`). `tools/` and `tests/` are not packages; they run through `uv run` with `ml/` importable. `uv.lock` is committed and is the source of truth for every version. `.python-version` pins `3.12`.
 - **Dependency groups** in the root `pyproject.toml`: `dev` (ruff, mypy, pytest, pytest-cov, pre-commit, `clang-format`, `clang-tidy`, `gersemi`), `carla` (the CARLA 0.9.16 client wheel), `train` (`hydra-core`, `wandb`), `viz` (`matplotlib`, `rosbags`). `uv sync` installs `dev` by default; `uv sync --group carla --group train --group viz` for a full workstation. `nuway_ml.viz` is the one subpackage whose imports are not guaranteed present: like `hydra` and `wandb` it must never be imported by a runtime node (§9.7, `02_interfaces.md` §8), which is what lets `render_bag.py` run in an environment with neither CARLA nor ROS. Runtime dependencies of the model code (`torch`, `numpy`, `webdataset`, …) live in `ml/pyproject.toml` `[project.dependencies]`.
-- **PyTorch** is pinned to a CUDA 12.x wheel index through `[[tool.uv.index]]` (`explicit = true`) plus `[tool.uv.sources]`, so `uv sync` never pulls the CPU-only wheel by accident. The exact `cu12x` index is decided in M0 against the workstation driver and recorded in §6.4.
+- **PyTorch** is pinned to the **cu126** wheel index through `[[tool.uv.index]]` (`explicit = true`) plus `[tool.uv.sources]`, so `uv sync` never pulls the CPU-only wheel by accident. The dev box's driver (595.84) reports CUDA 13.2 and runs any cu12x/cu13x build; cu126 is chosen over cu130 because third-party CUDA extensions (custom BEV ops, `torch-scatter`-style packages) still ship cu126 wheels far more reliably than CUDA 13 ones, and cu126 carries cp312 torch builds up to 2.14.
 - **ROS 2 interop.** ROS Jazzy's `rclpy`, `rosidl_runtime_py` and the generated `nuway_msgs` bindings live in Ubuntu 24.04's system Python 3.12 and cannot be installed from PyPI. The venv is therefore created from the system interpreter with system site packages visible: `uv venv --python /usr/bin/python3.12 --system-site-packages`, then `uv sync` populates it. `[tool.uv] python-preference = "only-system"` prevents uv from downloading its own interpreter, which would break the ABI match with ROS. `setup_env.sh` does this in the right order (source ROS, create venv, sync, source `ros2_ws/install/setup.bash`).
 - **Commands.** `uv sync` to create or update the environment; `uv run <cmd>` for every tool and script (`uv run pytest ml`, `uv run ruff check .`, `uv run tools/eval/run_routes.py`); `uv add <pkg>` / `uv add --group dev <pkg>` to add dependencies, which updates `uv.lock` in the same commit; `uv lock --upgrade-package <pkg>` for controlled upgrades. Never `pip install`, never edit `.venv` by hand, never `uv pip` outside of debugging.
 - **Launch files and rclpy nodes** are executed by `ros2 launch` / `ros2 run` from a shell where the venv is activated (`setup_env.sh` does `source .venv/bin/activate`), so they see both ROS and the locked dependencies. Nodes must not assume a global Python; anything not in `uv.lock` or the ROS distribution is unavailable.
@@ -250,9 +250,10 @@ Decided in M0 and kept current here whenever `uv.lock` or the workflows change a
 | CMake / Ninja / ccache / mold | ≥ 3.28 / ≥ 1.11 / ≥ 4.9 / ≥ 2.30 | apt (distro default) |
 | clang-format, clang-tidy (PyPI wheels) | ≥ 18, exact in lock | `pyproject.toml` `dev` group, `uv.lock` |
 | ruff, mypy, pytest, pre-commit, gersemi | exact in lock | `pyproject.toml` `dev` group, `uv.lock` |
-| torch | ≥ 2.4, `cu12x` index | `ml/pyproject.toml`, `[[tool.uv.index]]` |
+| torch | ≥ 2.4, `cu126` index | `ml/pyproject.toml`, `[[tool.uv.index]]` |
 | hydra-core, wandb | exact in lock | `pyproject.toml` `train` group, `uv.lock` |
-| GTSAM / OSQP / osqp-eigen / nanoflann | 4.2.0 / tag / tag / tag, by commit hash | `ros2_ws/src/*_vendor/CMakeLists.txt` |
+| GTSAM / OSQP / nanoflann | 4.2.0 / 0.2.0 / 1.5.4, from apt | `package.xml` + rosdep (§6.2) |
+| osqp-eigen | tag, by commit hash | `ros2_ws/src/osqp_eigen_vendor/CMakeLists.txt` |
 
 ---
 
@@ -402,11 +403,11 @@ members = ["ml"]
 
 [tool.uv.sources]
 nuway-ml = { workspace = true }
-torch = { index = "pytorch-cu12x" }
+torch = { index = "pytorch-cu126" }
 
 [[tool.uv.index]]
-name = "pytorch-cu12x"             # exact cu12x chosen in M0 (see §6.4)
-url = "https://download.pytorch.org/whl/cu124"
+name = "pytorch-cu126"             # see §6.1 for why cu126 and not cu130
+url = "https://download.pytorch.org/whl/cu126"
 explicit = true
 
 [tool.pytest.ini_options]

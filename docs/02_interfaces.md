@@ -20,9 +20,15 @@ ROS REP-103 throughout: right-handed, x forward, y left, z up, yaw counter-clock
 x_ros = x_c;  y_ros = -y_c;  z_ros = z_c
 roll_ros = roll_c;  pitch_ros = -pitch_c;  yaw_ros = -yaw_c   (degrees→radians)
 ```
-Whether the CARLA native ROS 2 sensor topics already apply this conversion **must be verified empirically in M0** and the result recorded here:
+Whether the CARLA native ROS 2 sensor topics already apply this conversion was verified empirically on the dev box (CARLA 0.9.16, `--ros2`):
 
-> M0 finding: _(fill in: "native topics are ROS-convention" / "native topics are CARLA-convention; conversion applied in X")_
+> **M0 finding (2026-09-06): native topics are ROS-convention. CARLA applies the conversion itself; do not apply it again to anything arriving on a `/carla/**` topic.**
+>
+> Two independent checks, both on a hero steering left (`VehicleControl.steer = -0.5`):
+> - **Extrinsics.** A camera spawned at CARLA `(x=+1.0, y=+1.5, z=2.0)` — 1.5 m to the *right* — is published on `/tf` as `hero->cam_asym` with `y = -1.500`. The y-sign flip is already applied.
+> - **Rates of turn.** While the CARLA-side yaw *decreased* 3.89°/tick (= 1.358 rad/s clockwise, CARLA convention), `/carla/hero/imu` reported `angular_velocity.z = +1.3553` rad/s — same magnitude, opposite sign, i.e. counter-clockwise-positive as ROS expects. `linear_acceleration` agrees: in a left turn it reads `y = +11.5` (centripetal, pointing left) and `z = +9.72` (gravity).
+>
+> `carla_conv` is therefore **not** applied to native sensor topics. It is still needed for everything read through the CARLA **Python API** (`tools/collect/`, `gt_publisher`, `sensor_rig`'s own JSON extrinsics), which is in CARLA convention.
 
 **Ego origin.** `base_link` is at the rear axle projected to ground, not CARLA's actor origin (vehicle bbox center). The offset is in `configs/vehicle/<vehicle>.yaml` (`rear_axle_offset_x`, `bbox_center_z`).
 
@@ -47,14 +53,28 @@ Rows index x (forward), columns index y (left). Default: `resolution = 0.5`, `x_
 Prefix everything with `/nuway/` except CARLA-native topics.
 
 ### 3.1 CARLA-native (produced by CARLA server with `--ros2`)
+Topic names come from the sensor blueprint's **`ros_name`** attribute (and the hero vehicle's), *not* `role_name`. If `ros_name` is unset CARLA falls back to actor ids — `/carla/actor109/actor110/point_cloud` — which is unusable, so `sensor_rig.py` must set `ros_name` on every sensor it spawns. Verified names (CARLA 0.9.16):
+
 | Topic | Type |
 |-------|------|
-| `/carla/hero/lidar_top` | `sensor_msgs/PointCloud2` |
-| `/carla/hero/cam_front`, `cam_left`, `cam_right`, `cam_rear` | `sensor_msgs/Image` (+ `/camera_info`) |
+| `/carla/hero/lidar_top/point_cloud` | `sensor_msgs/PointCloud2` |
+| `/carla/hero/<cam>/image` for `cam_front`, `cam_left`, `cam_right`, `cam_rear` | `sensor_msgs/Image` |
+| `/carla/hero/<cam>/camera_info` | `sensor_msgs/CameraInfo` — **published, but the intrinsics are wrong; see below** |
 | `/carla/hero/imu` | `sensor_msgs/Imu` |
 | `/carla/hero/gnss` | `sensor_msgs/NavSatFix` |
 | `/carla/hero/vehicle_control_cmd` (subscribed by CARLA) | `carla_msgs/CarlaEgoVehicleControl` |
-| `/carla/hero/status` (Leaderboard handshake) | `std_msgs/Bool` |
+| `/carla/hero/ackermann_control_cmd` (subscribed by CARLA) | `ackermann_msgs/AckermannDriveStamped` — not used; we command through `vehicle_control_cmd` |
+| `/clock` | `rosgraph_msgs/Clock` — published by CARLA itself |
+| `/tf` | `tf2_msgs/TFMessage` — see "Native TF" below |
+| `/carla/hero/status` (Leaderboard handshake) | `std_msgs/Bool` — not present in our harness; Leaderboard-only |
+
+Note the **`/point_cloud` and `/image` suffixes**: the sensor's `ros_name` is a namespace, not the topic leaf. Only IMU and GNSS publish directly at the sensor name.
+
+**Rates are exactly one message per tick.** Measured over 1179 ticks in synchronous mode with `fixed_delta_seconds = 0.05` and `rotation_frequency = 20`: LiDAR, IMU, GNSS, `camera_info` and `/clock` all landed at 1.00 msg/tick with stamp deltas of exactly 0.0500 s — so **one full LiDAR sweep per tick, no partial sweeps, no accumulation needed**. `image` came in at 0.99/tick with an occasional 0.1000 s gap: under `best_effort` sensor QoS the camera drops a frame now and then. Nodes must key off the stamp, never assume an unbroken image sequence.
+
+**Broken `camera_info`.** CARLA publishes `camera_info` every tick, and `width`/`height`/`cx`/`cy`/`distortion_model` are correct, but the focal length is garbage: an 800×450 camera at FOV 90 (fx should be `400 / tan(45°) = 400.0`) reports **`fx = fy = -22973.444`** — negative and three orders of magnitude off. `D` is all zeros, which is right for a pinhole. Therefore `sensor_rig.py` **must publish its own `CameraInfo`** computed from the rig JSON's size and FOV, on `/nuway/sensors/<cam>/camera_info`, and no node may subscribe to CARLA's. Re-check on any CARLA upgrade.
+
+**Native TF.** With `ros_publish_tf` (default true) CARLA publishes one `/tf` transform per sensor per tick — measured 4.00/tick for a 4-sensor rig — as `hero -> <ros_frame_id>`, dynamic, not `/tf_static`. These are the sensor extrinsics and they are already ROS-convention (§1). Two consequences: the parent frame is `hero`, not our `base_link` (CARLA's actor origin is the bbox center, ours is the rear axle — §1 "Ego origin"), and it re-sends unchanging extrinsics at 20 Hz. `world_manager` therefore sets `ros_publish_tf=false` on every sensor and publishes the rig as proper latched `/tf_static` against `base_link` instead.
 
 `carla_msgs` is vendored into `ros2_ws/src/carla_msgs` from the CARLA `ros-carla-msgs` repo (leaderboard-2.0 branch) — the only third-party ROS package, and only for message definitions.
 

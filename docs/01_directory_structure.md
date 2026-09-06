@@ -10,6 +10,7 @@ nuway/
 │   ├── 01_directory_structure.md          # this file
 │   ├── 02_interfaces.md                   # frames, topics, messages, configs
 │   ├── 03_style_and_conventions.md        # Google C++ style, clang-format/clang-tidy, python rules
+│   ├── 04_setup.md                        # fresh-machine setup procedure (ROS, CARLA, toolchain)
 │   └── milestones/
 │       ├── M0_bringup.md
 │       ├── M1_classical_planning.md

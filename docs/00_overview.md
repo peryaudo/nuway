@@ -59,7 +59,7 @@ Dependencies: M0 → M1 → M2 → M3 → M4 → M5 → M6 → M7 → M8 → M9 
 | OS | Ubuntu 24.04 LTS (noble) | glibc 2.39 |
 | ROS 2 | Jazzy | rmw: CycloneDDS with shared memory (iceoryx) enabled |
 | CARLA | 0.9.16 (UE4) | Not 0.10.x (UE5: heavier GPU, native ROS 2 less stable). **Must run at default (Epic) quality — see below** |
-| Python | 3.12 (system, Jazzy's) | `uv`-managed venv at repo root (`uv sync`, `uv.lock` committed, system site packages for rclpy), `torch>=2.4`, CUDA 12.x. CARLA 0.9.16 publishes a `cp312` client wheel, so the client matches Jazzy's interpreter |
+| Python | 3.12 (system, Jazzy's) | `uv`-managed venv at repo root (`uv sync`, `uv.lock` committed, system site packages for rclpy), `torch>=2.4` on the `cu126` wheel index. CARLA 0.9.16 publishes a `cp312` client wheel, so the client matches Jazzy's interpreter |
 | GPU | RTX 3090 Ti 24 GB | shared between CARLA and inference |
 | CPU | Ryzen 9 5950X, 16 cores / 32 threads (≥ 12 cores recommended) | CARLA + Traffic Manager alone use 4–6 |
 | C++ | C++17, GCC 13 (Clang 18 locally), CMake ≥ 3.28 via `ament_cmake`, Ninja + ccache + mold | Eigen, GTSAM 4.2, OSQP + osqp-eigen, nanoflann, PCL (I/O only); non-apt libs as `*_vendor` packages |

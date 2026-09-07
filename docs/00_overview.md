@@ -135,11 +135,4 @@ Because CARLA is in lockstep, exceeding these budgets slows the simulation but d
 
 ## 7. How Claude Code should work in this repo
 
-- Read the milestone document fully before starting. Each has a **Task list** section; work through it in order and tick items in the doc as they land.
-- Prefer small, compilable increments. Run `colcon build --packages-select <pkg>` and the package tests after every change.
-- Style is specified in `03_style_and_conventions.md`: Google C++ Style Guide for C++, PEP 8 for Python. Run `clang-format` + `clang-tidy` after every C++ change and `ruff format` + `ruff check` + `mypy` after every Python change (root configs); all must be clean before a commit.
-- **Look at the renders.** Foxglove is for a human at the devbox; you cannot see it. After an eval run, read `data/eval_runs/<run_id>/report.md` and open the incident sheets it links (`02_interfaces.md` §8) — they are PNGs on disk, and they are how you debug a route without a human describing it to you. `tools/viz/render_bag.py` renders any recorded bag on demand. The same holds for training: `data/checkpoints/<experiment>/<timestamp>/viz/`, not the W&B web UI.
-- When a spec in a milestone doc is ambiguous, choose the simplest option that satisfies the completion criterion, and record the decision in the milestone doc under **Decisions log**.
-- Do not introduce new message types, topics, services or profile-level config keys outside `02_interfaces.md`; propose the change there first.
-- Never commit data. `data/` is gitignored.
-- Keep `docs/` in sync with code: if you rename a node or topic, update the docs in the same commit.
+The working procedure (reading order, task list and decisions-log conventions, build/lint/test sequence, debugging from renders, repo etiquette) lives in `CLAUDE.md` at the repository root. It is the single home for that guidance; do not duplicate it here.

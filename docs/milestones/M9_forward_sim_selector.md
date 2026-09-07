@@ -63,7 +63,7 @@ sim_cost(c) = Σ_s w_s · [ w_col · 𝟙[collision_s < ∞] · (1 + (5 − t_co
 Defaults: `w_col=1000, w_ttc=50, w_prox=10, w_prog=30, w_off=200, w_rule=500, w_comf=5, w_track=20`. Combine with rule cost: `w_rule_total = 0.3`, `w_sim = 1.0` (rule cost still carries lateral-deviation, consistency, source bias).
 
 ### 2.5 Implementation
-- C++: batched over candidates in a struct-of-arrays layout; agents' sample trajectories pre-interpolated once per cycle; OBB checks via SAT with early-out on distance. Multi-threaded over candidates (`std::thread` pool, 4 threads): each candidate is scored entirely by one thread and the final aggregation runs in candidate order on the calling thread, so the result is independent of the thread count and of scheduling (M1 §5).
+- C++: batched over candidates in a struct-of-arrays layout; agents' sample trajectories pre-interpolated once per cycle; OBB checks via SAT with early-out on distance. The ego rollout depends only on the candidate, never on the sample (Mode A agents do not react, and Mode B agents react to the ego, not to a sample), so there are **K ego rollouts, not K × S**; only the metric pass runs per (candidate, sample). That is what makes the 8 ms budget credible: 16 rollouts of 50 steps plus 16 × 16 × 50 × ≤ 32 distance-gated OBB checks. Multi-threaded over candidates (`std::thread` pool, 4 threads): each candidate is scored entirely by one thread and the final aggregation runs in candidate order on the calling thread, so the result is independent of the thread count and of scheduling (M1 §5).
 - Torch reference (`forward_sim.py`): fully vectorized `[K, S, T]` rollout; used in `tests/` for parity (max metric deviation < 1e-3) and as the base for any future learned/RL selector.
 
 ## 3. Two-stage selection in `planner_node`
@@ -84,7 +84,7 @@ Defaults: `w_col=1000, w_ttc=50, w_prox=10, w_prog=30, w_off=200, w_rule=500, w_
 1. [ ] `forward_sim.py` (torch reference) + scenario tests.
 2. [ ] `forward_sim_scorer.cpp` + parity test vs torch; timing test.
 3. [ ] Agent Mode B (IDM along lane) in C++; tests (agent brakes for ego).
-4. [ ] `planner_node` two-stage selection, diversity guard, breakdown publishing; config `configs/planning/forward_sim.yaml`.
+4. [ ] `planner_node` two-stage selection, diversity guard, breakdown publishing; config `configs/planning/forward_sim.yaml`; profile `m9_forward_sim.yaml` (includes `m8_learned_planner.yaml`, sets `planning.selector: forward_sim`).
 5. [ ] Foxglove "sim rollout" layer.
 6. [ ] Ablation runs and report `data/eval_runs/m9_report.md`.
 

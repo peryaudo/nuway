@@ -165,9 +165,13 @@ runs `uv sync`, and sources the colcon workspace. Never create the venv by hand 
 uv-downloaded interpreter breaks the ABI match with `rclpy`.
 
 ```bash
-uv sync --group carla --group train --group viz     # full workstation
+uv sync --group carla --group train --group viz --group leaderboard   # full workstation
 colcon build
 ```
+
+A plain `uv sync` (no groups) deliberately installs **no torch**: that is the GT-only environment
+of M0–M2 and the one the `import_light` tests run in. A box that only runs learned profiles takes
+`--group carla --group infer` (`03_style_and_conventions.md` §6.1).
 
 PyTorch comes from the pinned **cu126** index. Verify CUDA reaches the GPU:
 

@@ -29,7 +29,7 @@ All in ego frame at `t0` (ROS convention). Produces:
 | occ patch | 64 | `f_coarse` from OccEncoder pooled to 8×8 | patch center (x, y), θ = 0 |
 | goal | 1 | `(x,y)` of route point at +150 m, distance-to-goal/500 | that point |
 
-Padding: fixed sizes with boolean `valid` masks. Agents sorted by distance to ego (ego first). Map lanes selected by distance to ego ≤ 100 m, prioritizing lanes reachable from the route.
+Padding: fixed sizes with boolean `valid` masks. Agents sorted by distance to ego (ego first). Map lanes selected by distance to ego ≤ 100 m, prioritizing lanes reachable from the route. **Agents with `visible = false` are dropped before tokenization**, in training and at serving alike: learned perception never emits an undetected agent (M3 §3), so an invisible agent in the input would be a training/serving skew. The `visible` token feature is therefore always `true` and is kept only so the tokenizer matches the message field one-to-one. The per-step `vx, vy` in the history features are finite differences of the `(x, y)` history (`Agent.history` carries `x, y, yaw` only, `02_interfaces.md` §4), and `valid` per step comes from `history_len`.
 
 Positions are fed to the relative PE module; no absolute PE is added to token features except `is_ego`.
 
@@ -75,7 +75,7 @@ loss_aux = t * ( w_kin * kinematic(x1_hat) + w_col * collision(x1_hat) + w_road 
 loss = loss_fm + loss_aux
 ```
 - `aux_losses.py`: `kinematic` = penalty on |curvature| > κ_max and |accel| > 4 m/s² from finite differences (vehicles only); `collision` = soft overlap between agent discs across pairs at each t; `offroad` = `1 − drivable` sampled along each vehicle's trajectory (bilinear, differentiable) + `occupied` sampled likewise. Weights start at 0 for the first 2 epochs, ramp to `w_kin=0.1, w_col=0.5, w_road=0.5`.
-- Invisible agents (`visible=false`) are context but not loss targets. `visible` has the same meaning in M2 (sensor-derived) and M6 (raycast-derived) records: "the hero could plausibly perceive this agent"; the tokenizer feeds it as a feature and the loss mask reads the same flag. At runtime learned perception sets it `true` on every output (`02_interfaces.md` §4, M3 §3), and GT perception sets it from the visibility filter, so the feature is never `false` on a perceived agent in either data or serving.
+- Invisible agents (`visible=false`) are neither input nor loss target: the tokenizer drops them (§2). `visible` has the same meaning in M2 (sensor-derived) and M6 (raycast-derived) records: "the hero could plausibly perceive this agent". At runtime learned perception sets it `true` on every output (`02_interfaces.md` §4, M3 §3), and GT perception sets it from the visibility filter, so what the model sees is the same population of agents in data and in serving. An invisible agent that becomes visible mid-history enters with a truncated `history_len`, which the augmentation of M6 §6 already covers.
 - Hydra application, config `configs/training/fm_prediction.yaml` (`03_style_and_conventions.md` §9.7); the normalization scales above are its `data/norm` group, written by `compute_norm_stats.py` and composed in, never pasted into the model config.
 - AdamW lr 3e-4, cosine, batch 64, 30 epochs on 3M frames (≈ 1.5 days on the 3090 Ti in fp16). EMA weights 0.999 used for eval/export.
 - Validation each epoch: sample S=16 with 6 Euler steps, compute metrics from M6 §7, render 16 fixed scenes with samples.
@@ -87,7 +87,7 @@ Sampler (`flow_matching.py: sample`): Euler, `n_steps` configurable (train-time 
 
 ## 6. Runtime node (`nuway_prediction/prediction_node.py`)
 
-- Subscribes agents (base_link), lane graph (latched; tokenizer caches per-lane polylines), reference line, traffic lights, occupancy, pose. Runs once per two ticks, triggered by the agents message. The occupancy subscription is the second sanctioned grid-into-Python case of `00_overview.md` principle 6.
+- Subscribes agents (base_link), lane graph (latched; tokenizer caches per-lane polylines), reference line, traffic lights, occupancy, pose. Runs once per two ticks under the current-tick barrier (all five per-tick inputs stamped `k`). The occupancy subscription is the second sanctioned grid-into-Python case of `00_overview.md` principle 6. With an invalid pose it publishes the no-input message (zero agents, `02_interfaces.md` §2). Padded to fixed token counts so `torch.compile` never recompiles mid-route (M3 §4.2).
 - Builds tokens on GPU (numpy→torch, pinned), runs encoder once, samples S=16, denormalizes, transforms to `map` frame, publishes `PredictionSamples` with `sample_weight = 1/S`. Ego channel dropped from the message (M8 adds the ego planning head to this same node and publishes `/nuway/planning/learned_candidates` from it).
 - Stateless across cycles except the per-lane polyline cache, which is keyed by town and survives `ResetEvent`; nothing else needs clearing.
 - Agent slot limit: nearest 31 + ego; others beyond are given constant-velocity futures by the node (published in the same message) so downstream never loses an agent.

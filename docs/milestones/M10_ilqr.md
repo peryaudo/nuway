@@ -42,7 +42,7 @@ Threaded over candidates (thread pool; one candidate per thread, results collect
 
 ## 3. Wiring
 
-`configs/profiles/*.yaml: planning.refiner: ilqr` selects iLQR for `source=="learned"` candidates; lattice candidates remain QP-refined (config `planning.lattice_refiner: qp`, fixed). `planner_node` chooses the refiner per candidate source.
+Profile `m10_ilqr.yaml` (includes `m9_forward_sim.yaml`, sets `planning.refiner: ilqr`) selects iLQR for `source=="learned"` candidates; lattice candidates remain QP-refined (config `planning.lattice_refiner: qp`, fixed). `planner_node` chooses the refiner per candidate source.
 
 ## 4. Guidance in flow-matching sampling (optional, `flow_matching.py: sample(..., guidance=...)`)
 
@@ -69,7 +69,7 @@ Implemented in the runtime node behind `prediction.guidance.enabled`; `s_0` tune
 1. [ ] `ilqr.hpp/cpp` core (backward/forward passes, regularization, line search), Jacobian tests.
 2. [ ] Cost terms (tracking, comfort, agent samples, occupancy, bounds, limits) with analytic derivatives; tests.
 3. [ ] Warm-start inversion from trajectories; tests.
-4. [ ] `planner_node` integration (per-source refiner), config, diag; timing.
+4. [ ] `planner_node` integration (per-source refiner), config, profile `m10_ilqr.yaml`, diag; timing.
 5. [ ] Closed-loop comparison QP vs iLQR (same checkpoints); comfort/tracking metrics; report `data/eval_runs/m10_report.md`.
 6. [ ] Guidance in sampler + node flag; open-loop and closed-loop on/off comparison.
 7. [ ] Update Foxglove candidate table with iLQR diag columns.

@@ -54,7 +54,9 @@ Concat-and-conv, no recurrence:
 - Validation every epoch: mAP (BEV IoU, per class), AVE, occupancy IoU per channel, logged under `val/`, plus a fixed set of 16 frames rendered to `data/checkpoints/bevfusion/<run>/viz/` and logged as `val/viz` images. The mAP that decides the completion criterion is the best `val/map_vehicle` in W&B, and the checkpoint behind it is uploaded as artifact `m3_best`.
 - Held-out: Town07 (all weathers). Report separately for day/night and rain.
 
-## 3. Tracker (`nuway_perception/tracker.py`, Python but vectorized; port to C++ later if needed)
+## 3. Tracker (`ml/nuway_ml/perception/tracker.py`, Python but vectorized; port to C++ later if needed)
+
+It lives in `ml/`, not in the ROS package, because `ml/scripts/eval_tracking.py` imports it and nothing under `ml/` may import from `ros2_ws` (`01_directory_structure.md` rules); `perception_node.py` imports it the other way round. numpy + scipy only, no ROS.
 
 Per frame, detections `D` (with `vel`), tracks `T` (each: last box, vel, id, age, hits, misses, history ring buffer of 20 poses at 0.1 s in **map frame**):
 1. Transform detections to map frame (using `/nuway/loc/pose` at the LiDAR stamp).
@@ -82,6 +84,8 @@ The occupancy grid is likewise published from Python (it is this node's output);
 ### 4.2 `perception_node.py`
 - Subscribes LiDAR + 4 images + pose. Runs on even ticks only (`02_interfaces.md` §2). Per the current-tick barrier it waits for the LiDAR and the pose stamped `k`; the four images stamped `k` are expected too, but a camera whose frame has not arrived by the time the LiDAR has is **masked** (`cam_valid = false`, §1.2) rather than waited for, because CARLA's best-effort camera topics drop about 1 % of frames and waiting would only convert every drop into a lockstep timeout. Masked cameras are counted in `NodeDiag` and the drop rate is stated in the milestone report; this is the one input in the stack allowed to be missing on a tick.
 - Warm-up: the node runs the compiled model once on a dummy batch in its constructor, before it subscribes, so the first real tick pays no compilation cost; `carla.lockstep_startup_timeout_s` (`02_interfaces.md` §5) covers the case where it still takes longer than a regular tick.
+- **Static shapes.** `torch.compile(mode="reduce-overhead")` recompiles on every new tensor shape, and the pillar count, the number of decoded peaks and the number of tracks all vary per tick; a recompile mid-route is a multi-second stall that ends in a `TickTimeout`. Every tensor that enters the compiled graph is therefore padded to a fixed size from the config — `max_pillars` (default 20 000, masked), top-200 peaks, `max_agents` (64) — and the node counts `torch._dynamo` recompiles in its `NodeDiag`; a nonzero count in a milestone report is a bug.
+- With a `valid: false` pose the node still publishes, with the no-input pair (`02_interfaces.md` §2).
 - Maintains the temporal queue and EMA memory (on GPU); both are cleared on `ResetEvent`, together with the tracker.
 - Runs the model (torch.compile or TensorRT export via `nuway_ml/export/`; TensorRT is optional, target met with `torch.compile(mode="reduce-overhead")` + fp16 first).
 - Decodes, tracks, publishes `AgentArray` (base_link, stamp = LiDAR stamp) and `OccupancyGridMC` (post-processed: `unknown = 1 − occupied − free` clamped; `occupied` thresholded softly).
@@ -90,7 +94,7 @@ The occupancy grid is likewise published from Python (it is this node's output);
 ## 5. Integration & evaluation
 
 - Profile `m3_learned_perception.yaml`: `use_gt.perception=false`, `use_gt.traffic_lights=true` (so `gt_traffic_light_node` runs while `perception_node` replaces `gt_perception_node`), `use_gt.localization=true`.
-- Run M1 protocol; compare with `compare_runs.py` against the M1 GT baseline run (visibility-on). Investigate any route where the score drops > 30%: replay MCAP in Foxglove with GT agents overlaid on perceived ones (`nuway_viz` has a "GT vs perceived" layout).
+- Run M1 protocol; compare with `compare_runs.py` against the M1 GT baseline run (visibility-on). Investigate any route where the score drops > 30%: replay MCAP in Foxglove with GT agents overlaid on perceived ones — the `gt_agents` layer of `02_interfaces.md` §3.9, which `render_bag.py` draws in every learned-profile render, so the same comparison exists on disk.
 - Planner robustness pass (if needed): if the score drop is dominated by flicker (agents appearing/disappearing), raise `hits` threshold to 3 or extend `misses`; if by static-obstacle collisions, lower the safety layer's occupancy threshold; record changes in the M1 configs with a comment.
 
 ## 6. Task list
@@ -101,11 +105,11 @@ The occupancy grid is likewise published from Python (it is this node's output);
 4. [ ] `occupancy_head.py`, `centerpoint_head.py`, `bevfusion.py` (assembly, config-driven).
 5. [ ] `metrics.py`: mAP (BEV IoU), AVE, occupancy IoU; test against toy cases.
 6. [ ] Config dataclasses + `configs/training/bevfusion.yaml` and its groups; `train.py` with the staged schedule and W&B logging; run stage A; inspect; B; C.
-7. [ ] `tracker.py` + `eval_tracking.py`.
+7. [ ] `nuway_ml/perception/tracker.py` + `eval_tracking.py`.
 8. [ ] `export/` (torch.compile config; optional TensorRT via `torch_tensorrt`), latency benchmark script.
 9. [ ] `perception_node.py`, launch wiring, profile YAML.
 10. [ ] Closed-loop eval; write `data/eval_runs/m3_report.md` comparing to M1.
-11. [ ] Foxglove layout "GT vs perceived".
+11. [ ] `gt_agents` marker layer in `nuway_viz` + `draw_gt_agents()` in `nuway_ml/viz/bev_draw.py`; Foxglove layout "GT vs perceived" on top of them.
 
 ## 7. Decisions log
 

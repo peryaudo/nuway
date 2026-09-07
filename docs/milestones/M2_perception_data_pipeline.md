@@ -7,7 +7,7 @@
 - [ ] Every frame has: 4 images, LiDAR sweep, ego pose, calibration, visible-filtered 3D boxes with velocities, 6-channel GT occupancy, traffic light crops/labels.
 - [ ] `PerceptionDataset` loads a shard at ≥ 200 frames/s with 8 workers (no decoding bottleneck for training).
 - [ ] Label sanity report: histogram of boxes per frame, class distribution, visibility rejection rate, per-town counts. Visual spot-check notebook renders 20 random frames with labels overlaid on camera and BEV.
-- [ ] `gt_perception_node.py` now publishes the full 6-channel occupancy from the same generator the collector uses, and with `gt_perception.apply_visibility: false` M1's driving score is unchanged (±2).
+- [ ] `gt_perception_node.py` now publishes the full 6-channel occupancy from the same generator the collector uses, and with `gt_perception.apply_visibility: false` M1's driving score is unchanged (±2). The one legitimate source of change is that the safety layer now sees a real `occupied` channel (M0 published zeros); if the score moves, the report attributes the difference to static-obstacle interventions before anything else is tuned.
 - [ ] `generate_gt_occupancy` sustains the closed-loop budget: p99 < 100 ms per call at 10 Hz on the dev workstation, measured from `/nuway/diag/gt_perception_node`. Above that, vectorize the DDA before considering a C++ port (`00_overview.md` §2.6 would have to change first).
 - [ ] **The baseline is re-measured**: the M1 protocol is run with `gt_perception.apply_visibility: true` and the result is recorded in the M1 Decisions log as *the* M1 GT baseline that M3, M4 and M5 compare against (`00_overview.md` §3).
 
@@ -49,6 +49,8 @@ class CameraCalib:
 
 @dataclass(frozen=True, slots=True)
 class FrameRecord:
+    schema_version: int           # SCHEMA_VERSION in schema.py; bumped on every field change, checked by the loaders,
+                                  #   also written to every manifest.json. M6 and M8 extend the schema in place.
     key: str                      # f"{town}_{run_id}_{frame_idx:06d}"
     timestamp: float              # sim seconds
     town: str
@@ -107,7 +109,7 @@ An actor is `visible` if **either**:
 
 Label-only sensors: `sensor.lidar.ray_cast_semantic` co-located with `lidar_top` (identical attributes; the `lidar_top_semantic` entry with `label_only: true` in `rig_dev.json`), `sensor.camera.depth` co-located with each RGB camera (collector only, not in the rig JSON). These are never subscribed by a learned node; the semantic LiDAR is spawned at runtime only in GT-perception and mapping profiles (`02_interfaces.md` §3.1).
 
-Invisible agents are kept in the record with `visible=false` so prediction training (M6/M7) can still use them as context if desired; perception training masks them out of all losses (not just positives — they are also excluded from the negative heatmap region by a "don't care" mask of radius 1.5 × box size).
+Invisible agents are kept in the record with `visible=false` for label completeness and re-labeling; the M7 tokenizer drops them from the model input, because at serving time an agent that perception did not detect does not exist, and feeding it in training would be a training/serving skew (M7 §2). Perception training masks them out of all losses (not just positives — they are also excluded from the negative heatmap region by a "don't care" mask of radius 1.5 × box size).
 
 ### 3.2 Box & velocity labels
 
@@ -121,12 +123,14 @@ Class ids per `02_interfaces.md`. Traffic-cone/barrier/props tagged `static_obst
 
 ```python
 def generate_gt_occupancy(spec: GridSpec,
-                          semantic_lidar_pts: np.ndarray,   # [N,5] x,y,z,object_idx,tag in base_link (schema §2 order)
+                          semantic_lidar_pts: np.ndarray,   # [N,5] x,y,z,object_idx,tag in base_link (schema §2 order;
+                                                            #   callers apply T_base_from_lidar from rig.py first)
+                          lidar_origin_base: np.ndarray,    # [3] the LiDAR origin in base_link: the start of every free-space ray
                           agents: list[AgentLabel],
                           lane_polygons_base: list[np.ndarray],
                           ego_footprint: np.ndarray) -> np.ndarray:  # [6,H,W]
 ```
-Because a runtime node now imports it, `gt_occupancy.py` must stay **import-light**: `numpy` and the numpy half of `nuway_ml.common` only. No `torch`, no `webdataset`, no CARLA client, no `hydra`/`wandb`, no `nuway_ml.viz` — the same rule those already live under (`03_style_and_conventions.md` §6.1). The no-torch part matters most: it is what keeps the GT-only profiles runnable without the `ml` runtime deps (`M0_bringup.md` §2.9). Enforced by a test that imports the module in an env without torch.
+Because a runtime node now imports it, `gt_occupancy.py` must stay **import-light**: `numpy` and the numpy half of `nuway_ml.common` only. No `torch`, no `webdataset`, no CARLA client, no `hydra`/`wandb`, no `nuway_ml.viz` — the same rule those already live under (`03_style_and_conventions.md` §6.1). The no-torch part matters most: it is what keeps the GT-only profiles runnable in a plain `uv sync` environment, where torch is not installed because it is an extra of `nuway-ml` (`03_style_and_conventions.md` §6.1, `M0_bringup.md` §2.9). Enforced by an `import_light`-marked test that CI runs in exactly that environment.
 
 Channels:
 - `occupied`: cells containing ≥ 1 semantic-LiDAR return with tag in {Building, Fence, Wall, Pole, Static, Dynamic-not-agent, Vegetation (z>0.3), TrafficSign, GuardRail, Other} **or** inside a `static_obstacle` agent box. Rasterize by point binning; then apply 3×3 max to close gaps. Exclude points with z > 3.5 m (overhangs).
@@ -144,7 +148,7 @@ For every traffic light whose stop line is within 60 m ahead on lanes reachable 
 
 ### 3.5 History/future post-pass
 
-The collector writes each run to a *staging* directory (`data/raw/perception/{town}/{run_id}/`: per-frame `.npz`/`.jpg` plus the run-level `trajectories.parquet` sidecar `[frame_idx, agent_id, x, y, yaw, vx, vy]` in map frame). After the run finishes, `postprocess_run.py` walks the frames in order, fills `history_base` and `future_map` for every agent id from the sidecar (records are frozen, so it builds new ones with `dataclasses.replace`), validates every record, and only then writes the final WebDataset shards; the staging directory is deleted on success. Shards are therefore never rewritten, and every shard on disk is complete. This makes the perception shards immediately reusable for M6 without re-collection.
+The collector writes each run to a *staging* directory (`data/raw/perception/{town}/{run_id}/`: per-frame `.npz`/`.jpg` plus the run-level `trajectories.parquet` sidecar `[frame_idx, agent_id, x, y, yaw, vx, vy]` in map frame, written with `pyarrow`, a base dependency of `nuway-ml`). After the run finishes, `postprocess_run.py` walks the frames in order, fills `history_base` and `future_map` for every agent id from the sidecar (records are frozen, so it builds new ones with `dataclasses.replace`), validates every record, and only then writes the final WebDataset shards; the staging directory is deleted on success. Shards are therefore never rewritten, and every shard on disk is complete. This makes the perception shards immediately reusable for M6 without re-collection.
 
 ## 4. Collection protocol
 
@@ -183,7 +187,7 @@ Augmentation (`augment.py`, perception part): random image scale ±10%, random B
 
 ## 6. Runtime GT perception (`gt_perception_node.py`, full version)
 
-Subscribes GT agents, `/carla/hero/lidar_top_semantic` (the `label_only` rig entry, spawned because the profile has `use_gt.perception: true`; the six-field cloud is turned into the schema's `[N,5]` `x,y,z,object_idx,tag` array by `nuway_ml/common/rig.py`, dropping `cos_angle`), lane graph. Calls `generate_gt_occupancy` (§3.3) directly — same function object the collector calls, no port, no bridge. Runs on even ticks once the agents and the semantic cloud of that tick have both arrived (`02_interfaces.md` §2 barrier). Publishes `/nuway/perception/occupancy` and agents with `visible` filtering applied (so GT perception ≈ "perfect but physically plausible" perception). Profile key `gt_perception.apply_visibility: true|false` toggles omniscient mode (`02_interfaces.md` §5). M8 adds a second key, `gt_perception.source: sensor | geometry` — `geometry` replaces the semantic-LiDAR inputs with the M6 static map + raycast (M6 §3.1) so the node runs render-free for cheap DAgger; `sensor`, specified here, is the default. Traffic lights are not this node's business (`gt_traffic_light_node`, M0).
+Subscribes GT agents, `/carla/hero/lidar_top_semantic/point_cloud` (the `label_only` rig entry, spawned because the profile has `use_gt.perception: true` and `gt_perception.source: sensor`; the six-field cloud is turned into the schema's `[N,5]` `x,y,z,object_idx,tag` array by `nuway_ml/common/rig.py`, dropping `cos_angle`, and transformed to `base_link` with the same rig extrinsics that give the LiDAR origin), lane graph. Calls `generate_gt_occupancy` (§3.3) directly — same function object the collector calls, no port, no bridge. Runs on even ticks once the agents and the semantic cloud of that tick have both arrived (`02_interfaces.md` §2 barrier). Publishes `/nuway/perception/occupancy` and agents with `visible` filtering applied (so GT perception ≈ "perfect but physically plausible" perception). Profile key `gt_perception.apply_visibility: true|false` toggles omniscient mode (`02_interfaces.md` §5). M6 adds a second key, `gt_perception.source: sensor | geometry` — `geometry` replaces the semantic-LiDAR inputs with the M6 static map + raycast (M6 §3.1) so the node runs without a sensor, for `m6_gt_planning`, the M8 shadow expert and cheap DAgger; `sensor`, specified here, is the default. With an invalid pose the node publishes the no-input pair (empty agents, all-`unknown` grid, `02_interfaces.md` §2). Traffic lights are not this node's business (`gt_traffic_light_node`, M0).
 
 ## 7. Task list
 

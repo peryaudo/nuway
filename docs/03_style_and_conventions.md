@@ -50,7 +50,7 @@ Extra project rules:
 
 ### 2.2 Headers
 
-- Every header has a `#define` guard of the form `NUWAY_<PACKAGE>_<PATH>_<FILE>_HPP_`, e.g. `NUWAY_COMMON_FRENET_HPP_`. `#pragma once` is not used (Google guide, and `clang-tidy` `llvm-header-guard` is configured to check the pattern).
+- Every header has a `#define` guard of the form `NUWAY_<PACKAGE>_<PATH>_<FILE>_HPP_`, e.g. `NUWAY_COMMON_FRENET_HPP_`. `#pragma once` is not used (Google guide). The pattern is checked by `tools/lint/check_header_guards.py`, not by clang-tidy: `llvm-header-guard` derives the expected macro from the file path and would reject every correctly named guard under `WarningsAsErrors: '*'` (§7.2).
 - Headers are self-contained: include what you use, nothing more. No transitive-include reliance.
 - Include order (enforced by `clang-format`):
   1. the header matching this `.cpp` file,
@@ -149,7 +149,7 @@ Kept intentionally short. Anything not listed here follows Google.
 - QoS is set explicitly at every publisher/subscription using one of the named profiles in `02_interfaces.md` §3.11 through `nuway_common/qos.hpp` (`nuway_common::qos::kStream`, …). No implicit defaults, no inline `rclcpp::QoS` construction.
 - Every node with cross-cycle state subscribes to `/nuway/sim/reset_event` and clears it (`02_interfaces.md` §7). The header comment of every node states either what it clears on reset or that it is stateless.
 - Logging: `RCLCPP_INFO` once at startup with the resolved parameters; `RCLCPP_WARN_THROTTLE` for recurring conditions; `RCLCPP_ERROR` for conditions that also flip the `NodeDiag` status. No `std::cout` / `printf` in nodes or libraries.
-- Frame handling: every function that takes or returns a pose documents the frame in its comment (§2.7). Conversions between CARLA and ROS conventions only in `carla_conv.hpp` and `nuway_carla_bridge` (see `01_directory_structure.md` rules).
+- Frame handling: every function that takes or returns a pose documents the frame in its comment (§2.7). Conversions between CARLA and ROS conventions are implemented only in `carla_conv.hpp` / `carla_conv.py`; `nuway_carla_bridge` and the collectors call them and hold no conversion arithmetic (see `01_directory_structure.md` rules).
 - No environment variable reads in nodes. Everything comes from parameters.
 
 ---
@@ -172,7 +172,8 @@ Modern, pinned, identical on every developer machine and in CI. This section is 
 
 - [`uv`](https://docs.astral.sh/uv/) is the only Python environment and dependency tool. `pip`, `venv`, `virtualenv`, `conda`, `poetry`, `pipx` and `requirements*.txt` are not used. Install uv once with the official installer (`curl -LsSf https://astral.sh/uv/install.sh | sh`); its version is pinned in `.github/workflows/*.yml` via `astral-sh/setup-uv` and recorded in the table in §6.4.
 - **Layout.** The repository root `pyproject.toml` is a uv workspace root and holds all tool configuration (§7.3). `ml/` is the single workspace member and the only installable package (`nuway-ml`, build backend `hatchling`). `tools/` and `tests/` are not packages; they run through `uv run` with `ml/` importable. `uv.lock` is committed and is the source of truth for every version. `.python-version` pins `3.12`.
-- **Dependency groups** in the root `pyproject.toml`: `dev` (ruff, mypy, pytest, pytest-cov, pre-commit, `clang-format`, `clang-tidy`, `gersemi`), `carla` (the CARLA 0.9.16 client wheel), `train` (`hydra-core`, `wandb`), `viz` (`matplotlib`, `rosbags`), `leaderboard` (the Python dependencies of the pinned Leaderboard + scenario_runner checkouts — `py-trees`, `networkx`, `shapely`, … — copied from their `requirements.txt` into the group so they are locked with everything else; the checkouts themselves live in `external/`, §6.4). `uv sync` installs `dev` by default; `uv sync --group carla --group train --group viz --group leaderboard` for a full workstation. `nuway_ml.viz` is the one subpackage whose imports are not guaranteed present: like `hydra` and `wandb` it must never be imported by a runtime node (§9.7, `02_interfaces.md` §8), which is what lets `render_bag.py` run in an environment with neither CARLA nor ROS. Runtime dependencies of the model code (`torch`, `numpy`, `webdataset`, …) live in `ml/pyproject.toml` `[project.dependencies]`.
+- **Dependency groups** in the root `pyproject.toml`: `dev` (ruff, mypy, pytest, pytest-cov, pre-commit, `clang-format`, `clang-tidy`, `gersemi`), `carla` (the CARLA 0.9.16 client wheel), `infer` (`nuway-ml[torch]`: what a machine needs to *run* a learned profile), `train` (`hydra-core`, `wandb`, `nuway-ml[torch]`), `viz` (`matplotlib`, `rosbags`, `jupyterlab` for the M2 spot-check notebook), `leaderboard` (the Python dependencies of the pinned Leaderboard + scenario_runner checkouts — `py-trees`, `networkx`, `shapely`, … — copied from their `requirements.txt` into the group so they are locked with everything else; the checkouts themselves live in `external/`, §6.4). `uv sync` installs `dev` by default; `uv sync --group carla --group train --group viz --group leaderboard` for a full workstation. `nuway_ml.viz` is the one subpackage whose imports are not guaranteed present: like `hydra` and `wandb` it must never be imported by a runtime node (§9.7, `02_interfaces.md` §8), which is what lets `render_bag.py` run in an environment with neither CARLA nor ROS.
+- **`torch` is an extra, not a base dependency.** `ml/pyproject.toml` lists the import-light runtime dependencies (`numpy`, `scipy`, `webdataset`, `pyarrow`, `pillow`, …) under `[project.dependencies]` and `torch` under `[project.optional-dependencies] torch`. A plain `uv sync` therefore yields an environment **without torch**, which is the environment the GT-only profiles (M0–M2) run in and the environment in which the import-light tests of `nuway_ml.common.occupancy` and `nuway_ml.data.gt_occupancy` run (`M0_bringup.md` §2.9, `M2_perception_data_pipeline.md` §3.3). Any module that must stay importable without torch imports it lazily inside the function that needs it, with a comment.
 - **PyTorch** is pinned to the **cu126** wheel index through `[[tool.uv.index]]` (`explicit = true`) plus `[tool.uv.sources]`, so `uv sync` never pulls the CPU-only wheel by accident. The dev box's driver (595.84) reports CUDA 13.2 and runs any cu12x/cu13x build; cu126 is chosen over cu130 because third-party CUDA extensions (custom BEV ops, `torch-scatter`-style packages) still ship cu126 wheels far more reliably than CUDA 13 ones, and cu126 carries cp312 torch builds up to 2.14.
 - **ROS 2 interop.** ROS Jazzy's `rclpy`, `rosidl_runtime_py` and the generated `nuway_msgs` bindings live in Ubuntu 24.04's system Python 3.12 and cannot be installed from PyPI. The venv is therefore created from the system interpreter with system site packages visible: `uv venv --python /usr/bin/python3.12 --system-site-packages`, then `uv sync` populates it. `[tool.uv] python-preference = "only-system"` prevents uv from downloading its own interpreter, which would break the ABI match with ROS. `setup_env.sh` does this in the right order (source ROS, create venv, sync, source `ros2_ws/install/setup.bash`).
 - **Commands.** `uv sync` to create or update the environment; `uv run <cmd>` for every tool and script (`uv run pytest ml`, `uv run ruff check .`, `uv run tools/eval/run_routes.py`); `uv add <pkg>` / `uv add --group dev <pkg>` to add dependencies, which updates `uv.lock` in the same commit; `uv lock --upgrade-package <pkg>` for controlled upgrades. Never `pip install`, never edit `.venv` by hand, never `uv pip` outside of debugging.
@@ -231,7 +232,7 @@ Modern, pinned, identical on every developer machine and in CI. This section is 
 
 1. Verify prerequisites: Ubuntu 24.04, `/opt/ros/jazzy`, `uv`, `ninja`, `ccache`, `mold`, `cmake ≥ 3.28`, `gcc-13`; print the install command for anything missing and stop.
 2. `source /opt/ros/jazzy/setup.bash`; `export COLCON_DEFAULTS_FILE=$REPO/ros2_ws/colcon_defaults.yaml`; `export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp`.
-3. Create `.venv` if absent (`uv venv --python /usr/bin/python3.12 --system-site-packages`), then `uv sync` (with `--group carla --group train --group viz` when `NUWAY_FULL=1`).
+3. Create `.venv` if absent (`uv venv --python /usr/bin/python3.12 --system-site-packages`), then `uv sync` (with `--group carla --group train --group viz --group leaderboard` when `NUWAY_FULL=1`; `NUWAY_INFER=1` adds only `--group carla --group infer` for a box that runs learned profiles but never trains).
 4. `source .venv/bin/activate`; `source ros2_ws/install/setup.bash` if the workspace has been built.
 5. `uv run pre-commit install` if the git hook is missing.
 
@@ -250,7 +251,7 @@ Decided in M0 and kept current here whenever `uv.lock` or the workflows change a
 | CMake / Ninja / ccache / mold | ≥ 3.28 / ≥ 1.11 / ≥ 4.9 / ≥ 2.30 | apt (distro default) |
 | clang-format, clang-tidy (PyPI wheels) | ≥ 18, exact in lock | `pyproject.toml` `dev` group, `uv.lock` |
 | ruff, mypy, pytest, pre-commit, gersemi | exact in lock | `pyproject.toml` `dev` group, `uv.lock` |
-| torch | ≥ 2.4, `cu126` index | `ml/pyproject.toml`, `[[tool.uv.index]]` |
+| torch | ≥ 2.4, `cu126` index | `ml/pyproject.toml` `[project.optional-dependencies] torch`, `[[tool.uv.index]]` |
 | hydra-core, wandb | exact in lock | `pyproject.toml` `train` group, `uv.lock` |
 | GTSAM / osqp-vendor / nanoflann / pugixml | 4.2.0 / 0.2.0 (the `ros-jazzy-osqp-vendor` package version, not OSQP's own) / 1.5.4 / 1.14 (`libpugixml-dev`), from apt | `package.xml` + rosdep (§6.2) |
 | osqp-eigen | tag, by commit hash | `ros2_ws/src/osqp_eigen_vendor/CMakeLists.txt` |
@@ -308,7 +309,6 @@ Checks: >
   cppcoreguidelines-pro-type-static-cast-downcast,
   cppcoreguidelines-special-member-functions,
   google-*,
-  llvm-header-guard,
   llvm-namespace-comment,
   misc-*,
   -misc-non-private-member-variables-in-classes,
@@ -359,7 +359,6 @@ CheckOptions:
   readability-identifier-naming.MethodIgnoredRegexp: '^(set_)?[a-z][a-z0-9]*(_[a-z0-9]+){0,2}$'
   # gtest macros generate identifiers we do not control.
   readability-identifier-naming.FunctionIgnoredRegexp: '^(TEST|TEST_F|TEST_P|TYPED_TEST).*'
-  llvm-header-guard.HeaderFileExtensions: 'hpp'
   google-readability-braces-around-statements.ShortStatementLines: 0
   readability-braces-around-statements.ShortStatementLines: 0
   readability-implicit-bool-conversion.AllowIntegerConditions: false
@@ -369,7 +368,7 @@ CheckOptions:
 
 Notes:
 
-- `llvm-header-guard` in stock form derives the expected guard from the file path. The `NUWAY_<PKG>_<FILE>_HPP_` pattern is enforced by a small script in `tools/lint/` alongside clang-tidy; the check remains enabled to catch missing guards.
+- `llvm-header-guard` is deliberately **not** enabled: it derives the expected guard from the file path and, with `WarningsAsErrors: '*'`, would fail every correctly named `NUWAY_<PKG>_<FILE>_HPP_` guard. Missing and misnamed guards are caught by `tools/lint/check_header_guards.py`, which pre-commit and CI run next to clang-tidy.
 - `readability-magic-numbers` is off because planning and control code is full of justified tunables; those must still be named constants when reused (§2.1).
 - The accessor exemption is deliberately narrow: `resolution()`, `set_resolution()`, `lane_id()` pass; `compute_costs()` does not (it is a verb phrase and must be `ComputeCosts()`). Review rejects accessor-named methods that do more than return or assign a member.
 - Checks may only be disabled repo-wide in `.clang-tidy` with a comment explaining why. Inline `// NOLINT(check-name)` requires a trailing justification: `// NOLINT(bugprone-narrowing-conversions): CARLA API takes float`. Bare `// NOLINT` is rejected in review.
@@ -393,8 +392,9 @@ dev = [
   "gersemi",
 ]
 carla = ["carla==0.9.16"]
-train = ["hydra-core", "wandb"]   # config management and run/metric logging (§9.7)
-viz = ["matplotlib", "rosbags"]   # headless rendering (02_interfaces.md §8); never imported by runtime nodes
+infer = ["nuway-ml[torch]"]       # run learned profiles (M3+) without training tooling
+train = ["hydra-core", "wandb", "nuway-ml[torch]"]   # config management and run/metric logging (§9.7)
+viz = ["matplotlib", "rosbags", "jupyterlab"]        # headless rendering (02_interfaces.md §8); never imported by runtime nodes
 leaderboard = ["py-trees", "networkx", "shapely", "..."]   # deps of external/{leaderboard,scenario_runner} (§6.4)
 
 [tool.uv]
@@ -406,7 +406,7 @@ members = ["ml"]
 
 [tool.uv.sources]
 nuway-ml = { workspace = true }
-torch = { index = "pytorch-cu126" }
+torch = { index = "pytorch-cu126" }   # applies to ml/pyproject.toml's optional `torch` extra (workspace-wide source)
 
 [[tool.uv.index]]
 name = "pytorch-cu126"             # see §6.1 for why cu126 and not cu130
@@ -416,7 +416,7 @@ explicit = true
 [tool.pytest.ini_options]
 testpaths = ["ml/tests", "tools", "tests"]
 addopts = "--strict-markers"
-markers = ["slow: minutes-long", "carla: needs a running CARLA server", "gpu: needs CUDA"]
+markers = ["slow: minutes-long", "carla: needs a running CARLA server", "gpu: needs CUDA", "import_light: must pass in an env without torch"]
 
 [tool.ruff]
 target-version = "py312"
@@ -476,9 +476,19 @@ files = [
   "ml/nuway_ml", "tools", "tests",
   "ros2_ws/src/nuway_carla_bridge", "ros2_ws/src/nuway_perception",
   "ros2_ws/src/nuway_prediction", "ros2_ws/src/nuway_planning",
-  "ros2_ws/src/nuway_eval", "ros2_ws/src/nuway_bringup", "ros2_ws/src/nuway_viz",
+  "ros2_ws/src/nuway_bringup", "ros2_ws/src/nuway_viz",
 ]
 exclude = ["ros2_ws/(build|install|log)/", "ros2_ws/src/carla_msgs/", "data/"]
+# The ros2_ws Python packages sit one directory deeper than their import name
+# (ros2_ws/src/<pkg>/<pkg>/); mypy_path makes `import nuway_perception` resolve
+# without an install step. tools/eval holds the nuway_eval package.
+explicit_package_bases = true
+mypy_path = [
+  "ml", "tools/eval",
+  "ros2_ws/src/nuway_carla_bridge", "ros2_ws/src/nuway_perception",
+  "ros2_ws/src/nuway_prediction", "ros2_ws/src/nuway_planning",
+  "ros2_ws/src/nuway_bringup", "ros2_ws/src/nuway_viz",
+]
 
 [[tool.mypy.overrides]]
 module = ["carla", "carla.*", "rclpy", "rclpy.*", "rosidl_runtime_py", "nuway_msgs.*", "carla_msgs.*", "nuway_py", "nuway_py.*", "torch.*", "webdataset", "webdataset.*"]
@@ -486,7 +496,13 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 # ROS nodes and launch files: typed, but not strict (rclpy has no stubs).
-module = ["nuway_carla_bridge.*", "nuway_perception.*", "nuway_prediction.*", "nuway_planning.*", "nuway_eval.*", "nuway_bringup.*", "nuway_viz.*"]
+module = ["nuway_carla_bridge.*", "nuway_perception.*", "nuway_prediction.*", "nuway_planning.*", "nuway_bringup.*", "nuway_viz.*"]
+strict = false
+disallow_untyped_defs = true
+
+[[tool.mypy.overrides]]
+# The eval harness is rclpy code outside ros2_ws (01_directory_structure.md rules): same relaxation.
+module = ["nuway_eval.*"]
 strict = false
 disallow_untyped_defs = true
 ```
@@ -495,7 +511,7 @@ Notes:
 
 - `ruff format` replaces Black; `ruff check` replaces flake8, isort, pyupgrade, pydocstyle and the pylint subset. No other Python linter or formatter is used, so there is exactly one configuration to keep in sync.
 - Rule groups may only be disabled repo-wide in `pyproject.toml` with a comment. Inline `# noqa: <RULE>` requires a trailing justification: `# noqa: PLR0912  -- CARLA blueprint matrix, table-driven`. Bare `# noqa` and `# type: ignore` without a rule code are rejected in review.
-- `mypy --strict` is the bar for `ml/nuway_ml`, `tools/` and `tests/`. The `ros2_ws` Python packages are in `files` too, so they are checked on every run; they must have fully typed function signatures (`disallow_untyped_defs`), but strict mode is relaxed because `rclpy` and generated message packages ship without stubs. A package missing from `files` is a bug.
+- `mypy --strict` is the bar for `ml/nuway_ml`, `tools/` and `tests/`, except `tools/eval/nuway_eval`, which is `rclpy` code and gets the same relaxation as the `ros2_ws` packages. The `ros2_ws` Python packages are in `files` too, so they are checked on every run; they must have fully typed function signatures (`disallow_untyped_defs`), but strict mode is relaxed because `rclpy` and generated message packages ship without stubs. A package missing from `files` is a bug.
 - Tool versions are pinned once, in `uv.lock` (§6.4). `.pre-commit-config.yaml` uses `repo: local` hooks that call `uv run ruff`, `uv run mypy`, `uv run clang-format`, etc., so pre-commit never carries its own second set of pins.
 
 ### 7.4 How the tools are run
@@ -508,7 +524,7 @@ All tools are the `uv`-managed binaries from §6 (`uv run clang-format`, `uv run
 | Pre-commit | `pre-commit` (`repo: local` hooks via `uv run`): `clang-format --dry-run --Werror` on staged C++ files; `clang-tidy` on staged `.cpp` files using the merged `compile_commands.json`; `gersemi --check` on staged `CMakeLists.txt`/`*.cmake`; `ruff format --check` and `ruff check` on staged `.py` files; `mypy` on the packages containing staged `.py` files | every commit |
 | Local full run | C++: `tools/lint/format_cpp.sh [--fix]` and `tools/lint/tidy_cpp.sh [--fix]` (wraps `run-clang-tidy -p ros2_ws/build`). Python: `tools/lint/lint_py.sh [--fix]` (runs `ruff format`, `ruff check`, `mypy` from the repo root) | before pushing; Claude Code after every change |
 | Build / test | C++: every `nuway_*` `ament_cmake` package sets `CMAKE_EXPORT_COMPILE_COMMANDS ON` and honors `-DNUWAY_CLANG_TIDY=ON` which sets `CMAKE_CXX_CLANG_TIDY` so `colcon build` fails on tidy errors. Python: `pytest` runs with `--strict-markers`; ruff and mypy are separate CI jobs, not pytest plugins | opt-in locally, on in CI |
-| CI | `ros:jazzy` container, `setup_env.sh`, uv cache keyed on `uv.lock`. C++: format + gersemi check on the full tree; `colcon build --cmake-args -DNUWAY_CLANG_TIDY=ON`; a second build + `colcon test` with `-DNUWAY_SANITIZE=address,undefined`. Python: `uv run ruff format --check .`, `uv run ruff check .`, `uv run mypy`, `uv run pytest -m "not slow and not carla and not gpu"` | every push / PR |
+| CI | `ros:jazzy` container, `setup_env.sh`, uv cache keyed on `uv.lock`. C++: format + gersemi check + `check_header_guards.py` on the full tree; `colcon build --cmake-args -DNUWAY_CLANG_TIDY=ON`; a second build + `colcon test` with `-DNUWAY_SANITIZE=address,undefined`. Python: `uv run ruff format --check .`, `uv run ruff check .`, `uv run mypy`, then two pytest jobs: `uv sync --group train --group viz && uv run pytest -m "not slow and not carla and not gpu"`, and the **import-light job**, a plain `uv sync` (no torch) running `uv run pytest -m import_light` — the tests that assert `nuway_ml.common` and `gt_occupancy` import without torch (§6.1) | every push / PR |
 
 Expected local workflow for a C++ change:
 
@@ -538,7 +554,7 @@ Before declaring a C++ task done:
 
 1. `clang-format` reports no diff.
 2. `clang-tidy` reports no warnings for the changed package (with `-DNUWAY_CLANG_TIDY=ON` or `tools/lint/tidy_cpp.sh`).
-3. Every new header has the `NUWAY_<PKG>_<FILE>_HPP_` guard and a file-level comment.
+3. Every new header has the `NUWAY_<PKG>_<FILE>_HPP_` guard (`tools/lint/check_header_guards.py` clean) and a file-level comment.
 4. Every new class/function follows the naming table in §2.1; every parameter member matches its YAML key plus `_`.
 5. No `throw` in library code; exceptions from third-party code caught at the node boundary.
 6. Frames and units are stated in comments at every interface.

@@ -338,6 +338,12 @@ TEST(LaneGraph, NearestLaneUsesHeading) {
   EXPECT_EQ(q.lane_id, Id(1, 0, 1));
   EXPECT_NEAR(q.s, 18.0, 1e-6);
   EXPECT_NEAR(q.d, 4.25, 1e-6);
+  // Without a heading, both directions qualify, nearest first.
+  const std::vector<LaneQuery> near = graph.LanesNear(12.0, -2.5, 5.0);
+  ASSERT_EQ(near.size(), 3U);
+  EXPECT_EQ(near[0].lane_id, Id(1, 0, -1));
+  EXPECT_EQ(near[1].lane_id, Id(1, 0, -2));
+  EXPECT_EQ(near[2].lane_id, Id(1, 0, 1));
   // Out of range.
   EXPECT_FALSE(graph.NearestLane(12.0, -2.5, kPi, 1.0).has_value());
   EXPECT_FALSE(graph.NearestLane(500.0, 500.0, 0.0, 10.0).has_value());

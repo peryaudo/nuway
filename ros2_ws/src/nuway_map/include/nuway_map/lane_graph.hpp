@@ -143,6 +143,9 @@ class LaneGraph {
   // Nearest lane by centerline distance with a heading-consistency check.
   std::optional<LaneQuery> NearestLane(double x, double y, double yaw,
                                        double max_dist) const;
+  // Every lane whose centerline passes within max_dist, nearest first, with
+  // no heading check (for yaw-less route waypoints: either direction).
+  std::vector<LaneQuery> LanesNear(double x, double y, double max_dist) const;
   // The per-lane reference line (built lazily on first use, cached).
   const nuway_common::ReferenceLine* reference_line(std::uint32_t id) const;
 

@@ -17,6 +17,7 @@ A toy modular autonomous-driving stack for CARLA 0.9.16 on plain ROS 2 Jazzy (no
 - **Debug from the renders.** After an eval run read `data/eval_runs/<run_id>/report.md` and the incident PNGs it links; `tools/viz/render_bag.py` renders any bag; training renders are under `data/checkpoints/<exp>/<ts>/viz/`. Foxglove and the W&B UI are for humans; you cannot see them (`docs/02_interfaces.md` §8).
 - Run `/verify` before every commit; every step must be clean. A commit that skipped the lint/format/tidy/test sequence in `docs/03_style_and_conventions.md` §7.4 is treated as a bug.
 - Work on a feature branch and open a PR with `gh`; do not commit to `main` directly. Commit subject `<type>: <lowercase imperative summary>` (`docs:`, `feat:`, `fix:`, ...), body as `- ` bullets explaining decisions.
+- Commit in small, meaningful units on the PR branch: one logical change per commit (a task, a fix, a rename with its doc update), each of which builds and passes `/verify` on its own. Do not batch a whole milestone into one commit, and do not split one logical change across commits that only pass together.
 - Never commit anything under `data/` or `external/`. Never leave `main` unable to complete a route with some combination of `use_gt.*` toggles.
 
 ## Environment and commands

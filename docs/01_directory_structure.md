@@ -27,7 +27,7 @@ nuway/
 ├── configs/                               # runtime configuration (YAML)
 │   ├── profiles/                          # one per launch profile
 │   │   ├── m0_gt_all.yaml
-│   │   ├── sysid.yaml                     # M0 system identification: Town04/Town06, rig_none, no route
+│   │   ├── sysid.yaml                     # M0 system identification: generated straight (configs/maps/sysid_straight.xodr), rig_none, no route
 │   │   ├── m1_classical.yaml
 │   │   ├── m3_learned_perception.yaml
 │   │   ├── m4_learned_tl.yaml
@@ -47,6 +47,9 @@ nuway/
 │   │   └── rig_none.json                  # no sensors: M0 sysid, and M8 render-free GT-only runs (carla.no_rendering: true)
 │   ├── vehicle/
 │   │   └── lincoln_mkz_2020.yaml          # sysid results (M0)
+│   ├── maps/
+│   │   ├── sysid_straight.xodr            # M0: generated 3 km straight for tools/sysid (carla.town: <path>.xodr)
+│   │   └── <town>/                        # curated per-town files: tl_overrides.yaml (M4), tl_bulbs.json
 │   ├── planning/
 │   ├── control/
 │   ├── perception/
@@ -253,8 +256,9 @@ nuway/
 │   │   ├── start_carla.sh                 # M0: the one place the server flags live (-RenderOffScreen --ros2, port, never -quality-level=Low)
 │   │   └── check_native_ros2.py           # M0 smoke test
 │   ├── sysid/                             # M0
-│   │   ├── run_sweeps.py
-│   │   └── fit_models.py
+│   │   ├── run_sweeps.py                  # throttle / brake / coast / steer sweeps -> data/sysid/<mode>.csv (acts as the controller)
+│   │   ├── fit_models.py                  # CSVs -> configs/vehicle/lincoln_mkz_2020.yaml + residual plots in data/sysid/
+│   │   └── tests/
 │   ├── collect/                           # data collection clients
 │   │   ├── collect_perception.py          # M2 (rendered)
 │   │   ├── collect_planning.py            # M6 (no rendering)

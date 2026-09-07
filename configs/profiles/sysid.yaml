@@ -1,0 +1,32 @@
+# configs/profiles/sysid.yaml — M0 system identification (M0_bringup.md §2.6).
+# A generated 3 km straight (configs/maps/sysid_straight.xodr) instead of a town: the
+# installed towns (Town01-05, Town10HD) have no straight longer than ~330 m, and a
+# 30 m/s throttle sweep alone covers 360 m (decisions log, task 9). No sensors, no
+# route, no controller: tools/sysid/run_sweeps.py answers the lockstep gate itself and
+# writes the raw CARLA control, so control_adapter must not run.
+profile: sysid
+carla:
+  host: localhost
+  port: 2000
+  town: configs/maps/sysid_straight.xodr
+  fixed_delta_seconds: 0.05
+  sync: true
+  quality: Epic
+  render_offscreen: true
+  no_rendering: false
+  lockstep_timeout_s: 2.0
+  lockstep_startup_timeout_s: 120.0
+  realtime_factor: 0.0
+sensors: configs/sensors/rig_none.json
+vehicle: configs/vehicle/lincoln_mkz_2020.yaml
+use_gt:
+  localization: true
+  perception: true
+  traffic_lights: true
+  prediction: false
+  planning: false
+control:
+  controller: none
+eval:
+  record: false
+  record_sensors: false

@@ -512,7 +512,7 @@ profile: m1_classical
 carla:
   host: localhost
   port: 2000
-  town: Town03
+  town: Town03                         # a path ending in .xodr generates that OpenDRIVE as the world instead (M0 sysid)
   fixed_delta_seconds: 0.05
   sync: true
   quality: Epic                        # consumed only by tools/carla/start_carla.sh (a client cannot set it); kept in the
@@ -559,7 +559,7 @@ planning:
   forward_sim:                         # M9
     agent_mode: sample                 # sample | reactive | mix
 control:
-  controller: mpc                      # pure_pursuit | mpc
+  controller: mpc                      # pure_pursuit | mpc | none (sysid: tools/sysid/run_sweeps.py is the controller, M0 §2.6)
 eval:
   record: true
   record_sensors: false

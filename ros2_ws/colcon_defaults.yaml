@@ -1,0 +1,15 @@
+# ros2_ws/colcon_defaults.yaml — exported as COLCON_DEFAULTS_FILE by setup_env.sh
+# (docs/03_style_and_conventions.md §6.2), so a bare `colcon build` is already correct.
+build:
+  symlink-install: true
+  cmake-args:
+    - -G Ninja
+    - -DCMAKE_BUILD_TYPE=RelWithDebInfo
+    - -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+    - -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+    - -DCMAKE_EXE_LINKER_FLAGS=-fuse-ld=mold
+    - -DCMAKE_SHARED_LINKER_FLAGS=-fuse-ld=mold
+  event-handlers: [console_cohesion+, status-]
+test:
+  event-handlers: [console_direct+]
+  return-code-on-test-failure: true

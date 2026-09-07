@@ -1,1 +1,16 @@
 CLAUDE.local.md
+.venv/
+data/
+external/
+ros2_ws/build/
+ros2_ws/build_asan/
+ros2_ws/install/
+ros2_ws/install_asan/
+ros2_ws/log/
+__pycache__/
+*.pyc
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.cache/
+*.egg-info/

@@ -1,0 +1,43 @@
+# Local hooks only: every tool is the uv-pinned binary from uv.lock, so
+# pre-commit, tools/lint/*.sh, the editor and CI use the same versions
+# (docs/03_style_and_conventions.md §6.1, §7.4).
+repos:
+  - repo: local
+    hooks:
+      - id: clang-format
+        name: clang-format
+        entry: uv run --frozen clang-format --dry-run --Werror
+        language: system
+        files: '^(ros2_ws/src/nuway_[a-z_]+/|tests/).*\.(hpp|cpp)$'
+      - id: clang-tidy
+        name: clang-tidy
+        entry: tools/lint/tidy_cpp.sh
+        language: system
+        files: '^ros2_ws/src/nuway_[a-z_]+/.*\.cpp$'
+      - id: gersemi
+        name: gersemi
+        entry: uv run --frozen gersemi --check
+        language: system
+        files: '^ros2_ws/src/nuway_[a-z_]+/.*(CMakeLists\.txt|\.cmake)$'
+      - id: header-guards
+        name: header guards
+        entry: uv run --frozen python tools/lint/check_header_guards.py
+        language: system
+        pass_filenames: false
+        files: '^ros2_ws/src/nuway_[a-z_]+/.*\.hpp$'
+      - id: ruff-format
+        name: ruff format
+        entry: uv run --frozen ruff format --check
+        language: system
+        types: [python]
+      - id: ruff-check
+        name: ruff check
+        entry: uv run --frozen ruff check
+        language: system
+        types: [python]
+      - id: mypy
+        name: mypy
+        entry: uv run --frozen mypy
+        language: system
+        pass_filenames: false
+        types: [python]

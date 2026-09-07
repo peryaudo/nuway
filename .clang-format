@@ -1,0 +1,26 @@
+# Google C++ style, as enforced across nuway. Do not add per-directory overrides.
+BasedOnStyle: Google
+Standard: c++17
+ColumnLimit: 80
+DerivePointerAlignment: false
+PointerAlignment: Left
+IncludeBlocks: Regroup
+IncludeCategories:
+  # 1. matching header handled by IncludeIsMainRegex (priority 0)
+  # 2. C system headers
+  - Regex: '^<(sys/|unistd\.h|fcntl\.h|pthread\.h|errno\.h|signal\.h)'
+    Priority: 1
+  # 3. C++ standard library (no dot, no slash)
+  - Regex: '^<[a-z_0-9]+>$'
+    Priority: 2
+  # 5. other nuway packages
+  - Regex: '^<nuway_[a-z_]+/'
+    Priority: 4
+  # 4. third-party and ROS (everything else in angle brackets)
+  - Regex: '^<.*'
+    Priority: 3
+  # 6. same package (quoted)
+  - Regex: '^".*'
+    Priority: 5
+IncludeIsMainRegex: '(_test)?$'
+SortIncludes: CaseSensitive

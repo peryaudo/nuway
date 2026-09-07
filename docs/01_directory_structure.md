@@ -94,6 +94,7 @@ nuway/
 │       │   │   ├── diag.hpp               # NodeDiag publisher helper, scoped timer
 │       │   │   ├── qos.hpp                # the QoS profiles from 02_interfaces.md §3.11
 │       │   │   ├── tick.hpp               # TickIndex(stamp), IsPlanningTick(k); current-tick barrier helper (02 §2)
+│       │   │   ├── frames.hpp             # frame ids and the topic names shared by more than one package (mirrors frames.py)
 │       │   │   └── params.hpp             # declare/get param helpers
 │       │   └── test/
 │       ├── nuway_py/                      # THE pybind11 package (one per repo). M0: nuway_common + nuway_control::LongitudinalMap

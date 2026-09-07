@@ -1,0 +1,21 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>nuway_py</name>
+  <version>0.0.0</version>
+  <description>The one pybind11 package: nuway_common (M0) bound for the cross-language parity tests; nuway_control::LongitudinalMap (M0); the planner stack for the M6 expert.</description>
+  <maintainer email="peryaudo@gmail.com">Tetsui Ohkubo</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <buildtool_depend>ament_cmake_python</buildtool_depend>
+  <buildtool_depend>nuway_cmake</buildtool_depend>
+  <buildtool_depend>pybind11_vendor</buildtool_depend>
+
+  <depend>nuway_common</depend>
+  <depend>python3</depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

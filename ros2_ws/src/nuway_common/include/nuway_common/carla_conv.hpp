@@ -9,6 +9,8 @@
 #ifndef NUWAY_COMMON_CARLA_CONV_HPP_
 #define NUWAY_COMMON_CARLA_CONV_HPP_
 
+#include <algorithm>
+
 #include <Eigen/Core>
 #include <Eigen/Geometry>
 
@@ -78,6 +80,19 @@ inline SE3 TransformToRos(const CarlaLocation& loc, const CarlaRotation& rot) {
 inline Eigen::Vector3d AngularVelocityToRos(const Eigen::Vector3d& omega_deg) {
   return Eigen::Vector3d{omega_deg.x() * kDegToRad, -omega_deg.y() * kDegToRad,
                          -omega_deg.z() * kDegToRad};
+}
+
+// ROS front-wheel angle (rad, counter-clockwise positive) -> CARLA
+// VehicleControl.steer in [-1, 1] (positive = right). The native
+// vehicle_control_cmd topic keeps CARLA's convention (docs/02 §3.1).
+inline double SteerFromRos(double steering_angle_rad, double max_steer_rad) {
+  const double steer = -steering_angle_rad / max_steer_rad;
+  return std::max(-1.0, std::min(1.0, steer));
+}
+
+// CARLA VehicleControl.steer -> ROS front-wheel angle in radians.
+inline double SteerToRos(double steer, double max_steer_rad) {
+  return -steer * max_steer_rad;
 }
 
 }  // namespace nuway_common

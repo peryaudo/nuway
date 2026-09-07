@@ -134,6 +134,13 @@ def test_carla_conv_parity() -> None:
             )
             < ATOL
         )
+        angle = float(RNG.uniform(-3, 3))
+        assert carla_conv.steer_from_ros(angle, 1.22) == pytest.approx(
+            nuway_py.steer_from_ros(angle, 1.22), abs=ATOL
+        )
+        assert carla_conv.steer_to_ros(angle / 3, 1.22) == pytest.approx(
+            nuway_py.steer_to_ros(angle / 3, 1.22), abs=ATOL
+        )
         back_py = carla_conv.rotation_from_ros(carla_conv.rotation_to_ros(rot))
         back_cpp = nuway_py.rotation_from_ros(nuway_py.rotation_to_ros(cr))
         assert (back_py.pitch, back_py.yaw, back_py.roll) == pytest.approx(

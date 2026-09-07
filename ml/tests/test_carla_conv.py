@@ -12,6 +12,8 @@ from nuway_ml.common.carla_conv import (
     location_to_ros,
     rotation_from_ros,
     rotation_to_ros,
+    steer_from_ros,
+    steer_to_ros,
     transform_to_ros,
     yaw_from_ros,
     yaw_to_ros,
@@ -61,3 +63,9 @@ def test_duck_typed_carla_objects_are_accepted():
         angular_velocity_to_ros(CarlaLocation(0.0, 0.0, 90.0)),
         [0.0, 0.0, -math.pi / 2.0],
     )
+
+
+def test_steer_from_ros_flips_sign_and_clamps():
+    assert steer_from_ros(0.61, 1.22) == pytest.approx(-0.5)
+    assert steer_from_ros(-5.0, 1.22) == pytest.approx(1.0)
+    assert steer_to_ros(-0.5, 1.22) == pytest.approx(0.61)

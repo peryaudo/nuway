@@ -178,6 +178,10 @@ void BindCarlaConv(py::module_& module) {
       },
       py::arg("rpy_rad"));
   module.def("yaw_to_ros", &nuway_common::YawToRos, py::arg("yaw_deg"));
+  module.def("steer_from_ros", &nuway_common::SteerFromRos,
+             py::arg("steering_angle_rad"), py::arg("max_steer_rad"));
+  module.def("steer_to_ros", &nuway_common::SteerToRos, py::arg("steer"),
+             py::arg("max_steer_rad"));
   module.def("yaw_from_ros", &nuway_common::YawFromRos, py::arg("yaw_rad"));
   module.def(
       "transform_to_ros",

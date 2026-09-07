@@ -1,0 +1,26 @@
+# Package defaults for the nuway_carla_bridge nodes; profiles override them
+# (docs/02_interfaces.md §5). Paths are resolved by the launch file.
+world_manager:
+  ros__parameters:
+    carla.host: localhost
+    carla.port: 2000
+    carla.town: Town03
+    carla.fixed_delta_seconds: 0.05
+    carla.sync: true
+    carla.no_rendering: false
+    carla.lockstep_timeout_s: 2.0
+    carla.lockstep_startup_timeout_s: 120.0
+    carla.realtime_factor: 0.0
+    carla.traffic.tm_port: 8000
+    carla.traffic.seed: 0
+    sensors: configs/sensors/rig_dev.json
+    vehicle: configs/vehicle/lincoln_mkz_2020.yaml
+    spawn_index: 0
+    map_dir: data/maps
+    spawn_label_only_sensors: false   # M2: semantic LiDAR for gt_perception.source: sensor
+    spawn_viz_only_sensors: false     # M1: eval.chase_cam
+    gt.agent_radius_m: 100.0
+    gt.truck_blueprints: [vehicle.carlamotors.carlacola, vehicle.carlamotors.european_hgv, vehicle.carlamotors.firetruck, vehicle.tesla.cybertruck, vehicle.ford.ambulance, vehicle.mercedes.sprinter, vehicle.volkswagen.t2, vehicle.volkswagen.t2_2021, vehicle.mitsubishi.fusorosa]
+control_adapter:
+  ros__parameters:
+    vehicle: configs/vehicle/lincoln_mkz_2020.yaml

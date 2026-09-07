@@ -84,6 +84,8 @@ Topic names come from the sensor blueprint's **`ros_name`** attribute (and the h
 
 Note the **`/point_cloud` and `/image` suffixes**: the sensor's `ros_name` is a namespace, not the topic leaf. Only IMU and GNSS publish directly at the sensor name.
 
+**Control command convention (M0 finding, 2026-09-07).** `CarlaEgoVehicleControl.steer` on `/carla/hero/vehicle_control_cmd` is **CARLA convention** (positive = right, i.e. clockwise seen from above): a steer of −0.5 published from ROS turned the hero counter-clockwise. The sensor topics are converted by CARLA, the control input is not. The sign flip from the ROS steering angle (counter-clockwise positive) therefore lives in `carla_conv` (`SteerFromRos` / `steer_from_ros`), never in `control_adapter`. Also measured: CARLA's FastDDS subscriber takes a few wall-clock seconds to match an rclpy publisher, so the first commands after `control_adapter` starts are dropped; harmless, because every episode begins with a reset and the lockstep gate does not depend on CARLA having applied the command.
+
 **Rates are exactly one message per tick.** Measured over 1179 ticks in synchronous mode with `fixed_delta_seconds = 0.05` and `rotation_frequency = 20`: LiDAR, IMU, GNSS, `camera_info` and `/clock` all landed at 1.00 msg/tick with stamp deltas of exactly 0.0500 s — so **one full LiDAR sweep per tick, no partial sweeps, no accumulation needed**. `image` came in at 0.99/tick with an occasional 0.1000 s gap: under `best_effort` sensor QoS the camera drops a frame now and then. Nodes must key off the stamp, never assume an unbroken image sequence; `perception_node` masks a missing camera for that tick (§2 barrier exception, `M3_bev_perception.md` §4.2), and the drop rate is reported in every learned-profile eval report.
 
 **Frame ids.** The native messages must carry `header.frame_id` equal to the sensor's `ros_name` (`lidar_top`, `cam_front`, …) so that they resolve against the `/tf_static` we publish (below). `check_native_ros2.py` (M0 task 5) asserts this; if CARLA stamps a different id, `world_manager` sets `ros_frame_id` on the blueprint (verified to exist on the ROS-enabled sensor blueprints) rather than any node rewriting headers.
@@ -191,7 +193,7 @@ Every publisher and subscription names one of these (`nuway_common/qos.hpp`, `nu
 | `diag` | reliable | volatile | keep_last 10 | `/nuway/diag/**` — reliable because the harness reads the lockstep-timeout, degradation, safety-intervention and MPC-failure events from it (§8.2, M1 §3.10); a dropped diag message would be a dropped incident |
 | `viz` | best_effort | volatile | keep_last 1 | `/nuway/viz/**`, `/nuway/perception/tl_debug` |
 
-`/clock` uses the ROS default clock QoS (best_effort, keep_last 1).
+`/clock` is published by `world_manager` reliable / volatile / keep_last 1 (a reliable publisher matches both reliable and best-effort time sources; rclcpp's and rclpy's are best-effort). Nothing in the stack is triggered by `/clock`: CARLA's native duplicate free-runs while the server is asynchronous and repeats per tick in sync mode (M0 §5, 2026-09-07).
 
 ## 4. Messages (`nuway_msgs`)
 

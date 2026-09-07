@@ -81,6 +81,19 @@ unset _nuway_sync_args
 # 4. activate the venv, then the colcon workspace if it has been built.
 # shellcheck disable=SC1091
 source "${NUWAY_ROOT}/.venv/bin/activate"
+# ament_python entry points are generated with a /usr/bin/python3 shebang, so
+# `ros2 run` / `ros2 launch` would not see the venv even when it is activated.
+# The venv is that same interpreter with system site packages, so exposing its
+# site-packages on PYTHONPATH is ABI-safe (docs/03 §6.1).
+# nuway_ml is an editable install (a .pth file, which only site directories
+# honour), so ml/ goes on PYTHONPATH as well.
+for _nuway_dir in "${NUWAY_ROOT}/ml" "${NUWAY_ROOT}/.venv/lib/python3.12/site-packages"; do
+  case ":${PYTHONPATH:-}:" in
+    *":${_nuway_dir}:"*) ;;
+    *) export PYTHONPATH="${_nuway_dir}${PYTHONPATH:+:${PYTHONPATH}}" ;;
+  esac
+done
+unset _nuway_dir
 if [ -f "${NUWAY_ROOT}/ros2_ws/install/setup.bash" ]; then
   # shellcheck disable=SC1091
   source "${NUWAY_ROOT}/ros2_ws/install/setup.bash"

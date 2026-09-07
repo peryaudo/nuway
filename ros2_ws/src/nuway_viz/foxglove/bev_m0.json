@@ -1,0 +1,106 @@
+{
+  "configById": {
+    "3D!bev": {
+      "cameraState": {
+        "perspective": false,
+        "distance": 120,
+        "phi": 60,
+        "thetaOffset": 90,
+        "targetOffset": [0, 0, 0],
+        "target": [0, 0, 0],
+        "targetOrientation": [0, 0, 0, 1],
+        "fovy": 45,
+        "near": 0.5,
+        "far": 5000
+      },
+      "followMode": "follow-pose",
+      "followTf": "base_link",
+      "scene": {
+        "backgroundColor": "#101418",
+        "transforms": { "axisScale": 3, "showLabel": true }
+      },
+      "transforms": {
+        "frame:map": { "visible": false },
+        "frame:odom": { "visible": false },
+        "frame:base_link": { "visible": true },
+        "frame:lidar_top": { "visible": false },
+        "frame:imu": { "visible": false },
+        "frame:gnss": { "visible": false }
+      },
+      "topics": {
+        "/nuway/viz/lanes": { "visible": true },
+        "/nuway/viz/reference_line": { "visible": true },
+        "/carla/hero/lidar_top/point_cloud": {
+          "visible": false,
+          "pointSize": 2,
+          "colorField": "z",
+          "colorMode": "colormap",
+          "colorMap": "turbo"
+        }
+      },
+      "layers": {
+        "grid": {
+          "layerId": "foxglove.Grid",
+          "visible": true,
+          "frameId": "map",
+          "size": 1000,
+          "divisions": 100,
+          "color": "#2a2f36"
+        }
+      },
+      "publish": { "type": "point", "poseTopic": "/nuway/route/waypoints" }
+    },
+    "Plot!control": {
+      "title": "control",
+      "paths": [
+        { "value": "/nuway/control/debug.lateral_error", "enabled": true, "label": "lateral error [m]" },
+        { "value": "/nuway/control/debug.heading_error", "enabled": true, "label": "heading error [rad]" },
+        { "value": "/nuway/control/debug.speed_error", "enabled": true, "label": "speed error [m/s]" },
+        { "value": "/nuway/control/command.accel", "enabled": true, "label": "accel cmd [m/s^2]" },
+        { "value": "/nuway/control/command.steering_angle", "enabled": true, "label": "steer cmd [rad]" }
+      ],
+      "showXAxisLabels": true,
+      "showYAxisLabels": true,
+      "showLegend": true,
+      "legendDisplay": "floating",
+      "xAxisVal": "timestamp",
+      "followingViewWidth": 30
+    },
+    "Plot!speed": {
+      "title": "speed",
+      "paths": [
+        { "value": "/nuway/loc/pose.vx", "enabled": true, "label": "vx [m/s]" },
+        { "value": "/nuway/sim/vehicle_state.throttle", "enabled": true, "label": "throttle" },
+        { "value": "/nuway/sim/vehicle_state.brake", "enabled": true, "label": "brake" }
+      ],
+      "showXAxisLabels": true,
+      "showYAxisLabels": true,
+      "showLegend": true,
+      "legendDisplay": "floating",
+      "xAxisVal": "timestamp",
+      "followingViewWidth": 30
+    },
+    "RawMessages!command": { "topicPath": "/nuway/control/command", "diffEnabled": false, "expansion": "all" },
+    "RawMessages!diag": { "topicPath": "/nuway/diag/world_manager", "diffEnabled": false, "expansion": "all" },
+    "Topics!list": {}
+  },
+  "globalVariables": {},
+  "userNodes": {},
+  "playbackConfig": { "speed": 1 },
+  "layout": {
+    "direction": "row",
+    "first": "3D!bev",
+    "second": {
+      "direction": "column",
+      "first": "Plot!control",
+      "second": {
+        "direction": "column",
+        "first": "Plot!speed",
+        "second": { "direction": "row", "first": "RawMessages!command", "second": "RawMessages!diag" },
+        "splitPercentage": 50
+      },
+      "splitPercentage": 34
+    },
+    "splitPercentage": 62
+  }
+}

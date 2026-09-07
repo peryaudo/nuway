@@ -1,0 +1,28 @@
+# configs/profiles/m0_gt_all.yaml — M0 stack: every module GT, pure pursuit + PID (M0_bringup.md §2.10).
+# Schema: docs/02_interfaces.md §5. Paths are relative to the repo root.
+profile: m0_gt_all
+carla:
+  host: localhost
+  port: 2000
+  town: Town03
+  fixed_delta_seconds: 0.05
+  sync: true
+  quality: Epic
+  render_offscreen: true
+  no_rendering: false
+  lockstep_timeout_s: 2.0
+  lockstep_startup_timeout_s: 120.0
+  realtime_factor: 0.0
+sensors: configs/sensors/rig_dev.json
+vehicle: configs/vehicle/lincoln_mkz_2020.yaml
+use_gt:
+  localization: true
+  perception: true
+  traffic_lights: true
+  prediction: false
+  planning: false
+control:
+  controller: pure_pursuit
+eval:
+  record: false
+  record_sensors: false

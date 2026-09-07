@@ -7,6 +7,7 @@ namespace nuway_viz {
 constexpr const char* kNodeName = "marker_node";
 constexpr const char* kTopicVizPrefix = "/nuway/viz/";
 constexpr const char* kLayerLanes = "lanes";
+constexpr const char* kLayerReferenceLine = "reference_line";
 
 }  // namespace nuway_viz
 

@@ -240,18 +240,18 @@ CI uses the same script inside the `ros:jazzy` container so there is one definit
 
 ### 6.4 Pinned versions
 
-Decided in M0 and kept current here whenever `uv.lock` or the workflows change a pin. Until then the column shows the minimum.
+Decided in M0 (2026-09-07) and kept current here whenever `uv.lock` or the workflows change a pin.
 
 | Tool | Pin | Where pinned |
 |------|-----|--------------|
 | Ubuntu / ROS 2 | 24.04 / Jazzy | `00_overview.md` §4, CI image `ros:jazzy` |
 | Python | 3.12 (system) | `.python-version`, `[project] requires-python` |
-| uv | ≥ 0.5, exact in CI | `astral-sh/setup-uv@vN` with `version:` |
+| uv | 0.12.3 | `.github/workflows/ci.yml` (`UV_VERSION`, `astral-sh/setup-uv`) |
 | GCC | 13.3 | apt (distro default) |
 | CMake / Ninja / ccache / mold | ≥ 3.28 / ≥ 1.11 / ≥ 4.9 / ≥ 2.30 | apt (distro default) |
-| clang-format, clang-tidy (PyPI wheels) | ≥ 18, exact in lock | `pyproject.toml` `dev` group, `uv.lock` |
-| ruff, mypy, pytest, pre-commit, gersemi | exact in lock | `pyproject.toml` `dev` group, `uv.lock` |
-| torch | ≥ 2.4, `cu126` index | `ml/pyproject.toml` `[project.optional-dependencies] torch`, `[[tool.uv.index]]` |
+| clang-format, clang-tidy (PyPI wheels) | 23.1.0 / 22.1.8 | `pyproject.toml` `dev` group, `uv.lock` |
+| ruff, mypy, pytest, pre-commit, gersemi | 0.16.6 / 2.3.1 / 9.1.1 / 4.6.2 / 0.28.1 | `pyproject.toml` `dev` group, `uv.lock` |
+| torch | 2.14.0+cu126 | `ml/pyproject.toml` `[project.optional-dependencies] torch`, `[[tool.uv.index]]`, `uv.lock` |
 | hydra-core, wandb | exact in lock | `pyproject.toml` `train` group, `uv.lock` |
 | GTSAM / osqp-vendor / nanoflann / pugixml | 4.2.0 / 0.2.0 (the `ros-jazzy-osqp-vendor` package version, not OSQP's own) / 1.5.4 / 1.14 (`libpugixml-dev`), from apt | `package.xml` + rosdep (§6.2) |
 | osqp-eigen | tag, by commit hash | `ros2_ws/src/osqp_eigen_vendor/CMakeLists.txt` |
@@ -421,7 +421,7 @@ markers = ["slow: minutes-long", "carla: needs a running CARLA server", "gpu: ne
 [tool.ruff]
 target-version = "py312"
 line-length = 88
-extend-exclude = ["ros2_ws/build", "ros2_ws/install", "ros2_ws/log", "ros2_ws/src/carla_msgs", "data"]
+extend-exclude = ["ros2_ws/build", "ros2_ws/install", "ros2_ws/log", "ros2_ws/src/carla_msgs", "data", "external", "*.md"]  # *.md: ruff >= 0.16 formats Markdown code blocks, and docs/ holds pseudo-Python
 
 [tool.ruff.format]
 quote-style = "double"

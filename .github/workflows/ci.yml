@@ -1,0 +1,114 @@
+# CI (docs/03_style_and_conventions.md §7.4): one definition of the environment
+# (setup_env.sh inside ros:jazzy), then format, tidy, sanitizer, ruff, mypy and
+# two pytest jobs (full and import-light, i.e. without torch).
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  UV_VERSION: "0.12.3"
+
+jobs:
+  cpp:
+    runs-on: ubuntu-24.04
+    container: ros:jazzy
+    steps:
+      - uses: actions/checkout@v4
+      - name: apt prerequisites
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            build-essential gcc-13 g++-13 cmake ninja-build ccache mold git curl \
+            python3.12 python3.12-venv python3-colcon-common-extensions python3-rosdep \
+            libeigen3-dev libnanoflann-dev libpugixml-dev libpcl-dev \
+            ros-jazzy-gtsam ros-jazzy-osqp-vendor ros-jazzy-rmw-cyclonedds-cpp \
+            ros-jazzy-tf2-ros ros-jazzy-tf2-geometry-msgs ros-jazzy-pybind11-vendor \
+            ros-jazzy-ament-cmake-gtest ros-jazzy-ament-cmake-python \
+            ros-jazzy-nav-msgs ros-jazzy-visualization-msgs ros-jazzy-diagnostic-msgs
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: ${{ env.UV_VERSION }}
+      - name: rosdep
+        shell: bash
+        run: |
+          rosdep update || true
+          rosdep install --from-paths ros2_ws/src -yi --rosdistro jazzy || true
+      - name: environment
+        shell: bash
+        run: source setup_env.sh
+      - name: format, gersemi, header guards
+        shell: bash
+        run: |
+          source setup_env.sh
+          tools/lint/format_cpp.sh
+          uv run --frozen python tools/lint/check_header_guards.py
+      - name: build with clang-tidy
+        shell: bash
+        run: |
+          source setup_env.sh
+          cd ros2_ws && colcon build --cmake-args -DNUWAY_CLANG_TIDY=ON
+      - name: test
+        shell: bash
+        run: |
+          source setup_env.sh
+          cd ros2_ws && colcon test && colcon test-result --verbose
+      - name: sanitizer build and test
+        shell: bash
+        run: |
+          source setup_env.sh
+          cd ros2_ws
+          colcon build --cmake-args -DNUWAY_SANITIZE=address,undefined \
+            --build-base build_asan --install-base install_asan
+          colcon test --build-base build_asan --install-base install_asan
+          colcon test-result --test-result-base build_asan --verbose
+
+  python:
+    runs-on: ubuntu-24.04
+    container: ros:jazzy
+    steps:
+      - uses: actions/checkout@v4
+      - name: apt prerequisites
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            build-essential gcc-13 g++-13 cmake ninja-build ccache mold git curl \
+            python3.12 python3.12-venv
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: ${{ env.UV_VERSION }}
+      - name: ruff and mypy
+        shell: bash
+        run: |
+          source setup_env.sh
+          uv run --frozen ruff format --check .
+          uv run --frozen ruff check .
+          uv run --frozen mypy
+      - name: pytest (train + viz groups)
+        shell: bash
+        run: |
+          source setup_env.sh
+          uv sync --frozen --group train --group viz
+          uv run --frozen pytest -m "not slow and not carla and not gpu"
+
+  import-light:
+    runs-on: ubuntu-24.04
+    container: ros:jazzy
+    steps:
+      - uses: actions/checkout@v4
+      - name: apt prerequisites
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            build-essential gcc-13 g++-13 cmake ninja-build ccache mold git curl \
+            python3.12 python3.12-venv
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: ${{ env.UV_VERSION }}
+      - name: pytest without torch
+        shell: bash
+        run: |
+          source setup_env.sh
+          uv run --frozen pytest -m import_light

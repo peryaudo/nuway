@@ -1,0 +1,140 @@
+[project]
+name = "nuway"
+version = "0.0.0"
+description = "Toy modular autonomous-driving stack on CARLA 0.9.16 and ROS 2 Jazzy (uv workspace root)"
+requires-python = "==3.12.*"
+dependencies = ["nuway-ml"]
+
+[dependency-groups]
+dev = [
+  "ruff",
+  "mypy",
+  "pytest",
+  "pytest-cov",
+  "pre-commit",
+  "clang-format>=18",   # LLVM >= 18 wheels; exact pins in uv.lock
+  "clang-tidy>=18",
+  "gersemi",
+  "pyyaml",
+  "types-pyyaml",
+]
+carla = ["carla==0.9.16"]
+infer = ["nuway-ml[torch]"]       # run learned profiles (M3+) without training tooling
+train = ["hydra-core", "wandb", "nuway-ml[torch]"]   # config management and run/metric logging (03 §9.7)
+viz = ["matplotlib", "rosbags", "jupyterlab"]        # headless rendering (02_interfaces.md §8); never imported by runtime nodes
+# Python deps of external/{leaderboard,scenario_runner}. M1 task 19 completes the list from the
+# pinned checkouts' requirements.txt (03 §6.4); these are the ones known today.
+leaderboard = ["py-trees", "networkx", "shapely"]
+
+[tool.uv]
+package = false                    # the root is not installable
+python-preference = "only-system"  # must be Jazzy's /usr/bin/python3.12
+default-groups = ["dev"]
+
+[tool.uv.workspace]
+members = ["ml"]
+
+[tool.uv.sources]
+nuway-ml = { workspace = true }
+torch = { index = "pytorch-cu126" }   # applies to ml/pyproject.toml's optional `torch` extra (workspace-wide source)
+
+[[tool.uv.index]]
+name = "pytorch-cu126"             # see 03 §6.1 for why cu126 and not cu130
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
+
+[tool.pytest.ini_options]
+testpaths = ["ml/tests", "tools", "tests"]
+addopts = "--strict-markers"
+markers = [
+  "slow: minutes-long",
+  "carla: needs a running CARLA server",
+  "gpu: needs CUDA",
+  "import_light: must pass in an env without torch",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 88
+extend-exclude = ["ros2_ws/build", "ros2_ws/install", "ros2_ws/log", "ros2_ws/src/carla_msgs", "data", "external", "*.md"]  # *.md: ruff >= 0.16 formats Markdown code blocks, and docs/ holds pseudo-Python
+
+[tool.ruff.format]
+quote-style = "double"
+docstring-code-format = true
+
+[tool.ruff.lint]
+select = [
+  "E", "W",    # pycodestyle
+  "F",         # pyflakes
+  "I",         # isort
+  "N",         # pep8-naming
+  "UP",        # pyupgrade (3.12 idioms)
+  "B",         # bugbear
+  "D",         # pydocstyle
+  "ANN",       # type annotations required
+  "ARG",       # unused arguments
+  "C4",        # comprehensions
+  "SIM",       # simplify
+  "RET",       # return consistency
+  "PL",        # pylint subset
+  "RUF",       # ruff-specific
+  "NPY",       # numpy idioms
+  "PT",        # pytest style
+  "T20",       # no print()
+]
+ignore = [
+  "D105", "D107",    # magic methods / __init__ do not need docstrings
+  "PLR0913",         # many-argument functions are common in model constructors
+  "PLR2004",         # magic values: same reasoning as readability-magic-numbers in C++
+  "E501",            # line length is the formatter's job
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "pep257"
+
+[tool.ruff.lint.per-file-ignores]
+"**/tests/**" = ["D", "ANN", "PLR", "ARG"]
+"**/test_*.py" = ["D", "ANN", "PLR", "ARG"]
+"tools/**" = ["T20"]          # CLI tools may print
+"**/launch/*.launch.py" = ["D", "ANN"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["nuway_ml", "nuway_py", "nuway_eval", "nuway_carla_bridge", "nuway_perception", "nuway_prediction", "nuway_planning", "nuway_bringup", "nuway_viz"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unreachable = true
+# The ros2_ws Python packages are listed here so `uv run mypy` (pre-commit, CI)
+# actually checks them; the override below relaxes strictness for them. A package
+# is appended the moment it lands (M0 §3 tasks 6, 7, 11, 12; M1/M7 for the rest).
+files = [
+  "ml/nuway_ml", "tools", "tests",
+]
+exclude = ["ros2_ws/(build|install|log)/", "ros2_ws/src/carla_msgs/", "data/", "external/"]
+# The ros2_ws Python packages sit one directory deeper than their import name
+# (ros2_ws/src/<pkg>/<pkg>/); mypy_path makes `import nuway_perception` resolve
+# without an install step. tools/eval holds the nuway_eval package.
+explicit_package_bases = true
+mypy_path = [
+  "ml", "tools/eval",
+  "ros2_ws/src/nuway_carla_bridge", "ros2_ws/src/nuway_perception",
+  "ros2_ws/src/nuway_prediction", "ros2_ws/src/nuway_planning",
+  "ros2_ws/src/nuway_bringup", "ros2_ws/src/nuway_viz",
+]
+
+[[tool.mypy.overrides]]
+module = ["carla", "carla.*", "rclpy", "rclpy.*", "rosidl_runtime_py", "nuway_msgs.*", "carla_msgs.*", "nuway_py", "nuway_py.*", "torch.*", "webdataset", "webdataset.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# ROS nodes and launch files: typed, but not strict (rclpy has no stubs).
+module = ["nuway_carla_bridge.*", "nuway_perception.*", "nuway_prediction.*", "nuway_planning.*", "nuway_bringup.*", "nuway_viz.*"]
+strict = false
+disallow_untyped_defs = true
+
+[[tool.mypy.overrides]]
+# The eval harness is rclpy code outside ros2_ws (01_directory_structure.md rules): same relaxation.
+module = ["nuway_eval.*"]
+strict = false
+disallow_untyped_defs = true

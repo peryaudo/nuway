@@ -2,14 +2,10 @@
 
 How to take a brand-new machine to a working `nuway` development environment.
 
-**Status.** Sections 0–3 and 5 were executed end-to-end on the reference dev box on 2026-09-06;
-the versions and outputs shown are what that run actually produced. Sections 4, 6 and 7 describe
-the intended flow but **cannot be run yet** — `setup_env.sh`, the `ros2_ws/` packages,
-`tools/eval/setup_leaderboard.sh` and `tools/carla/check_native_ros2.py` are M0/M1 deliverables
-and the repository is still docs-only. The facts those sections rely on *were* verified directly
-(the CARLA client wheel imports on system Python 3.12, torch cu126 reaches the GPU, and the topic
-list in §7 is a real capture from a live server); only the wrapper scripts are missing. Update
-this note when M0 lands them.
+**Status.** Sections 0–5 were executed end-to-end on the reference dev box (0–3 and 5 on
+2026-09-06, 4 on 2026-09-07 when M0 task 1 landed `setup_env.sh`); the versions and outputs shown
+are what those runs actually produced. Section 6 (`tools/eval/setup_leaderboard.sh`) is an M1
+deliverable and cannot be run yet. Section 7 runs once M0 task 5 lands `check_native_ros2.py`.
 
 The authority on *what* the environment is remains `00_overview.md` §4 and
 `03_style_and_conventions.md` §6 — this document is only the procedure. If the two disagree,
@@ -148,9 +144,6 @@ Both versions must print `0.9.16`, and `load_world` must return rather than time
 here means the server crashed — check that `-quality-level=Low` is absent.
 
 ## 4. Repository and Python environment
-
-> Blocked on M0 task 1: `setup_env.sh`, the root `pyproject.toml`/`uv.lock` and `ros2_ws/` do
-> not exist yet. The steps below are the target flow.
 
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh      # uv, if not present

@@ -1,0 +1,5 @@
+# gersemi (CMake formatter) configuration; see docs/03_style_and_conventions.md §6.2.
+line_length: 80
+indent: 4
+# ament_* and nuway_* commands are not in gersemi's builtin list.
+warn_about_unknown_commands: false

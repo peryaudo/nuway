@@ -1,0 +1,65 @@
+# Google C++ style enforcement plus bug-finding checks. Warnings are errors in CI.
+Checks: >
+  -*,
+  bugprone-*,
+  -bugprone-easily-swappable-parameters,
+  cppcoreguidelines-init-variables,
+  cppcoreguidelines-pro-type-cstyle-cast,
+  cppcoreguidelines-pro-type-static-cast-downcast,
+  cppcoreguidelines-special-member-functions,
+  google-*,
+  llvm-namespace-comment,
+  misc-*,
+  -misc-non-private-member-variables-in-classes,
+  -misc-include-cleaner,
+  modernize-*,
+  -modernize-use-trailing-return-type,
+  -modernize-avoid-c-arrays,
+  performance-*,
+  readability-*,
+  -readability-magic-numbers,
+  -readability-else-after-return,
+  -readability-function-cognitive-complexity
+WarningsAsErrors: '*'
+HeaderFilterRegex: '.*/ros2_ws/src/nuway_[a-z_]+/.*'
+FormatStyle: file
+CheckOptions:
+  # Google naming, machine-checked.
+  readability-identifier-naming.NamespaceCase: lower_case
+  readability-identifier-naming.ClassCase: CamelCase
+  readability-identifier-naming.StructCase: CamelCase
+  readability-identifier-naming.EnumCase: CamelCase
+  readability-identifier-naming.TypeAliasCase: CamelCase
+  readability-identifier-naming.TypedefCase: CamelCase
+  readability-identifier-naming.TemplateParameterCase: CamelCase
+  readability-identifier-naming.FunctionCase: CamelCase
+  readability-identifier-naming.MethodCase: CamelCase
+  readability-identifier-naming.VariableCase: lower_case
+  readability-identifier-naming.ParameterCase: lower_case
+  readability-identifier-naming.MemberCase: lower_case
+  readability-identifier-naming.PrivateMemberSuffix: '_'
+  readability-identifier-naming.ProtectedMemberSuffix: '_'
+  readability-identifier-naming.PublicMemberCase: lower_case
+  readability-identifier-naming.ConstexprVariableCase: CamelCase
+  readability-identifier-naming.ConstexprVariablePrefix: 'k'
+  readability-identifier-naming.GlobalConstantCase: CamelCase
+  readability-identifier-naming.GlobalConstantPrefix: 'k'
+  readability-identifier-naming.StaticConstantCase: CamelCase
+  readability-identifier-naming.StaticConstantPrefix: 'k'
+  readability-identifier-naming.ClassConstantCase: CamelCase
+  readability-identifier-naming.ClassConstantPrefix: 'k'
+  readability-identifier-naming.EnumConstantCase: CamelCase
+  readability-identifier-naming.EnumConstantPrefix: 'k'
+  readability-identifier-naming.MacroDefinitionCase: UPPER_CASE
+  # Cheap accessors/mutators are allowed to be snake_case (Google "Function
+  # Names"): a bare member name `foo()` or a setter `set_foo()`. The regexp
+  # must not admit arbitrary snake_case methods, so it requires the accessor
+  # to be a single identifier of at most three underscore-separated words.
+  readability-identifier-naming.MethodIgnoredRegexp: '^(set_)?[a-z][a-z0-9]*(_[a-z0-9]+){0,2}$'
+  # gtest macros generate identifiers we do not control.
+  readability-identifier-naming.FunctionIgnoredRegexp: '^(TEST|TEST_F|TEST_P|TYPED_TEST).*'
+  google-readability-braces-around-statements.ShortStatementLines: 0
+  readability-braces-around-statements.ShortStatementLines: 0
+  readability-implicit-bool-conversion.AllowIntegerConditions: false
+  readability-implicit-bool-conversion.AllowPointerConditions: false
+  performance-unnecessary-value-param.AllowedTypes: 'SharedPtr;ConstSharedPtr'

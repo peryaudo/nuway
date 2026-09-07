@@ -1,0 +1,7 @@
+# .clangd
+CompileFlags:
+  CompilationDatabase: ros2_ws/build
+Diagnostics:
+  ClangTidy:
+    # Reuse .clang-tidy; clangd surfaces the same checks in the editor.
+    FastCheckFilter: Loose

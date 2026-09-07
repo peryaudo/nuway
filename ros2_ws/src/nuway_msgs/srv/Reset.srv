@@ -1,0 +1,9 @@
+# Never changes the town: sim time stays monotonic (02 §2); one stack per town.
+geometry_msgs/Pose start_pose     # map frame; ignored if spawn_index >= 0
+int32 spawn_index                 # -1 = use start_pose
+bool clear_traffic
+int64 traffic_seed                # -1 = keep the profile's carla.traffic.seed; the harness sets it per route (M1 §3.9)
+---
+bool ok
+uint32 episode_id
+string message

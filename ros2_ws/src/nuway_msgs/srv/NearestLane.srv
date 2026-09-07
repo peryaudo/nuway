@@ -1,0 +1,9 @@
+float64 x
+float64 y
+float64 yaw
+float64 max_dist
+---
+bool found
+uint32 lane_id
+float64 s
+float64 d

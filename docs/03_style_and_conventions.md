@@ -497,7 +497,21 @@ mypy_path = [
 ]
 
 [[tool.mypy.overrides]]
-module = ["carla", "carla.*", "rclpy", "rclpy.*", "rosidl_runtime_py", "nuway_msgs.*", "carla_msgs.*", "nuway_py", "nuway_py.*", "torch.*", "webdataset", "webdataset.*"]
+# Untyped, and present only when ROS / CARLA are installed: treated as Any
+# (follow_imports = skip), so the same mypy run passes with and without them.
+module = [
+  "carla", "carla.*", "rclpy", "rclpy.*", "rosidl_runtime_py", "rosidl_runtime_py.*",
+  "nuway_msgs.*", "carla_msgs.*", "nuway_py", "nuway_py.*",
+  "std_msgs.*", "geometry_msgs.*", "sensor_msgs.*", "nav_msgs.*", "tf2_msgs.*",
+  "visualization_msgs.*", "rosgraph_msgs.*", "builtin_interfaces.*", "tf2_ros", "tf2_ros.*",
+  "launch", "launch.*", "launch_ros", "launch_ros.*", "ament_index_python", "ament_index_python.*",
+]
+ignore_missing_imports = true
+follow_imports = "skip"
+
+[[tool.mypy.overrides]]
+# Typed, but absent from the import-light environment (03 §6.1).
+module = ["torch.*", "webdataset", "webdataset.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]

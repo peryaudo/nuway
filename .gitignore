@@ -1,6 +1,6 @@
 CLAUDE.local.md
 .venv/
-data/
+/data/
 external/
 ros2_ws/build/
 ros2_ws/build_asan/

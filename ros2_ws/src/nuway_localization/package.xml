@@ -1,0 +1,24 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>nuway_localization</name>
+  <version>0.0.0</version>
+  <description>Localization. M0: gt_pose_node, the cheat twin that turns the GT odometry into /nuway/loc/pose and TF; M5 adds LiDAR odometry, scan-to-map, the smoother and the pose extrapolator.</description>
+  <maintainer email="peryaudo@gmail.com">Tetsui Ohkubo</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <buildtool_depend>nuway_cmake</buildtool_depend>
+
+  <depend>eigen</depend>
+  <depend>rclcpp</depend>
+  <depend>tf2_ros</depend>
+  <depend>geometry_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>nuway_common</depend>
+  <depend>nuway_msgs</depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

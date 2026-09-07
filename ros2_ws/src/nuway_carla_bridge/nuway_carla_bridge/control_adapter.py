@@ -29,7 +29,6 @@ from rclpy.qos import (
     QoSReliabilityPolicy,
 )
 
-from nuway_carla_bridge.ros_qos import qos
 from nuway_ml.common.carla_conv import steer_from_ros
 from nuway_ml.common.frames import (
     TOPIC_CONTROL_COMMAND,
@@ -37,6 +36,7 @@ from nuway_ml.common.frames import (
     TOPIC_VEHICLE_STATE,
 )
 from nuway_ml.common.longitudinal_map import LongitudinalMap
+from nuway_rclpy.ros_qos import qos
 
 NODE_NAME = "control_adapter"
 TOPIC_CARLA_CONTROL = "/carla/hero/vehicle_control_cmd"

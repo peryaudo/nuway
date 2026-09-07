@@ -1,0 +1,10 @@
+# Package defaults for the nuway_perception GT twins; the profile overrides them (docs/02 §5).
+gt_perception_node:
+  ros__parameters:
+    grid.resolution: 0.5            # OccupancyGridMC geometry (docs/02 §1 defaults)
+    grid.x_min: -50.0
+    grid.y_min: -50.0
+    grid.height: 200
+    grid.width: 200
+gt_traffic_light_node:
+  ros__parameters: {}

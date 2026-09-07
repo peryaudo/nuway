@@ -15,7 +15,7 @@
 Design targets: ≤ 25M parameters, fp16-friendly, no custom CUDA kernels except an optional sparse-conv library (`spconv` or `torchsparse`); default path is **pillars + dense 2-D conv**, which needs nothing custom.
 
 ### 1.1 LiDAR branch (`lidar_branch.py`)
-- Input: current sweep in `base_link` `[N,4]` (x, y, z, intensity), i.e. exactly the M2 `lidar` array and exactly what `/carla/hero/lidar_top` carries. Crop to grid extent, z ∈ [−3, 5].
+- Input: current sweep `[N,4]` (x, y, z, intensity) **transformed into `base_link`** by the preprocessing step (§4.1) using `T_base_from_lidar` — the M2 `lidar` array and the `/carla/hero/lidar_top` cloud are both in the LiDAR frame (M2 §2), and the dataset loader applies the same transform (M2 §5). Crop to grid extent, z ∈ [−3, 5].
 - PointPillars: pillar size 0.25 m (400×400 pillars over ±50 m), max 32 points/pillar, 10-dim point features (x,y,z, Δ to pillar center, Δ to pillar mean, |r|), PillarFeatureNet 64-dim, scatter to `[64,400,400]`.
 - 2-D backbone: 3 stages with strides {1,2,2} (channels 64,128,256), FPN-style up-fuse to `[128,200,200]` (0.5 m).
 - Hook for `spconv` VoxelNet variant behind a config flag (not required for completion).
@@ -24,6 +24,7 @@ Design targets: ≤ 25M parameters, fp16-friendly, no custom CUDA kernels except
 - 4 images, `ResNet-18` (ImageNet init) → stride-16 features `[256,16,44]` per camera.
 - Lift-Splat: depth distribution over 48 bins (2–50 m, uniform in log-depth), context 64-dim; splat to BEV `[64,200,200]` via the standard "cumsum trick" (pure torch). Depth supervised by projecting the LiDAR sweep into each image (BEVDepth-style) with a cross-entropy loss on the bin.
 - Camera BEV is a **helper**, not the primary source; if it underperforms it may be dropped by config.
+- The branch takes a `cam_valid [4]` mask. A camera whose image is missing — an augmentation dropout in training (M2 §5) or a dropped native frame at runtime (§4.2) — contributes nothing to the splat. Training always sees some masked cameras, so a runtime drop is in-distribution.
 
 ### 1.3 Fusion (`fusion.py`)
 Concat `[128+64,200,200]` → 2 × (3×3 conv + BN + ReLU) → `[128,200,200]` = **current BEV feature** `F_t`.
@@ -61,7 +62,7 @@ Per frame, detections `D` (with `vel`), tracks `T` (each: last box, vel, id, age
 3. Cost matrix: L2 distance, `+inf` if class mismatch or distance > `gate[class]` (car 3 m, ped 1 m, bicycle 1.5 m at Δt=0.1 s), plus `0.5·|log(l1/l2)| + 0.5·|Δyaw|` term.
 4. Hungarian (`scipy.optimize.linear_sum_assignment`).
 5. Matched: update box/vel from detection (no filtering), `hits += 1`, `misses = 0`, push pose to history. Unmatched track: `misses += 1`, propagate pose by its velocity; delete when `misses > 5` (0.5 s). Unmatched detection: new track (`hits = 1`).
-6. Output agents with `hits ≥ 2` (suppresses one-frame false positives), transformed back to `base_link`, with `history` filled from the ring buffer (transformed to current base_link).
+6. Output agents with `hits ≥ 2` (suppresses one-frame false positives), transformed back to `base_link`, with `history` filled from the ring buffer (transformed to current base_link) and `visible = true` on every output — a detected agent is visible by definition, and the M7 token feature must mean the same thing on learned and GT inputs (`02_interfaces.md` §4).
 7. On `ResetEvent`: drop all tracks and reset the id counter.
 
 `scipy` enters `ml/pyproject.toml` runtime dependencies here (`uv add scipy`).
@@ -79,7 +80,8 @@ Evaluation script `ml/scripts/eval_tracking.py`: run detector + tracker on held-
 The occupancy grid is likewise published from Python (it is this node's output); consumers are C++ and read it through the ordinary `OccupancyGridMC` topic.
 
 ### 4.2 `perception_node.py`
-- Subscribes LiDAR + 4 images (message_filters approximate sync, slop 0.03 s) + pose. Runs once per two ticks, triggered by the LiDAR message.
+- Subscribes LiDAR + 4 images + pose. Runs on even ticks only (`02_interfaces.md` §2). Per the current-tick barrier it waits for the LiDAR and the pose stamped `k`; the four images stamped `k` are expected too, but a camera whose frame has not arrived by the time the LiDAR has is **masked** (`cam_valid = false`, §1.2) rather than waited for, because CARLA's best-effort camera topics drop about 1 % of frames and waiting would only convert every drop into a lockstep timeout. Masked cameras are counted in `NodeDiag` and the drop rate is stated in the milestone report; this is the one input in the stack allowed to be missing on a tick.
+- Warm-up: the node runs the compiled model once on a dummy batch in its constructor, before it subscribes, so the first real tick pays no compilation cost; `carla.lockstep_startup_timeout_s` (`02_interfaces.md` §5) covers the case where it still takes longer than a regular tick.
 - Maintains the temporal queue and EMA memory (on GPU); both are cleared on `ResetEvent`, together with the tracker.
 - Runs the model (torch.compile or TensorRT export via `nuway_ml/export/`; TensorRT is optional, target met with `torch.compile(mode="reduce-overhead")` + fp16 first).
 - Decodes, tracks, publishes `AgentArray` (base_link, stamp = LiDAR stamp) and `OccupancyGridMC` (post-processed: `unknown = 1 − occupied − free` clamped; `occupied` thresholded softly).

@@ -38,7 +38,7 @@ Standard iLQR with:
 - Output `Trajectory` at 0.1 s, 81 points (states already on that grid), `source="learned"`, `sample_index` carried over from the input candidate, plus diag: iterations, final cost, regularization hits, line-search failures.
 - Warm-start memory (previous refined solution per mode) is cleared on `ResetEvent`.
 
-Threaded over candidates (thread pool). Costs are evaluated on preinterpolated agent samples (shared read-only per cycle).
+Threaded over candidates (thread pool; one candidate per thread, results collected in candidate order, so thread count never changes a result — M1 §5). Costs are evaluated on preinterpolated agent samples (shared read-only per cycle).
 
 ## 3. Wiring
 

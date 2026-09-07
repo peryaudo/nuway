@@ -1,6 +1,6 @@
 # M5 — Localization (LiDAR odometry + prior map + fixed-lag factor graph)
 
-**Goal:** replace GT pose with a factor-graph localization pipeline: KISS-ICP-style LiDAR odometry as front-end, an offline-built point-cloud map per town, online scan-to-map registration, and a GTSAM fixed-lag smoother fusing odometry, scan-to-map, IMU preintegration, and GNSS. Per-tick `odom→base_link` via IMU/wheel-speed forward propagation. **After this milestone the stack runs with `use_gt.* = false` everywhere** (the M6 prediction/planning twins are offline tools).
+**Goal:** replace GT pose with a factor-graph localization pipeline: KISS-ICP-style LiDAR odometry as front-end, an offline-built point-cloud map per town, online scan-to-map registration, and a GTSAM fixed-lag smoother fusing odometry, scan-to-map, IMU preintegration, and GNSS. Per-tick `odom→base_link` via IMU/wheel-speed forward propagation. **After this milestone the stack runs with `use_gt.* = false` everywhere.** The two remaining twins arrive in M6: `gt_planning_node` runs live in the stack for ablation and DAgger labelling, and `gt_prediction_node` only in log replay; neither is on the default path of any profile.
 
 **Completion criteria**
 - [ ] ATE (translation) < 0.20 m RMS and yaw RMS < 0.5° against GT over ≥ 10 min of driving per town (Town03, Town05, Town10HD), including two loops.
@@ -9,6 +9,7 @@
 - [ ] Initialization from GNSS + heading search succeeds within 3 s (60 ticks) from a standstill anywhere on the road.
 - [ ] Closed-loop: profile `m5_no_gt.yaml` (learned perception + learned traffic lights + learned localization) scores ≥ 90% of the `m4_learned_tl` score on the M1 protocol.
 - [ ] Localization node chain CPU time ≤ 20 ms per 10 Hz cycle.
+- [ ] Prior maps (`map.ply`, `map_tags.npy`, `REPORT.md`) exist for **every town in the M2/M6 collection set** (Town01–07, Town10HD), not only the three ATE towns: M6 builds its static occupancy from them (M6 §3.1) and the rendered DAgger round localizes on them (M8 §4).
 - [ ] Leaderboard (deferred from M1, `M1_classical_planning.md` §3.12): `run_leaderboard.sh` with `m5_no_gt.yaml` completes ≥ 8 of 10 dev routes under the official runner, and the Leaderboard's own driving score is within 5 points of our harness running the same profile on the same routes.
 
 ---
@@ -21,13 +22,13 @@ All sensors arrive once per tick (20 Hz, `02_interfaces.md` §2). The LiDAR fron
 /carla/hero/lidar_top (20 Hz) ─► lidar_odometry_node (every 2nd sweep) ──► odometry_delta (T_{k-1→k}, Σ) ─┐
                                                                                                          │
 prior map (data/maps/<town>/map.ply + voxel index)                                                        ▼
-/carla/hero/lidar_top ─► scan_to_map_node (10 Hz) ─► absolute pose factor (T_map_base, Σ) ─► smoother_node ─► /nuway/loc/pose_lowrate (10 Hz)
+downsampled scan (shared in-process) ─► scan_to_map_node (10 Hz) ─► absolute pose factor (T_map_base, Σ) ─► smoother_node ─► /nuway/loc/pose_lowrate (10 Hz)
 /carla/hero/imu (20 Hz) ─► IMU preintegration (2 samples per keyframe) ────────────────────┘        │ map→odom TF
 /carla/hero/gnss (20 Hz) ─► GNSS prior (weak) ─────────────────────────────────────────────┘        ▼
 /carla/hero/imu + /nuway/sim/vehicle_state ─► pose_extrapolator_node (every tick) ─► /nuway/loc/pose (20 Hz), odom→base_link TF
 ```
 
-Two modes: **mapping** (offline tool, builds the prior map) and **localization** (online, above). Both share the odometry front-end.
+Two modes: **mapping** (offline tool, builds the prior map) and **localization** (online, above). Both share the odometry front-end. `lidar_odometry_node`, `scan_to_map_node` and `smoother_node` are `rclcpp` components loaded into **one container process**, so the sweep is deserialized and downsampled once (by the odometry step) and handed to scan-to-map as a shared `const` cloud; they remain separate nodes with separate diag topics and parameters. All three act on even ticks; the extrapolator on every tick (`02_interfaces.md` §2).
 
 ## 2. Components
 
@@ -45,7 +46,7 @@ Tests: synthetic cube-room point clouds with known motion → recovered transfor
 
 ### 2.2 Offline mapping (`tools/mapping/build_map.py` + C++ `map_builder` binary)
 
-1. Drive the town with the M1 stack in GT-localization mode with the `mapping` profile (which spawns the `label_only` semantic LiDAR, `02_interfaces.md` §3.1), recording `/carla/hero/lidar_top`, `/carla/hero/lidar_top_semantic` + GT pose (GT pose is allowed for mapping — a real system would use survey-grade equipment). Routes: `nuway_eval/routes/mapping_<town>.xml` covering every driving lane at least once. No traffic.
+1. Drive the town with the M1 stack in GT-localization mode with the `mapping` profile (which spawns the `label_only` semantic LiDAR, `02_interfaces.md` §3.1), recording `/carla/hero/lidar_top`, `/carla/hero/lidar_top_semantic` + GT pose (GT pose is allowed for mapping — a real system would use survey-grade equipment). Routes: `nuway_eval/routes/mapping_<town>.xml` covering every driving lane at least once, **for every collection town** (Town01–07, Town10HD); generated by `tools/mapping/build_map.py --plan-route` as a lane-cover walk over the `LaneGraph`, not hand-written. No traffic, so each town is ≈ 10–20 min of sim time and the whole set is an unattended overnight job.
 2. `map_builder`: accumulate sweeps in `map` frame using GT poses, voxel downsample at 0.2 m, remove dynamic points by class: use the semantic LiDAR recording to drop points tagged vehicle/walker. Save `data/maps/<town>/map.ply` (xyz + normal estimated with 10-NN) and a serialized voxel index. The semantic map is also the input of M6's static occupancy raster (`tools/mapping/build_static_occ.py`), so keep the per-point tag in a sidecar `map_tags.npy`.
 3. Optional: run `pose_graph_refine` (GTSAM pose graph with odometry BetweenFactors from 2.1 + loop closures + GT priors) to validate that our SLAM back-end reconstructs GT within 0.1 m. This exercises the graph-SLAM code path even though the deployed map uses GT poses. Report in `data/maps/<town>/REPORT.md`.
 
@@ -54,7 +55,7 @@ Loop closure for the validation run: Scan Context descriptor (20 rings × 60 sec
 ### 2.3 Scan-to-map (`scan_to_map.cpp`, node)
 
 - Loads the prior map; builds a voxel hash (1.0 m) with normals.
-- Input: current downsampled scan + initial guess (from the smoother's latest pose propagated by the odometry delta).
+- Input: the odometry step's downsampled scan of the same tick (shared in-process, §1) + initial guess (from the smoother's latest pose propagated by the odometry delta).
 - Point-to-plane ICP (normals from map), 20 iterations, robust kernel, ≤ 6k points. Outputs `T_map_base` and covariance from the Hessian; rejects the result if inlier ratio < 0.4 or if the pose moved > 2 m / 10° from the initial guess (publishes a diag warn).
 - Runs at 10 Hz (every 2nd sweep) to leave CPU for odometry.
 
@@ -66,7 +67,7 @@ Factors:
 - `BetweenFactor<Pose3>(X_{k-1}, X_k, T_odom, Σ_odom)` from 2.1.
 - `PriorFactor<Pose3>(X_k, T_scan2map, Σ_s2m)` from 2.3 (when accepted). Robust (Huber) to survive bad registrations.
 - `ImuFactor(X_{k-1}, V_{k-1}, X_k, V_k, B_{k-1})` from `PreintegratedImuMeasurements` over the IMU samples between keyframes. There are only **two** of them (the IMU is one sample per tick, `02_interfaces.md` §2), so the factor is thin; see the open question on replacing it. CARLA IMU noise params from the sensor attributes (set explicit `noise_accel_stddev_*`, `noise_gyro_stddev_*` in the rig so the model matches).
-- `GPSFactor(X_k, p_gnss, σ=2 m)` from GNSS (converted from lat/lon via CARLA's `map.transform_to_geolocation` inverse — implement the equirectangular inverse in `carla_conv.hpp`; CARLA's GNSS is exact + configured noise).
+- `GPSFactor(X_k, p_gnss, σ=2 m)` from GNSS (converted from lat/lon via CARLA's `map.transform_to_geolocation` inverse — implement the equirectangular inverse in `carla_conv.hpp` *and* `carla_conv.py`, parity-tested like the rest of that pair; the reference lat/lon/alt come from the `<geoReference>` header of the town's `map.xodr`, read once by the map server and published as parameters; CARLA's GNSS is exact + configured noise).
 - Wheel-speed factor: a unary factor on `V_k` body-x component from `/nuway/sim/vehicle_state.speed` (σ = 0.2 m/s), body-y ≈ 0 (σ = 0.3, non-holonomic soft constraint).
 
 `IncrementalFixedLagSmoother` with lag 2.0 s, iSAM2 params relinearize threshold 0.01. Output the latest `X_k` with marginal covariance as `/nuway/loc/pose_lowrate`, and publish `map→odom = X_k · (odom_pose_k)^{-1}` where `odom_pose_k` is the odometry-integrated pose of keyframe `k` (so `odom` is continuous and `map→odom` absorbs corrections).
@@ -90,9 +91,9 @@ On start or on `ResetEvent`: discard the smoother graph, local map and extrapola
 1. [ ] `voxel_hash_map.hpp` (+ tests), `icp.hpp` (point-to-point & point-to-plane, robust, SE3 GN; tests vs synthetic).
 2. [ ] `lidar_odometry.cpp` + node; test on a recorded MCAP; plot drift vs GT.
 3. [ ] Scan Context descriptor + loop detection (+ tests on repeated synthetic scenes).
-4. [ ] `map_builder`, `build_map.py`, mapping routes for Town03/05/10HD; `pose_graph_refine` validation; REPORT per town.
+4. [ ] `map_builder`, `build_map.py` (incl. `--plan-route` lane-cover route generation), maps for all eight collection towns; `pose_graph_refine` validation on Town03/05/10HD; REPORT per town.
 5. [ ] `scan_to_map.cpp` + node; rejection logic; timing.
-6. [ ] `smoother.cpp` + node (GTSAM); IMU preintegration wiring; GNSS conversion in `carla_conv.hpp` with test against CARLA API on 100 points.
+6. [ ] `smoother.cpp` + node (GTSAM); IMU preintegration wiring; GNSS conversion in `carla_conv.hpp` + `carla_conv.py` (parity) with test against CARLA API on 100 points; component container for the three 10 Hz nodes.
 7. [ ] `pose_extrapolator.cpp` + node; TF publishing; parity with `gt_pose_node` output rate/format.
 8. [ ] Initialization and `ResetEvent` handling; test from 20 random spawn points and across 5 consecutive resets.
 9. [ ] `eval_localization.py`; achieve ATE criteria; tune noise models; record in Decisions log.

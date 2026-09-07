@@ -62,13 +62,13 @@ The risk that the light changes while latched (green → red after ego lost sigh
 
 ## 6. Runtime node (`nuway_perception/traffic_light_node.py`)
 
-Subscribes `cam_front`, `cam_left`, `cam_right` (+ `cam_tl` if enabled), `/nuway/loc/pose`, `LaneGraph` (latched), `/nuway/route/plan`. Per cycle (10 Hz, triggered by `cam_front`):
+Subscribes `cam_front`, `cam_left`, `cam_right` (+ `cam_tl` if enabled), `/nuway/loc/pose`, `LaneGraph` (latched), `/nuway/route/plan`. Runs on even ticks after the pose of that tick has arrived (`02_interfaces.md` §2 barrier); the cameras follow the same masking rule as `perception_node` (M3 §4.2) — a camera whose frame for tick `k` is missing is simply not a crop source that tick, and a light with no crop is answered by the latch (§4). Per cycle:
 1. Select lights on the route within 60 m (§2 mapping, overrides applied).
 2. Project + crop (§3) for those visible in some camera; batch through the model.
 3. Latch (§4) per light; publish `TrafficLightArray` with `stop_line`, `affected_lane_ids`, `state`, `confidence`, `time_in_state`, `yellow_duration`, `latched`. Stamp = `cam_front` stamp.
 4. `NodeDiag` with breakdown: project, crop, model, latch; plus `n_lights`, `n_latched`.
 
-Runs inside the `perception_node.py` process when the profile sets `perception.tl_in_bev_process: true` (saves an image subscription and a CUDA context); standalone otherwise. Either way the topic and message are identical, and either way the launch alternative is selected by `use_gt.traffic_lights` alone (`02_interfaces.md` §6).
+Runs inside the `perception_node.py` process when the profile sets `perception.tl_in_bev_process: true` (saves an image subscription and a CUDA context); standalone otherwise, and standalone regardless of the key when `use_gt.perception: true` (there is no `perception_node` process to host it — the §7 ablation profile). Either way the topic and message are identical, and either way the launch alternative is selected by `use_gt.traffic_lights` alone (`02_interfaces.md` §6).
 
 Foxglove: overlay of crop boxes on `cam_front` with predicted state and latch status on `/nuway/perception/tl_debug` (only when `traffic_light_node.debug: true`), plus the `tl_crops` marker layer.
 

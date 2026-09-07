@@ -3,19 +3,19 @@
 How to take a brand-new machine to a working `nuway` development environment.
 
 **Status.** Sections 0–3 and 5 were executed end-to-end on the reference dev box on 2026-09-06;
-the versions and outputs shown are what that run actually produced. Sections 4 and 6 describe
-the intended flow but **cannot be run yet** — `setup_env.sh`, the `ros2_ws/` packages and
-`tools/carla/check_native_ros2.py` are M0 task 1 and task 5 deliverables and the repository is
-still docs-only. The facts those sections rely on *were* verified directly (the CARLA client
-wheel imports on system Python 3.12, torch cu126 reaches the GPU, and the topic list in §6 is
-a real capture from a live server); only the wrapper scripts are missing. Update this note when
-M0 lands them.
+the versions and outputs shown are what that run actually produced. Sections 4, 6 and 7 describe
+the intended flow but **cannot be run yet** — `setup_env.sh`, the `ros2_ws/` packages,
+`tools/eval/setup_leaderboard.sh` and `tools/carla/check_native_ros2.py` are M0/M1 deliverables
+and the repository is still docs-only. The facts those sections rely on *were* verified directly
+(the CARLA client wheel imports on system Python 3.12, torch cu126 reaches the GPU, and the topic
+list in §7 is a real capture from a live server); only the wrapper scripts are missing. Update
+this note when M0 lands them.
 
 The authority on *what* the environment is remains `00_overview.md` §4 and
 `03_style_and_conventions.md` §6 — this document is only the procedure. If the two disagree,
 those two win and this file is stale.
 
-**Target:** Ubuntu 24.04 LTS (noble), NVIDIA GPU, ≥ 60 GB free disk, ≥ 12 physical cores.
+**Target:** Ubuntu 24.04 LTS (noble), NVIDIA GPU, ≥ 12 physical cores. Disk: ≥ 60 GB for the toolchain alone (CARLA 17 GB extracted, ROS ~3 GB); the data pipelines need far more — ≈ 300 GB for the minimum M2 set, ≈ 1 TB for the full M2 protocol and a further ≈ 300 GB for M6 (`M2_perception_data_pipeline.md` §2, `M6_planning_data_pipeline.md` §1). Plan ≥ 1.5 TB on the data volume before M2.
 
 ---
 
@@ -74,10 +74,12 @@ sudo rosdep init && rosdep update
 
 ```bash
 sudo apt-get install -y \
-  build-essential gcc-13 g++-13 clang-18 clang-tidy-18 \
+  build-essential gcc-13 g++-13 clang-18 \
   cmake ninja-build ccache mold git \
-  libeigen3-dev libnanoflann-dev libpcl-dev ros-jazzy-gtsam ros-jazzy-osqp-vendor
+  libeigen3-dev libnanoflann-dev libpugixml-dev libpcl-dev ros-jazzy-gtsam ros-jazzy-osqp-vendor
 ```
+
+`clang-18` is the optional local *compiler*; `clang-format` and `clang-tidy` are **not** installed from apt — they come from the PyPI wheels pinned in `uv.lock` (`03_style_and_conventions.md` §6.2), so the versions never drift from CI.
 
 On Jazzy/noble the math stack comes from apt — GTSAM 4.2.0, OSQP (via `ros-jazzy-osqp-vendor`
 0.2.0, the vendor package's version, not OSQP's own) and nanoflann 1.5.4 are all packaged, so
@@ -131,7 +133,7 @@ cd ~/carla && ./CarlaUE4.sh -RenderOffScreen --ros2 -carla-rpc-port=2000
 Smoke test from a second shell:
 
 ```bash
-# once §4 has run; before that, any venv with `pip install carla==0.9.16` on Python 3.12 works
+# once §4 has run; before that: `uv run --python /usr/bin/python3.12 --with carla==0.9.16 python - <<EOF ... EOF`
 cd ~/nuway && source setup_env.sh
 python3 -c "
 import carla
@@ -215,7 +217,16 @@ export CYCLONEDDS_URI=file://$HOME/.cyclonedds.xml
 Zero-copy only engages for fixed-size messages, so it does nothing for `PointCloud2` or `Image`.
 Treat it as an optimisation to measure, not a default.
 
-## 6. End-to-end check
+## 6. Leaderboard checkouts (M1 onward)
+
+```bash
+tools/eval/setup_leaderboard.sh        # clones external/leaderboard and external/scenario_runner at the pinned commits
+uv sync --group leaderboard            # their Python dependencies, locked with everything else
+```
+
+The commits are pinned in the script and listed in `03_style_and_conventions.md` §6.4. `external/` is gitignored. Nothing in the stack imports from these checkouts except `leaderboard_agent.py`, which is only ever run by the Leaderboard evaluator itself.
+
+## 7. End-to-end check
 
 > Blocked on M0 task 5: `tools/carla/check_native_ros2.py` does not exist yet. The `ros2 topic
 > list` output below is a real capture and is valid to check against today, by spawning a rig
@@ -228,7 +239,8 @@ python3 tools/carla/check_native_ros2.py
 ```
 
 This is M0 task 5. It spawns a hero and rig, and asserts the properties recorded in
-`02_interfaces.md` §3.1. What a correct run looks like:
+`02_interfaces.md` §3.1 (topic names, one message per tick, the broken `camera_info`, and that
+each message's `frame_id` equals the sensor's `ros_name`). What a correct run looks like:
 
 ```bash
 ros2 topic list

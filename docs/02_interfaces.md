@@ -44,7 +44,10 @@ Rows index x (forward), columns index y (left). Default: `resolution = 0.5`, `x_
 - `use_sim_time: true` on every node. `/clock` is published by `world_manager` after each `world.tick()`. **`world_manager` owns `/clock`.** CARLA's native ROS 2 interface publishes its own `/clock` with identical stamps (§3.1); `world_manager` disables it if the API allows, and otherwise the duplicate is benign (same values from the same snapshot) — the authoritative clock is `world_manager`'s, and under the Leaderboard it is `leaderboard_agent`'s (M1 §3.12).
 - `fixed_delta_seconds = 0.05`. Sensor stamps come from CARLA's snapshot timestamp.
 - **Rates are multiples of the tick.** 1 tick = 0.05 s. "20 Hz" means one callback per tick, "10 Hz" one per two ticks. CARLA sensors in synchronous mode deliver at most one sample per tick regardless of `sensor_tick`, so the IMU and GNSS are 20 Hz. No node claims or relies on a rate above 20 Hz; estimators that "propagate between updates" propagate to the next tick, not to a faster clock.
-- **Lockstep protocol.** `world_manager` ticks, publishes `/clock` and the GT topics, and then blocks until it has received `/nuway/control/command` whose `header.stamp` equals the tick it just published (the controller runs every tick and always stamps the tick it consumed). Only then does it call `world.tick()` again. If no matching command arrives within `lockstep_timeout_s` (default 2 s of wall clock), it raises `NodeDiag` status 2 (`error`) with the missing stamp and ticks anyway — CARLA simply holds the last applied control (`control_adapter` has no repeat-last logic, `M0_bringup.md` §2.3); the evaluation harness marks such a route `non_deterministic` in `results.csv`. Nodes that run every 2nd tick (planner, perception, prediction) are triggered by their inputs, not by timers, so they also run exactly once per two ticks. `realtime_factor` inserts a wall-clock sleep *before* the tick and therefore never changes results.
+- **Tick index and phase.** Every stamp in the stack is a multiple of 0.05 s; the *tick index* is `k = round(stamp / 0.05)`. **10 Hz nodes act on even `k` only** (perception, traffic lights, prediction, FSM, planner, smoother, `map→odom`); odd ticks are *control-only* ticks. The rule is the same in every profile and under the Leaderboard runner, so a GT twin and its learned replacement always run in the same phase. `nuway_common/tick.hpp` / `nuway_ml/common/tick.py` provide `TickIndex(stamp)` / `IsPlanningTick(k)`; no node derives phase from its own call count.
+- **Lockstep protocol.** `world_manager` ticks, publishes `/clock` and the GT topics, and then blocks until it has received `/nuway/control/command` whose `header.stamp` equals the tick it just published (the controller runs every tick and always stamps the tick it consumed). Only then does it call `world.tick()` again. If no matching command arrives within `lockstep_timeout_s` (default 2 s of wall clock; `lockstep_startup_timeout_s`, default 120 s, applies to the first tick of a stack's life so that model compilation and warm-up do not count), it raises `NodeDiag` status 2 (`error`) with the missing stamp and ticks anyway — CARLA simply holds the last applied control (`control_adapter` has no repeat-last logic, `M0_bringup.md` §2.3); the evaluation harness marks such a route `non_deterministic` in `results.csv`. `realtime_factor` inserts a wall-clock sleep *before* the tick and therefore never changes results.
+- **Current-tick barrier (intra-tick ordering).** The gate above only orders *ticks*; inside a tick, DDS delivery order is a scheduling race. Therefore every node with more than one per-tick input **waits until all of its inputs stamped with the current tick have arrived** before it runs, and runs exactly once per tick it acts on. No node consumes "the latest" message of an input: it consumes the message stamped `k` (on planning ticks) or the message stamped with the most recent planning tick (on control-only ticks, for planning outputs). The resulting order on a planning tick is `pose → perception → traffic lights → prediction → FSM → planner → safety layer → controller`; on a control-only tick it is `pose → safety layer → controller`, both reading the safe/planned trajectories stamped `k−1`. A node whose input stamped `k` never arrives waits; the lockstep timeout catches the deadlock and flags the route. Inputs that are *not* per-tick (lane graph, route, reference line, `/tf_static`) are read latest-value. Exception (`M3_bev_perception.md` §4.2): `perception_node` waits for the LiDAR of tick `k` and the four images of tick `k`, but a camera frame that has not arrived by the time the LiDAR has is treated as *dropped* and masked, because CARLA's best-effort camera topics lose about 1 % of frames (§3.1). This is the one input that is allowed to be missing on a tick, and it is why learned profiles are only statistically reproducible (`00_overview.md` §2.5).
+- **Sim time is monotonic within a stack lifetime.** `world_manager` never reloads a town after start-up: `/nuway/sim/reset` respawns in the current town, so CARLA's `elapsed_seconds` — and therefore every stamp — keeps increasing across episodes. The evaluation harness launches one stack per town (`M1_classical_planning.md` §3.10). Nodes may therefore assume that a message stamped earlier than the last `ResetEvent` belongs to a previous episode.
 - Message `header.stamp` is the time of the *observation* the message is about, not publish time.
 - Planning outputs carry `header.stamp` = the ego state time they were planned from; trajectory points carry `t` relative to that stamp.
 
@@ -70,7 +73,9 @@ Topic names come from the sensor blueprint's **`ros_name`** attribute (and the h
 
 Note the **`/point_cloud` and `/image` suffixes**: the sensor's `ros_name` is a namespace, not the topic leaf. Only IMU and GNSS publish directly at the sensor name.
 
-**Rates are exactly one message per tick.** Measured over 1179 ticks in synchronous mode with `fixed_delta_seconds = 0.05` and `rotation_frequency = 20`: LiDAR, IMU, GNSS, `camera_info` and `/clock` all landed at 1.00 msg/tick with stamp deltas of exactly 0.0500 s — so **one full LiDAR sweep per tick, no partial sweeps, no accumulation needed**. `image` came in at 0.99/tick with an occasional 0.1000 s gap: under `best_effort` sensor QoS the camera drops a frame now and then. Nodes must key off the stamp, never assume an unbroken image sequence.
+**Rates are exactly one message per tick.** Measured over 1179 ticks in synchronous mode with `fixed_delta_seconds = 0.05` and `rotation_frequency = 20`: LiDAR, IMU, GNSS, `camera_info` and `/clock` all landed at 1.00 msg/tick with stamp deltas of exactly 0.0500 s — so **one full LiDAR sweep per tick, no partial sweeps, no accumulation needed**. `image` came in at 0.99/tick with an occasional 0.1000 s gap: under `best_effort` sensor QoS the camera drops a frame now and then. Nodes must key off the stamp, never assume an unbroken image sequence; `perception_node` masks a missing camera for that tick (§2 barrier exception, `M3_bev_perception.md` §4.2), and the drop rate is reported in every learned-profile eval report.
+
+**Frame ids.** The native messages must carry `header.frame_id` equal to the sensor's `ros_name` (`lidar_top`, `cam_front`, …) so that they resolve against the `/tf_static` we publish (below). `check_native_ros2.py` (M0 task 5) asserts this; if CARLA stamps a different id, `world_manager` sets `ros_frame_id` on the blueprint (verified to exist on the ROS-enabled sensor blueprints) rather than any node rewriting headers.
 
 **Broken `camera_info`.** CARLA publishes `camera_info` every tick, and `width`/`height`/`cx`/`cy`/`distortion_model` are correct, but the focal length is garbage: an 800×450 camera at FOV 90 (fx should be `400 / tan(45°) = 400.0`) reports **`fx = fy = -22973.444`** — negative and three orders of magnitude off. `D` is all zeros, which is right for a pinhole. Therefore `sensor_rig.py` **must publish its own `CameraInfo`** computed from the rig JSON's size and FOV, on `/nuway/sensors/<cam>/camera_info`, and no node may subscribe to CARLA's. Re-check on any CARLA upgrade.
 
@@ -101,9 +106,9 @@ Semantic LiDAR and depth cameras are **never** subscribed by a learned node. In 
 | Topic | Type | Producer | Notes |
 |-------|------|----------|-------|
 | `/nuway/map/lane_graph` | `nuway_msgs/LaneGraph` | map_server | transient_local (latched) |
-| `/nuway/route/plan` | `nuway_msgs/Route` | route_planner | transient_local; republished on reroute |
-| `/nuway/route/reference_line` | `nuway_msgs/ReferenceLine` | route_planner | 0.5 m spacing, curvature, speed limit, 1 Hz + on change |
-| `/nuway/route/goal` (sub) | `geometry_msgs/PoseStamped` | eval harness / user | |
+| `/nuway/route/plan` | `nuway_msgs/Route` | route_planner | transient_local; republished only on reroute |
+| `/nuway/route/reference_line` | `nuway_msgs/ReferenceLine` | route_planner | 0.5 m spacing, curvature, speed limit; republished only on reroute (a reroute is the only thing that changes it, and a new line disturbs the planner's warm starts and consistency cost) |
+| `/nuway/route/waypoints` (sub) | `nav_msgs/Path` | eval harness (`route_runner.py`) / `leaderboard_agent` / user | map frame; the whole route as an ordered waypoint list, published once per episode. `route_planner_node` plans A* through *all* waypoints in sequence at once, so there is no per-goal replanning. The loader from the Leaderboard route XML / `global_plan` to this message is `nuway_ml/common/routes.py`, shared by both publishers. |
 
 ### 3.4 Localization
 | Topic | Type | Producer |
@@ -124,7 +129,8 @@ Semantic LiDAR and depth cameras are **never** subscribed by a learned node. In 
 ### 3.6 Prediction
 | Topic | Type | Producer |
 |-------|------|----------|
-| `/nuway/prediction/samples` | `nuway_msgs/PredictionSamples` | const_vel_node **or** prediction_node **or** gt_prediction_node (log replay only, M6) |
+| `/nuway/prediction/samples` | `nuway_msgs/PredictionSamples` | const_vel_node **or** prediction_node **or** gt_prediction_node (log replay only, M6) — the *primary* producer, selected by `use_gt.prediction` and `prediction.source` (§6) |
+| `/nuway/prediction/fallback_samples` | `nuway_msgs/PredictionSamples` | const_vel_node, **in every profile** (M8). Constant-velocity + lane-follow futures computed from the same `AgentArray`. `behavior_fsm_node`, `planner_node` and `safety_layer_node` read `samples`; if no `samples` message for the current planning tick arrives within `prediction.fallback_after_s` (0.3 s wall clock, i.e. the learned node is dead or hung) they consume `fallback_samples` for that tick instead and raise a `NodeDiag` warn. When `prediction.source: const_vel`, `const_vel_node` publishes both topics with identical content. |
 
 ### 3.7 Planning
 | Topic | Type | Producer |
@@ -134,6 +140,7 @@ Semantic LiDAR and depth cameras are **never** subscribed by a learned node. In 
 | `/nuway/planning/trajectory` | `nuway_msgs/Trajectory` | planner_node **or** gt_planning_node (selected, refined) |
 | `/nuway/planning/safe_trajectory` | `nuway_msgs/Trajectory` | safety_layer_node (what control actually follows) |
 | `/nuway/planning/learned_candidates` | `nuway_msgs/TrajectoryCandidates` | prediction_node (M8: the ego planning head lives in the prediction process) |
+| `/nuway/expert/planning/{behavior,candidates,trajectory}` | as above | `gt_planning_node` when launched in **shadow mode** (`planning.shadow_expert: true`, M8 DAgger): the expert runs alongside the live planner, remapped by the launch file to this namespace, and drives nothing. Same message types as the `/nuway/planning/*` topics they mirror; recorded by `nuway_eval` like every `/nuway/**` topic. |
 
 ### 3.8 Control
 | Topic | Type | Producer |
@@ -145,7 +152,8 @@ Semantic LiDAR and depth cameras are **never** subscribed by a learned node. In 
 | Topic | Type | Producer |
 |-------|------|----------|
 | `/nuway/diag/<node_name>` | `nuway_msgs/NodeDiag` | every node |
-| `/nuway/viz/<layer>` | `visualization_msgs/MarkerArray` | `nuway_viz/marker_node` only; layers: `lanes`, `reference_line`, `agents`, `predictions`, `candidates`, `trajectory`, `mpc_horizon`, `sim_rollout`, `tl_crops` |
+| `/nuway/viz/<layer>` | `visualization_msgs/MarkerArray` | `nuway_viz/marker_node` only; layers: `lanes`, `reference_line`, `agents`, `predictions`, `candidates`, `trajectory`, `safe_trajectory`, `mpc_horizon`, `sim_rollout`, `tl_crops` |
+| `/nuway/viz/occupancy` | `sensor_msgs/Image` | `nuway_viz/marker_node`; the one layer that is a raster, not markers: the `OccupancyGridMC` colorized (`occupied` red, `free` white, `unknown` grey, `drivable` tint, `dynamic` blue). Same layer vocabulary as the headless renderer (§8.1) |
 | `/nuway/viz/chase_cam` | `sensor_msgs/CompressedImage` | `nuway_carla_bridge/sensor_rig` only when `eval.chase_cam: true` (M1); a third-person view of the hero, never subscribed by any node in the stack (§8.3) |
 
 ### 3.10 Services (`nuway_msgs/srv`)
@@ -159,14 +167,14 @@ Under the Leaderboard runner (M1) the first two services are served by `leaderbo
 
 ### 3.11 QoS profiles
 
-Every publisher and subscription names one of these (`nuway_common/qos.hpp`, `nuway_ml/common/frames.py::QOS`); no implicit defaults. `frames.py::QOS` is plain data (profile name → reliability/durability/depth) so importing it pulls in no `rclpy`; the rclpy `QoSProfile` objects are constructed from it inside the node packages, which keeps `nuway_ml` importable in ROS-free environments (the collectors, `render_bag.py`).
+Every publisher and subscription names one of these (`nuway_common/qos.hpp`, `nuway_ml/common/qos.py::QOS`); no implicit defaults. `qos.py::QOS` is plain data (profile name → reliability/durability/depth) so importing it pulls in no `rclpy`; the rclpy `QoSProfile` objects are constructed from it inside the node packages, which keeps `nuway_ml` importable in ROS-free environments (the collectors, `render_bag.py`).
 
 | Profile | Reliability | Durability | History | Used for |
 |---------|-------------|------------|---------|----------|
 | `sensor` | best_effort | volatile | keep_last 1 | CARLA-native sensor topics (subscriptions must match CARLA's publisher) |
 | `stream` | reliable | volatile | keep_last 2 | every per-tick or per-2-tick `/nuway/**` data topic (`loc`, `perception`, `prediction`, `planning`, `control`, `gt`) |
 | `latched` | reliable | transient_local | keep_last 1 | `/nuway/map/lane_graph`, `/nuway/route/plan`, `/nuway/route/reference_line`, `/nuway/sensors/*/camera_info`, `/tf_static` |
-| `event` | reliable | transient_local | keep_last 10 | `/nuway/sim/reset_event`, `/nuway/route/goal` |
+| `event` | reliable | transient_local | keep_last 10 | `/nuway/sim/reset_event`, `/nuway/route/waypoints` |
 | `diag` | best_effort | volatile | keep_last 1 | `/nuway/diag/**`, `/nuway/viz/**`, `/nuway/perception/tl_debug` |
 
 `/clock` uses the ROS default clock QoS (best_effort, keep_last 1).
@@ -233,7 +241,9 @@ float32 height
 float32 vx                        # frame-aligned velocity (same frame as pose)
 float32 vy
 float32 yaw_rate
-bool visible                      # GT only: passed visibility filter
+bool visible                      # GT producers: passed the visibility filter (M2). Learned perception (M3):
+                                  # always true — a detected agent is by definition visible. Never false on a
+                                  # learned output, so the M7 token feature has one meaning in training and serving.
 uint8 history_len                 # number of valid entries in history
 float32[60] history               # [20][3] (x, y, yaw) at 0.1 s spacing, history[0] = 0.1 s ago, frame = AgentArray frame.
                                   # Flat float32 array rather than geometry_msgs/Pose2D (deprecated since Foxy).
@@ -438,10 +448,9 @@ string message
 
 Services (`nuway_msgs/srv`):
 ```
-# Reset.srv
+# Reset.srv                        (never changes the town: sim time stays monotonic, §2; one stack per town)
 geometry_msgs/Pose start_pose     # map frame; ignored if spawn_index >= 0
 int32 spawn_index                 # -1 = use start_pose
-string town                       # empty = keep current
 bool clear_traffic
 int64 traffic_seed                # -1 = keep the profile's carla.traffic.seed; the harness sets it per route (M1 §3.9)
 ---
@@ -480,7 +489,10 @@ carla:
   sync: true
   quality: Epic                        # -quality-level=Low segfaults load_world (00_overview.md §4); never Low
   render_offscreen: true
+  no_rendering: false                  # M8; world.settings.no_rendering_mode for render-free GT-only runs (cheap DAgger);
+                                       #   requires a rig without RGB/LiDAR sensors (configs/sensors/rig_none.json)
   lockstep_timeout_s: 2.0              # §2; wall-clock wait for the tick's ControlCommand
+  lockstep_startup_timeout_s: 120.0    # §2; the same wait for the first tick only (model compile / warm-up)
   realtime_factor: 0.0                 # 0 = as fast as lockstep allows; 1 = wall-clock pace
   traffic:                             # M1
     n_vehicles: 50
@@ -503,7 +515,8 @@ gt_perception:
 perception:
   tl_in_bev_process: true              # M4; traffic_light_node hosted by perception_node
 prediction:
-  source: const_vel                    # M7; const_vel | learned — selects the non-GT PredictionSamples producer (§6)
+  source: const_vel                    # M7; const_vel | learned — selects the non-GT primary PredictionSamples producer (§6)
+  fallback_after_s: 0.3                # M8; consumers switch to /nuway/prediction/fallback_samples after this (§3.6)
   guidance:
     enabled: false                     # M10
 planning:
@@ -512,6 +525,7 @@ planning:
   lattice_refiner: qp                  # fixed
   selector: rule                       # rule | forward_sim (M9)
   expert_extensions: false             # M6; scenario heuristics, on for the expert, optional for the fallback
+  shadow_expert: false                 # M8; also launch gt_planning_node remapped to /nuway/expert/planning/* (§3.7)
   forward_sim:                         # M9
     agent_mode: sample                 # sample | reactive | mix
 control:
@@ -537,7 +551,7 @@ There are five toggles: `use_gt.localization`, `use_gt.perception`, `use_gt.traf
 | `localization` | `gt_pose_node` | `lidar_odometry_node` + `scan_to_map_node` + `smoother_node` + `pose_extrapolator_node` | `/nuway/loc/*`, TF |
 | `perception` | `gt_perception_node` | `perception_node` | `/nuway/perception/agents`, `/nuway/perception/occupancy` |
 | `traffic_lights` | `gt_traffic_light_node` | `traffic_light_node` | `/nuway/perception/traffic_lights` |
-| `prediction` | `gt_prediction_node` (log replay only) | `const_vel_node` or `prediction_node` (by `prediction.source`, §5) | `/nuway/prediction/samples` |
+| `prediction` | `gt_prediction_node` (log replay only) | `const_vel_node` or `prediction_node` (by `prediction.source`, §5); `const_vel_node` additionally runs in every profile as the `fallback_samples` producer (§3.6) | `/nuway/prediction/samples` |
 | `planning` | `gt_planning_node` | `behavior_fsm_node` + `planner_node` | `/nuway/planning/behavior`, `candidates`, `trajectory` |
 
 Consumers never know which producer is running. GT producers must populate every field including `score = 1.0`, `confidence = 1.0` and realistic `history`. Perception and traffic lights are separate toggles served by separate nodes precisely so that any combination is a plain launch choice.
@@ -545,7 +559,7 @@ Consumers never know which producer is running. GT producers must populate every
 ## 7. Diagnostics, logging, reset
 
 - Every node wraps its callback in `nuway_common::ScopedTimer` and publishes `NodeDiag` every cycle.
-- **Reset convention.** Every node that keeps state across cycles subscribes to `/nuway/sim/reset_event` (QoS `event`) and, on receipt, drops that state before processing any message stamped at or after `ResetEvent.header.stamp`: tracker tracks and histories, temporal BEV queue and EMA memory, traffic-light latches and vote buffers, smoother graph and initialization, QP/iLQR warm starts, FSM timers and latched yellow decisions, selector consistency memory, MPC warm start, `gt_publisher` history ring buffers. A node that has no cross-cycle state documents that in its header comment. `world_manager` publishes the event before the first tick of the new episode, so the ordering is unambiguous. Nodes ignore data from a previous `episode_id`.
+- **Reset convention.** Every node that keeps state across cycles subscribes to `/nuway/sim/reset_event` (QoS `event`) and, on receipt, drops that state before processing any message stamped at or after `ResetEvent.header.stamp`: tracker tracks and histories, temporal BEV queue and EMA memory, traffic-light latches and vote buffers, smoother graph and initialization, QP/iLQR warm starts, FSM timers and latched yellow decisions, selector consistency memory, MPC warm start, `gt_publisher` history ring buffers. A node that has no cross-cycle state documents that in its header comment. `world_manager` publishes the event before the first tick of the new episode, so the ordering is unambiguous, and because sim time is monotonic across episodes (§2) "belongs to a previous episode" is simply `stamp < ResetEvent.header.stamp`; nodes drop such messages.
 - `nuway_eval` records all `/nuway/**` topics plus `/carla/hero/vehicle_control_cmd` to an MCAP bag per route when `eval.record: true`. Sensor topics recorded only if `eval.record_sensors: true`.
 - Foxglove layouts in `ros2_ws/src/nuway_viz/foxglove/` show: BEV panel (agents, occupancy, candidates, selected trajectory, prediction samples), map panel, control panel, diag table. The same layers must also be renderable headlessly to image files; that contract is §8.
 
@@ -579,7 +593,7 @@ data/eval_runs/<run_id>/
     └── chase/{tick:06d}.jpg             # eval.chase_cam: true only
 ```
 
-One frame is the standard panel: a BEV of the ego neighborhood (`lanes`, `reference_line`, `agents`, `predictions`, `candidates`, `trajectory`, `mpc_horizon`, `sim_rollout`) plus a header line — tick, sim time, `episode_id`, behavior state, speed and commanded acceleration/steer, any infraction firing on that tick — and a one-line diag strip with the per-node cycle times of that tick. Everything an infraction post-mortem needs is in the image; no cross-referencing another file.
+One frame is the standard panel: a BEV of the ego neighborhood — the `occupancy` raster underneath, then `lanes`, `reference_line`, `agents`, `predictions`, `candidates`, `trajectory`, `safe_trajectory` (only where it differs), `mpc_horizon`, `sim_rollout` — plus a `tl_crops` strip when any light is in range, plus a header line — tick, sim time, `episode_id`, behavior state, speed and commanded acceleration/steer, any infraction firing on that tick — and a one-line diag strip with the per-node cycle times of that tick. Everything an infraction post-mortem needs is in the image; no cross-referencing another file.
 
 A route at 20 Hz is 6k–12k ticks, so `eval.render: full` (stride 10 → 2 Hz) is opt-in and `incidents` is the default. **Contact sheets** are always written: 20 frames tiled into one PNG, so a whole route is 30–60 images to skim rather than a thousand, and one `open` shows a minute of driving at a glance.
 

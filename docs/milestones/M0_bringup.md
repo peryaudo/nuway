@@ -25,8 +25,8 @@ Out: any planning beyond "follow the reference line at the speed limit", any tra
 Responsibilities:
 1. Connect to CARLA, load the town from config (`world = client.load_world(town)` only if different from current).
 2. Set synchronous mode + `fixed_delta_seconds`. Set Traffic Manager to synchronous mode too (`tm.set_synchronous_mode(True)`), even with no traffic, so later milestones don't change behavior.
-3. Spawn the hero vehicle (`vehicle.lincoln.mkz_2020`, `role_name=hero`) at the route start pose (received via `/nuway/route/goal` handshake or a launch parameter `spawn_index`).
-4. Spawn sensors from `configs/sensors/rig_dev.json` with `ros_name` attributes set and `sensor.enable_for_ros()` called, so the native ROS 2 interface publishes them. **`ros_name` is mandatory, and it is not `role_name`** — without it CARLA names topics by actor id (`/carla/actor109/actor110/point_cloud`). Also set `ros_publish_tf=false` on every sensor: CARLA otherwise re-publishes the extrinsics on `/tf` every tick, parented to `hero` rather than `base_link`. Publish `/tf_static` for each sensor from the JSON extrinsics (ROS convention). Note `enable_for_ros()` exists on sensors only, not on `Vehicle`.
+3. Spawn the hero vehicle (`vehicle.lincoln.mkz_2020`, `role_name=hero`) at the route start pose (the first pose of `/nuway/route/waypoints`, or a launch parameter `spawn_index`).
+4. Spawn sensors from `configs/sensors/rig_dev.json` with `ros_name` attributes set and `sensor.enable_for_ros()` called, so the native ROS 2 interface publishes them. **`ros_name` is mandatory, and it is not `role_name`** — without it CARLA names topics by actor id (`/carla/actor109/actor110/point_cloud`). Also set `ros_publish_tf=false` on every sensor: CARLA otherwise re-publishes the extrinsics on `/tf` every tick, parented to `hero` rather than `base_link`. Publish `/tf_static` for each sensor from the JSON extrinsics (ROS convention) and `/nuway/sensors/<cam>/camera_info` from size + FOV; both come from `nuway_ml.common.rig`, the one parser of the rig JSON (`01_directory_structure.md`), so `sensor_rig.py` itself holds no geometry. Note `enable_for_ros()` exists on sensors only, not on `Vehicle`. With `carla.no_rendering: true` (M8) the profile's rig is `rig_none.json` and `world.settings.no_rendering_mode` is set before `load_world`.
 5. Own the tick loop in **lockstep** (`02_interfaces.md` §2): `world.tick()`, publish `/clock` from `snapshot.timestamp.elapsed_seconds` (`world_manager` owns `/clock`; CARLA's native interface publishes an identical-stamp duplicate — disable it if the API allows, otherwise it is benign, `02_interfaces.md` §2), run `gt_publisher`, then block until `/nuway/control/command` with `header.stamp == this tick` arrives (or `lockstep_timeout_s` elapses, which is logged as a diag error and, in eval, marks the route non-deterministic). Only then sleep for `realtime_factor` pacing and tick again. `realtime_factor = 0` means no sleep. The subscription to the command is for the gate only; `control_adapter` does the conversion.
 6. Expose services `/nuway/sim/reset` and `/nuway/sim/set_weather` (`02_interfaces.md` §3.10). `reset` respawns the hero, clears traffic, publishes `/nuway/sim/reset_event`, then performs one tick.
 7. On shutdown, destroy all spawned actors.
@@ -67,7 +67,7 @@ Subscribed to nothing; runs after each tick (called by `world_manager` in the sa
 
 Publishes:
 - `/nuway/gt/ego_odom`: hero transform → ROS, rear-axle correction, velocity from `actor.get_velocity()` rotated into body frame.
-- `/nuway/sim/vehicle_state`: `get_control()` and `get_physics_control()` derived speed/steer. Steering angle = `control.steer * max_steer_angle` where `max_steer_angle` is read from `physics_control.wheels[0].max_steer_angle` (degrees → rad).
+- `/nuway/sim/vehicle_state`: `speed` from `get_velocity()`, throttle/brake/gear from `get_control()`, and `steering_angle` = the mean of `vehicle.get_wheel_steer_angle(FL_Wheel)` and `(FR_Wheel)` (degrees → rad) — the *actual* wheel angle after actuator lag, not the command, so `valid_steering: true` in our harness. `max_steer_angle` (from `physics_control.wheels[0].max_steer_angle`) is what `control_adapter` divides by.
 - `/nuway/gt/agents`: every `vehicle.*`, `walker.*`, and `static.prop.*` actor within 100 m. Fields per `Agent.msg`. `visible` is set by the visibility filter (M2; in M0 always `true`). `history` is maintained by a per-actor ring buffer inside the publisher (0.1 s spacing → sample every 2 ticks); the buffer is cleared on `/nuway/sim/reset`.
 - `/nuway/gt/traffic_lights`: all `traffic.traffic_light` actors with state, `time_in_state = tl.get_elapsed_time()`, `yellow_duration = tl.get_yellow_time()`, `confidence = 1.0`, stop line from `tl.get_stop_waypoints()`, and `affected_lane_ids` from `tl.get_affected_lane_waypoints()`. The publisher subscribes to the latched `/nuway/map/lane_graph` and resolves `(road_id, lane_id_odr, s)` to our lane ids itself; `TrafficLight.id` is the `TrafficLightMapping.id` whose stop line is nearest (< 2 m), else a diag warning and the actor id with the high bit set.
 
@@ -75,20 +75,20 @@ Class mapping: `vehicle.*` with `number_of_wheels==2` → bicycle/motorcycle by 
 
 ### 2.3 `nuway_carla_bridge/control_adapter.py` (rclpy)
 
-Subscribes `/nuway/control/command`, publishes `/carla/hero/vehicle_control_cmd`. Uses `nuway_control::LongitudinalMap` logic (pure-Python copy in `nuway_ml/common/longitudinal_map.py` with a parity test) to convert `accel` → throttle/brake using the sysid table, and `steering_angle / max_steer_angle` → `steer`. `emergency_stop` → brake=1, throttle=0. Converts every received command immediately; the lockstep gate in `world_manager` guarantees exactly one command per tick, so there is no repeat-last logic. A watchdog remains for the non-lockstep Leaderboard case (M1): if command age > 0.5 s, brake.
+Subscribes `/nuway/control/command`, publishes `/carla/hero/vehicle_control_cmd`. Uses `nuway_control::LongitudinalMap` logic (pure-Python copy in `nuway_ml/common/longitudinal_map.py`, parity-tested through `nuway_py`) to convert `accel` → throttle/brake using the sysid table, and `steering_angle / max_steer_angle` → `steer`. `emergency_stop` → brake=1, throttle=0. Converts every received command immediately; the lockstep gate in `world_manager` guarantees exactly one command per tick, so there is no repeat-last logic and no watchdog. Under the Leaderboard (M1 §3.12) this node does not run: `leaderboard_agent` performs the identical conversion itself through the same Python `LongitudinalMap`, and its own per-tick watchdog is the only place a command can be synthesized.
 
-Rationale for separate adapter node: keeps the CARLA-specific control message out of `nuway_control`, and matches the Leaderboard ROS interface which wants `CarlaEgoVehicleControl`.
+Rationale for separate adapter node: keeps the CARLA-specific control message out of `nuway_control`, and keeps the conversion in one Python function that the Leaderboard agent can share.
 
 ### 2.4 `nuway_map` (C++)
 
-**`OpenDriveParser`**: input OpenDRIVE XML string (from `world.get_map().to_opendrive()`, saved by `world_manager` to `data/maps/<town>.xodr` once and loaded by the map server thereafter). Parse:
+**`OpenDriveParser`**: input OpenDRIVE XML string (from `world.get_map().to_opendrive()`, saved by `world_manager` to `data/maps/<town>/map.xodr` once and loaded by the map server thereafter). Parse:
 - `road` → `planView` geometries (line, arc, spiral, poly3, paramPoly3) → sample the reference line at 0.5 m.
 - `lanes/laneSection/left|right/lane` with `width` records (cubic polynomials in `s`) → lane centerlines by offsetting the road reference line by cumulative widths.
 - `link` predecessor/successor for roads and lanes; `junction` connections.
 - `objects`/`signals` for stop lines and traffic light signals (CARLA encodes traffic lights as signals with `type="1000001"`; stop signs `type="206"`).
 - Lane `type`; only `driving`, `bidirectional`, `parking`, `shoulder` kept.
 
-Use `pugixml`. Implement spiral via Fresnel integral series (or copy the odrSpiral algorithm). Test against CARLA's own waypoint API: sample `world.get_map().generate_waypoints(2.0)` for Town03 into a fixture JSON; parser centerlines must be within 0.15 m of the nearest CARLA waypoint of the same `(road_id, lane_id)`.
+Use `pugixml` (`libpugixml-dev` via rosdep, `03_style_and_conventions.md` §6.4). Implement spiral via Fresnel integral series (or copy the odrSpiral algorithm). Test against CARLA's own waypoint API: sample `world.get_map().generate_waypoints(2.0)` for Town03 into a fixture JSON; parser centerlines must be within 0.15 m of the nearest CARLA waypoint of the same `(road_id, lane_id)`.
 
 **`LaneGraph`**: assigns a `uint32` id per `(road_id, section_idx, lane_id_odr)`, computes successors/predecessors (through junction connections), left/right neighbors (adjacent lane ids with same direction), change-allowed flags from `roadMark` type (`broken`/`solid`), and speed limit from `<speed>` records (fallback: config default 8.33 m/s). Also fills `TrafficLightMapping`, `StopSign` and `Crosswalk` from the `signals`/`objects` records (`02_interfaces.md` §4). Provides (Google-style names, `03_style_and_conventions.md` §2.1):
 - `NearestLane(x, y, yaw, max_dist)` → `std::optional<LaneQuery>` (lane id + `s` + lateral offset; KD-tree over centerline samples, heading-consistency check).
@@ -99,13 +99,13 @@ Use `pugixml`. Implement spiral via Fresnel integral series (or copy the odrSpir
 
 ### 2.5 `nuway_route` (C++)
 
-**`RoutePlanner`**: A* over lane graph. Node = lane id; edge cost = lane length (+ `lane_change_penalty` = 20 m equivalent for lateral neighbor edges). Start = `NearestLane(ego)`, goal = `NearestLane(goal_pose)`. Output ordered lane ids.
+**`RoutePlanner`**: A* over lane graph. Node = lane id; edge cost = lane length (+ `lane_change_penalty` = 20 m equivalent for lateral neighbor edges). Input is the whole `/nuway/route/waypoints` list: A* from `NearestLane(ego)` through `NearestLane(w_i)` for every waypoint in order, concatenated into one ordered lane-id list, planned **once** per episode. Output ordered lane ids; `Route.goal` is the last waypoint.
 
 **`ReferenceLineBuilder`**: concatenates lane centerlines along the route; at lane-change edges, blends laterally over `blend_length` (30 m) with a quintic; resamples at 0.5 m; computes heading (finite difference) and curvature (Menger / three-point); smooths curvature with a 5-point moving average; fills `left_bound/right_bound` from lane widths and neighbor lanes (drivable extent, not lane extent); fills `speed_limit`. Extends 50 m beyond the goal by continuing the last lane (so planners don't run out of line).
 
-**`route_planner_node`**: subscribes lane graph, `/nuway/loc/pose`, `/nuway/route/goal`. Publishes route and reference line. Reroute when ego is > 5 m laterally or > 30° heading-off from the reference line for 2 s (rare in M0; needed later).
+**`route_planner_node`**: subscribes lane graph, `/nuway/loc/pose`, `/nuway/route/waypoints`. Publishes route and reference line once per episode, and again only on reroute: when ego is > 5 m laterally or > 30° heading-off from the reference line for 2 s (rare in M0; needed later), it replans from the current lane through the remaining waypoints. The reference line is the whole route, so downstream warm starts and the consistency cost are never disturbed by a goal hand-over.
 
-Also implements the Leaderboard route format loader (`nuway_eval/routes/*.xml`: list of waypoints in map frame) → converts to a sequence of goals, publishing the next goal when within 20 m of the current one.
+The Leaderboard route XML (`nuway_eval/routes/*.xml`: waypoints in map frame) and the Leaderboard's `global_plan` are loaded by `nuway_ml/common/routes.py` (Python; its two callers, `run_routes.py` and `leaderboard_agent.py`, are Python), which produces the `nav_msgs/Path` payload of `/nuway/route/waypoints`. The C++ route package never reads XML.
 
 ### 2.6 System identification (`tools/sysid/`)
 
@@ -160,7 +160,7 @@ Both are Python, against the C++-runtime default, per `00_overview.md` §2.6: th
 
 Lockstep makes the runtime cost bounded: `world_manager` blocks until the tick's `ControlCommand` arrives, so a slower node lengthens wall clock and never changes results (`00_overview.md` §2.5).
 
-`gt_perception_node.py`: republishes `/nuway/gt/agents` transformed into `base_link` as `/nuway/perception/agents`. Occupancy grid: M0 publishes a grid with only `drivable` filled from the lane graph (rasterize lane polygons) and `free = drivable`, others zero. Full GT occupancy comes in M2, from `generate_gt_occupancy` directly.
+`gt_perception_node.py`: republishes `/nuway/gt/agents` transformed into `base_link` as `/nuway/perception/agents`, on even ticks only (`02_interfaces.md` §2). Occupancy grid: M0 publishes a grid with `drivable` filled from the lane graph (rasterize lane polygons), `free = drivable`, `unknown = 1 − drivable` (the channel invariant `unknown = 1 − occupied − free` holds), `occupied`, `height_max` and `dynamic` zero. Full GT occupancy comes in M2, from `generate_gt_occupancy` directly.
 
 `gt_traffic_light_node.py`: republishes `/nuway/gt/traffic_lights` as `/nuway/perception/traffic_lights` unchanged. It is a separate node so that `use_gt.perception` and `use_gt.traffic_lights` are independent launch choices (`02_interfaces.md` §6).
 
@@ -173,20 +173,20 @@ Pass `--ros-args --params-file` merged from package defaults + profile. Set `use
 
 ### 2.11 Minimal route runner (`tools/eval/run_routes.py`, v0)
 
-Loads a route XML, calls `/nuway/sim/reset` at the start pose, publishes goals, waits for completion (ego within 5 m of final goal) or timeout, records lateral error stats from `/nuway/control/debug`, prints a table. M1 replaces the metrics part with the real harness; keep the CLI.
+Loads a route XML through `nuway_ml/common/routes.py`, calls `/nuway/sim/reset` at the start pose, publishes the whole route once on `/nuway/route/waypoints`, waits for completion (ego within 5 m of the last waypoint) or timeout, records lateral error stats from `/nuway/control/debug`, prints a table. One stack launch per town; routes of the same town are separated by `/nuway/sim/reset` only (sim time stays monotonic, `02_interfaces.md` §2). M1 replaces the metrics part with the real harness; keep the CLI.
 
 ## 3. Task list
 
 1. [ ] Toolchain and style tooling, exactly as specified in `03_style_and_conventions.md` §6–§7: `setup_env.sh`, root `pyproject.toml` as uv workspace (+ `ml/pyproject.toml` with hatchling, `uv.lock`, `.python-version`), `ros2_ws/colcon_defaults.yaml`, `nuway_cmake` package, `.clang-format`, `.clang-tidy`, `.clangd`, `.pre-commit-config.yaml`, `tools/lint/` (`format_cpp.sh`, `tidy_cpp.sh`, `lint_py.sh`, `merge_compile_commands.py`, header guard check), and the CI jobs (format, tidy, sanitizer, ruff, mypy, pytest). Record every pin in §6.4 (uv, LLVM wheels, ruff, mypy; the torch index is already fixed at cu126). Lands first: every later task's build and lint run through it.
 2. [ ] Vendor `carla_msgs` (leaderboard-2.0 branch) into `ros2_ws/src/`. nanoflann comes from apt (`libnanoflann-dev`) via rosdep on Jazzy/noble, so it needs no vendor package. Build.
 3. [ ] `nuway_msgs`: all messages and services in `02_interfaces.md`, with the declared constants. Build.
-4. [ ] `nuway_common`: `geometry.hpp`, `carla_conv.hpp` (+ tests with known transforms), `frenet.hpp` (+ tests: round trip cartesian→frenet→cartesian on an arc within 1e-6), `trajectory.hpp`, `occupancy.hpp` (GridSpec + bilinear sample + tests), `qos.hpp`, `diag.hpp`, `params.hpp`. Python twins `nuway_ml/common/{geometry,frenet,carla_conv,occupancy}.py` + `tests/integration/test_geometry_parity.py`.
-5. [ ] `tools/carla/check_native_ros2.py`: start CARLA with `--ros2`, spawn a vehicle + lidar + camera with `enable_for_ros()`, verify topics appear, print frame conventions by driving forward and comparing `/carla/hero/imu` and native pose vs Python API; confirm one LiDAR sweep per tick and one IMU/GNSS sample per tick. **Fill in `02_interfaces.md` §1.**
-6. [ ] `world_manager.py` (lockstep gate, reset event), `sensor_rig.py`, `gt_publisher.py`, `control_adapter.py`. Verify `/clock` never advances without a matching `ControlCommand`; verify static TF in Foxglove.
+4. [ ] `nuway_common`: `geometry.hpp`, `carla_conv.hpp` (+ tests with known transforms), `frenet.hpp` (+ tests: round trip cartesian→frenet→cartesian on an arc within 1e-6), `trajectory.hpp`, `occupancy.hpp` (GridSpec + bilinear sample + tests), `tick.hpp` (tick index, planning-tick predicate, barrier helper), `qos.hpp`, `diag.hpp`, `params.hpp`. Python twins `nuway_ml/common/{geometry,frenet,carla_conv,occupancy,tick,qos,frames}.py`. The `nuway_py` pybind package (`01_directory_structure.md`) binding `nuway_common` so that `tests/integration/test_geometry_parity.py` can compare both sides; it grows in M6.
+5. [ ] `tools/carla/check_native_ros2.py` (against an already running `--ros2` server, `04_setup.md` §7): spawn a vehicle + lidar + camera with `enable_for_ros()`, verify topics appear, assert `header.frame_id == ros_name` on every native message, print frame conventions by driving forward and comparing `/carla/hero/imu` and native pose vs Python API; confirm one LiDAR sweep per tick and one IMU/GNSS sample per tick, and measure the camera drop rate. **Fill in `02_interfaces.md` §1.**
+6. [ ] `nuway_ml/common/rig.py` (parse, extrinsics to `base_link`, intrinsics; tests against hand-computed K and a right-mounted sensor), `world_manager.py` (lockstep gate, startup timeout, reset event, no-rendering option), `sensor_rig.py`, `gt_publisher.py`, `control_adapter.py`. Verify `/clock` never advances without a matching `ControlCommand`; verify static TF in Foxglove.
 7. [ ] `nuway_map`: parser (fixture test vs CARLA waypoints for Town03 and Town05), lane graph incl. `TrafficLightMapping`/`StopSign`/`Crosswalk`, map server. Publish the `lanes` marker layer in `nuway_viz`.
-8. [ ] `nuway_route`: A*, reference line builder (tests: curvature of a circular lane matches 1/R; bounds are positive; extension beyond goal), node, Leaderboard route loader.
+8. [ ] `nuway_route`: multi-waypoint A*, reference line builder (tests: curvature of a circular lane matches 1/R; bounds are positive; extension beyond goal; a 3-waypoint route yields one continuous line), node with reroute; `nuway_ml/common/routes.py` (route XML → waypoints) + test on a committed route file.
 9. [ ] `tools/sysid/`: sweeps and fits. Produce `lincoln_mkz_2020.yaml`. Plot residuals; document residual RMS in this file's Decisions log.
-10. [ ] `nuway_control`: `LongitudinalMap` (C++ + Python parity test), pure pursuit + PID node.
+10. [ ] `nuway_control`: `LongitudinalMap` (C++, bound in `nuway_py`; Python twin + parity test), pure pursuit + PID node.
 11. [ ] `gt_pose_node` (C++), minimal `gt_perception_node.py`, `gt_traffic_light_node.py`; all three handle `reset_event`.
 12. [ ] Launch files, profile `m0_gt_all.yaml`, Foxglove layout v0 (map, ego, reference line, lookahead point).
 13. [ ] `run_routes.py` v0; 10 routes; record lateral error; iterate gains until criteria met.
@@ -211,5 +211,6 @@ Loads a route XML, calls `/nuway/sim/reset` at the start pose, publishes goals, 
 
 ## 6. Open questions
 
+- **CARLA-side determinism is assumed, not yet verified.** The bit-identical criteria (this file, M1 §5) require that CARLA's PhysX stepping, the Traffic Manager and the walker controllers are themselves reproducible under synchronous mode with a fixed seed. CARLA documents this as "deterministic" only with `set_synchronous_mode` + `set_random_device_seed` + `hybrid_physics` off, and it is known to break with `no_rendering_mode` walkers and with unseeded blueprint choices. Task 14 measures it for the hero alone; M1 task 10 measures it with traffic. If either fails, the criteria degrade to "identical up to CARLA's own spread", which must then be measured and stated.
 - ~~Does the native ROS 2 LiDAR topic deliver one full sweep per tick when `rotation_frequency == 1/fixed_delta`?~~ **Answered 2026-09-06: yes.** Measured 1.00 msg/tick over 1179 ticks, stamp delta exactly 0.0500 s. No partial sweeps, no accumulation needed. (`02_interfaces.md` §3.1)
 - ~~Does native ROS 2 publish `camera_info`?~~ **Answered 2026-09-06: it publishes it, but the intrinsics are unusable** — `fx = fy = -22973.444` where 800×450 @ FOV 90 should give 400.0 (`cx`/`cy`/size/`D` are correct). So the original fallback stands for a different reason than expected: `sensor_rig.py` must publish `CameraInfo` from the rig JSON's FOV and size, and no node may subscribe to CARLA's. (`02_interfaces.md` §3.1)

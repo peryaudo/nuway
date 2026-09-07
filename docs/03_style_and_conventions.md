@@ -172,7 +172,7 @@ Modern, pinned, identical on every developer machine and in CI. This section is 
 
 - [`uv`](https://docs.astral.sh/uv/) is the only Python environment and dependency tool. `pip`, `venv`, `virtualenv`, `conda`, `poetry`, `pipx` and `requirements*.txt` are not used. Install uv once with the official installer (`curl -LsSf https://astral.sh/uv/install.sh | sh`); its version is pinned in `.github/workflows/*.yml` via `astral-sh/setup-uv` and recorded in the table in §6.4.
 - **Layout.** The repository root `pyproject.toml` is a uv workspace root and holds all tool configuration (§7.3). `ml/` is the single workspace member and the only installable package (`nuway-ml`, build backend `hatchling`). `tools/` and `tests/` are not packages; they run through `uv run` with `ml/` importable. `uv.lock` is committed and is the source of truth for every version. `.python-version` pins `3.12`.
-- **Dependency groups** in the root `pyproject.toml`: `dev` (ruff, mypy, pytest, pytest-cov, pre-commit, `clang-format`, `clang-tidy`, `gersemi`), `carla` (the CARLA 0.9.16 client wheel), `train` (`hydra-core`, `wandb`), `viz` (`matplotlib`, `rosbags`). `uv sync` installs `dev` by default; `uv sync --group carla --group train --group viz` for a full workstation. `nuway_ml.viz` is the one subpackage whose imports are not guaranteed present: like `hydra` and `wandb` it must never be imported by a runtime node (§9.7, `02_interfaces.md` §8), which is what lets `render_bag.py` run in an environment with neither CARLA nor ROS. Runtime dependencies of the model code (`torch`, `numpy`, `webdataset`, …) live in `ml/pyproject.toml` `[project.dependencies]`.
+- **Dependency groups** in the root `pyproject.toml`: `dev` (ruff, mypy, pytest, pytest-cov, pre-commit, `clang-format`, `clang-tidy`, `gersemi`), `carla` (the CARLA 0.9.16 client wheel), `train` (`hydra-core`, `wandb`), `viz` (`matplotlib`, `rosbags`), `leaderboard` (the Python dependencies of the pinned Leaderboard + scenario_runner checkouts — `py-trees`, `networkx`, `shapely`, … — copied from their `requirements.txt` into the group so they are locked with everything else; the checkouts themselves live in `external/`, §6.4). `uv sync` installs `dev` by default; `uv sync --group carla --group train --group viz --group leaderboard` for a full workstation. `nuway_ml.viz` is the one subpackage whose imports are not guaranteed present: like `hydra` and `wandb` it must never be imported by a runtime node (§9.7, `02_interfaces.md` §8), which is what lets `render_bag.py` run in an environment with neither CARLA nor ROS. Runtime dependencies of the model code (`torch`, `numpy`, `webdataset`, …) live in `ml/pyproject.toml` `[project.dependencies]`.
 - **PyTorch** is pinned to the **cu126** wheel index through `[[tool.uv.index]]` (`explicit = true`) plus `[tool.uv.sources]`, so `uv sync` never pulls the CPU-only wheel by accident. The dev box's driver (595.84) reports CUDA 13.2 and runs any cu12x/cu13x build; cu126 is chosen over cu130 because third-party CUDA extensions (custom BEV ops, `torch-scatter`-style packages) still ship cu126 wheels far more reliably than CUDA 13 ones, and cu126 carries cp312 torch builds up to 2.14.
 - **ROS 2 interop.** ROS Jazzy's `rclpy`, `rosidl_runtime_py` and the generated `nuway_msgs` bindings live in Ubuntu 24.04's system Python 3.12 and cannot be installed from PyPI. The venv is therefore created from the system interpreter with system site packages visible: `uv venv --python /usr/bin/python3.12 --system-site-packages`, then `uv sync` populates it. `[tool.uv] python-preference = "only-system"` prevents uv from downloading its own interpreter, which would break the ABI match with ROS. `setup_env.sh` does this in the right order (source ROS, create venv, sync, source `ros2_ws/install/setup.bash`).
 - **Commands.** `uv sync` to create or update the environment; `uv run <cmd>` for every tool and script (`uv run pytest ml`, `uv run ruff check .`, `uv run tools/eval/run_routes.py`); `uv add <pkg>` / `uv add --group dev <pkg>` to add dependencies, which updates `uv.lock` in the same commit; `uv lock --upgrade-package <pkg>` for controlled upgrades. Never `pip install`, never edit `.venv` by hand, never `uv pip` outside of debugging.
@@ -252,8 +252,9 @@ Decided in M0 and kept current here whenever `uv.lock` or the workflows change a
 | ruff, mypy, pytest, pre-commit, gersemi | exact in lock | `pyproject.toml` `dev` group, `uv.lock` |
 | torch | ≥ 2.4, `cu126` index | `ml/pyproject.toml`, `[[tool.uv.index]]` |
 | hydra-core, wandb | exact in lock | `pyproject.toml` `train` group, `uv.lock` |
-| GTSAM / osqp-vendor / nanoflann | 4.2.0 / 0.2.0 (the `ros-jazzy-osqp-vendor` package version, not OSQP's own) / 1.5.4, from apt | `package.xml` + rosdep (§6.2) |
+| GTSAM / osqp-vendor / nanoflann / pugixml | 4.2.0 / 0.2.0 (the `ros-jazzy-osqp-vendor` package version, not OSQP's own) / 1.5.4 / 1.14 (`libpugixml-dev`), from apt | `package.xml` + rosdep (§6.2) |
 | osqp-eigen | tag, by commit hash | `ros2_ws/src/osqp_eigen_vendor/CMakeLists.txt` |
+| CARLA Leaderboard 2.x / scenario_runner | commit hashes, decided in M1 task 19 (the pair must be the one that targets CARLA 0.9.16, and the pinned Leaderboard must expose the ROS 2 agent track — verify before pinning) | `tools/eval/setup_leaderboard.sh`, checkouts in `external/` (gitignored); Python deps in the `leaderboard` group |
 
 ---
 
@@ -311,7 +312,7 @@ Checks: >
   llvm-namespace-comment,
   misc-*,
   -misc-non-private-member-variables-in-classes,
-  -misc-include-cleaner,
+  -misc-include-cleaner,        # rclcpp/Eigen umbrella headers make it fire on every file; IWYU (§2.2) is enforced in review instead
   modernize-*,
   -modernize-use-trailing-return-type,
   -modernize-avoid-c-arrays,
@@ -394,6 +395,7 @@ dev = [
 carla = ["carla==0.9.16"]
 train = ["hydra-core", "wandb"]   # config management and run/metric logging (§9.7)
 viz = ["matplotlib", "rosbags"]   # headless rendering (02_interfaces.md §8); never imported by runtime nodes
+leaderboard = ["py-trees", "networkx", "shapely", "..."]   # deps of external/{leaderboard,scenario_runner} (§6.4)
 
 [tool.uv]
 package = false                    # the root is not installable
@@ -462,7 +464,7 @@ convention = "pep257"
 "**/launch/*.launch.py" = ["D", "ANN"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["nuway_ml", "nuway_eval", "nuway_carla_bridge", "nuway_perception", "nuway_prediction", "nuway_planning", "nuway_bringup", "nuway_viz"]
+known-first-party = ["nuway_ml", "nuway_py", "nuway_eval", "nuway_carla_bridge", "nuway_perception", "nuway_prediction", "nuway_planning", "nuway_bringup", "nuway_viz"]
 
 [tool.mypy]
 python_version = "3.12"
@@ -479,7 +481,7 @@ files = [
 exclude = ["ros2_ws/(build|install|log)/", "ros2_ws/src/carla_msgs/", "data/"]
 
 [[tool.mypy.overrides]]
-module = ["carla", "carla.*", "rclpy", "rclpy.*", "rosidl_runtime_py", "nuway_msgs.*", "carla_msgs.*", "torch.*", "webdataset", "webdataset.*"]
+module = ["carla", "carla.*", "rclpy", "rclpy.*", "rosidl_runtime_py", "nuway_msgs.*", "carla_msgs.*", "nuway_py", "nuway_py.*", "torch.*", "webdataset", "webdataset.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]

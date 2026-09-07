@@ -38,7 +38,8 @@ nuway/
 │   ├── gt_toggles/                        # small YAMLs setting use_gt.* flags
 │   ├── sensors/                           # sensor rigs (CARLA blueprint attrs + extrinsics)
 │   │   ├── rig_dev.json
-│   │   └── rig_leaderboard.json
+│   │   ├── rig_leaderboard.json
+│   │   └── rig_none.json                  # M8: no sensors; for render-free GT-only runs (carla.no_rendering: true)
 │   ├── vehicle/
 │   │   └── lincoln_mkz_2020.yaml          # sysid results (M0)
 │   ├── planning/
@@ -82,15 +83,21 @@ nuway/
 │       │   │   ├── carla_conv.hpp         # left-handed <-> ROS conversion, GNSS <-> map (C++ side; see Rules)
 │       │   │   ├── occupancy.hpp          # multi-channel grid accessor, bilinear sample
 │       │   │   ├── diag.hpp               # NodeDiag publisher helper, scoped timer
-│       │   │   ├── qos.hpp                # the QoS profiles from 02_interfaces.md §3.10
+│       │   │   ├── qos.hpp                # the QoS profiles from 02_interfaces.md §3.11
+│       │   │   ├── tick.hpp               # TickIndex(stamp), IsPlanningTick(k); current-tick barrier helper (02 §2)
 │       │   │   └── params.hpp             # declare/get param helpers
 │       │   └── test/
+│       ├── nuway_py/                      # THE pybind11 package (one per repo). M0: nuway_common + nuway_control::LongitudinalMap
+│       │                                  #   for the parity tests; M6: FSM, lattice, QP, selector, collision, const-vel predictor,
+│       │                                  #   safety layer, MPC for the expert and gt_planning_node. Deliberate exception to the
+│       │                                  #   "ml/ owns everything tools/ imports" rule (see Rules)
 │       ├── nuway_carla_bridge/            # python (rclpy) — talks to CARLA Python API
 │       │   ├── nuway_carla_bridge/
 │       │   │   ├── world_manager.py       # spawns hero+sensors, owns world.tick() in lockstep, /clock
 │       │   │   ├── gt_publisher.py        # GT agents, GT ego pose/odom, traffic lights
 │       │   │   ├── control_adapter.py     # ControlCommand -> CarlaEgoVehicleControl
-│       │   │   ├── sensor_rig.py          # loads configs/sensors/*.json (imports nuway_ml.common.carla_conv)
+│       │   │   ├── sensor_rig.py          # spawns the rig and publishes /tf_static + camera_info; all parsing/arithmetic
+│       │   │   │                          #   comes from nuway_ml.common.rig (shared with the collectors)
 │       │   │   └── leaderboard_agent.py   # Leaderboard 2.x ROS agent entry point (M1)
 │       │   └── launch/
 │       ├── nuway_map/                     # C++
@@ -120,7 +127,8 @@ nuway/
 │       │   │   └── traffic_light_node.py     # crop, classify, latch (M4)
 │       │   └── launch/
 │       ├── nuway_prediction/
-│       │   ├── src/const_vel_node.cpp     # M1
+│       │   ├── src/const_vel.cpp / const_vel_node.cpp   # M1; library (bound by nuway_py for the M6 expert) + node
+│       │   ├── include/nuway_prediction/
 │       │   └── nuway_prediction/
 │       │       ├── gt_prediction_node.py     # cheat twin: futures from a recorded CARLA log, replay eval only (M6)
 │       │       └── prediction_node.py        # M7; also hosts the M8 ego planning head
@@ -135,8 +143,7 @@ nuway/
 │       │   │   ├── planner_node.cpp        # orchestrates: candidates -> refine -> select
 │       │   │   ├── forward_sim_scorer.cpp  # M9
 │       │   │   └── ilqr.cpp                # M10
-│       │   ├── nuway_planning/gt_planning_node.py   # cheat twin: M6 expert (via nuway_planning_py) as a node (M6)
-│       │   ├── python/                    # nuway_planning_py pybind module: FSM, lattice, QP, selector, collision, Frenet (M6)
+│       │   ├── nuway_planning/gt_planning_node.py   # cheat twin: M6 expert (via nuway_py) as a node (M6)
 │       │   └── include/nuway_planning/
 │       ├── nuway_control/                 # C++
 │       │   ├── src/
@@ -167,7 +174,13 @@ nuway/
 │   │   │   ├── carla_conv.py              # left-handed <-> ROS conversion (Python side; see Rules)
 │   │   │   ├── occupancy.py               # GridSpec + world<->grid: numpy, no torch (gt_perception_node imports it)
 │   │   │   │                               # bilinear_sample(): torch, imported lazily inside the function
-│   │   │   ├── frames.py                  # frame conventions shared with ROS side
+│   │   │   ├── frames.py                  # frame name constants shared with the ROS side
+│   │   │   ├── qos.py                     # the QoS table of 02 §3.11 as plain data (no rclpy import)
+│   │   │   ├── tick.py                    # tick_index(stamp), is_planning_tick(k); mirrors tick.hpp (02 §2)
+│   │   │   ├── rig.py                     # the one rig-JSON parser: entries, CARLA->base_link extrinsics, intrinsics K from
+│   │   │   │                               # size+FOV. Used by sensor_rig.py (tf_static, camera_info), the collectors and
+│   │   │   │                               # CameraCalib (M2), so every K and every extrinsic has one source
+│   │   │   ├── routes.py                  # route XML / Leaderboard global_plan -> ordered waypoints (nav_msgs/Path payload)
 │   │   │   ├── seeding.py                 # the one random-seed helper
 │   │   │   ├── config.py                  # structured-config dataclasses + Hydra ConfigStore
 │   │   │   ├── run_logger.py              # the one wandb wrapper; training loops log through it
@@ -248,6 +261,7 @@ nuway/
 │   │   └── verify_tl_association.py       # M4
 │   ├── eval/
 │   │   ├── run_routes.py                  # entry point for evaluation harness
+│   │   ├── setup_leaderboard.sh           # M1: clones leaderboard + scenario_runner into external/ at the pinned commits
 │   │   ├── run_leaderboard.sh             # M1: runs the stack under the official Leaderboard runner
 │   │   ├── eval_localization.py           # M5
 │   │   └── compare_runs.py
@@ -256,11 +270,13 @@ nuway/
 │       ├── render_bag.py                  # MCAP -> frames/, sheets/, incidents/ PNGs
 │       └── make_video.sh                  # optional ffmpeg wrapper; MP4 is never the primary artifact
 │
+├── external/                              # gitignored; leaderboard/ and scenario_runner/ checkouts (tools/eval/setup_leaderboard.sh)
 ├── data/                                  # gitignored
 │   ├── raw/
 │   ├── sysid/                             # M0 system-identification logs + residual plots
 │   ├── shards/
-│   ├── maps/                              # per town: .xodr, map.ply, static_occ.npz, tl_bulbs.json, tl_overrides.yaml, reports
+│   ├── maps/<town>/                       # one directory per town: map.xodr, map.ply, map_tags.npy, static_occ.npz,
+│   │                                      #   tl_bulbs.json, tl_overrides.yaml, tl_association_report.md, REPORT.md
 │   ├── checkpoints/                       # <experiment>/<timestamp>/: ckpts, viz/, .hydra/config.yaml
 │   └── eval_runs/                         # <run_id>/: report.md, results.csv, per-route mcap + renders (docs/02 §8)
 │
@@ -282,8 +298,9 @@ nuway/
 ## Rules
 
 - **`nuway_msgs` is the only package that defines messages and services.** Any new message or service requires an entry in `02_interfaces.md`.
-- **`nuway_common/carla_conv.hpp` (C++) and `nuway_ml/common/carla_conv.py` (Python) are the only code that knows CARLA's coordinate convention.** `nuway_carla_bridge` and the collectors under `tools/collect/` call `carla_conv.py`; they contain no conversion arithmetic of their own. The two files are parity-tested against each other. Everything downstream is ROS-convention.
-- **`nuway_ml/common/*` must mirror `nuway_common/*`** for geometry/frenet/occupancy/carla_conv conventions. There is a cross-language test (`tests/integration/test_geometry_parity.py`) that runs the C++ versions through a small pybind shim and compares outputs. Keep it green.
+- **`nuway_common/carla_conv.hpp` (C++) and `nuway_ml/common/carla_conv.py` (Python) are the only code that knows CARLA's coordinate convention.** `nuway_carla_bridge` and the collectors under `tools/collect/` call `carla_conv.py` (through `rig.py` for everything rig-related); they contain no conversion arithmetic of their own. The two files are parity-tested against each other, including the GNSS ↔ map conversion added in M5. Everything downstream is ROS-convention.
+- **`nuway_ml/common/*` must mirror `nuway_common/*`** for geometry/frenet/occupancy/carla_conv/tick conventions. There is a cross-language test (`tests/integration/test_geometry_parity.py`) that runs the C++ versions through the `nuway_py` pybind package and compares outputs. Keep it green.
+- **`nuway_py` is the one pybind package and the one sanctioned import from `ros2_ws` into `tools/`.** It exists so that the M6 expert, `gt_planning_node.py` and the parity tests run the *same* C++ planner/controller code as the runtime, which is worth more than the "everything `tools/` imports lives in `ml/`" rule it bends. It is available only after `colcon build` with `ros2_ws/install/setup.bash` sourced; `setup_env.sh` does that. It ships no stubs, so it is listed in the mypy `ignore_missing_imports` override (`03_style_and_conventions.md` §7.3). Nothing else under `ros2_ws` may be imported by `tools/` or `ml/`.
 - **GT occupancy has exactly one implementation** (`nuway_ml/data/gt_occupancy.py`), called directly by both the offline collector and the runtime cheat node `gt_perception_node.py`. There is no C++ port and therefore no parity test to keep green. This is why the GT perception twin is Python (`00_overview.md` §2.6): a second implementation of the DDA ray casting and lane rasterization, maintained forever for one consumer, costs more than the node saves. No CLI bridge, no pybind for this function.
 - One node per file, one file per node. Nodes are thin: they parse params, subscribe/publish, and call a library class that is unit-tested without ROS.
 - Python packages inside `ros2_ws` only contain nodes and thin glue. Model code and anything shared with `tools/` lives in `ml/nuway_ml` and is imported.

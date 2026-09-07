@@ -26,7 +26,7 @@ collect_perception.py (CARLA client, sync mode, no ROS)
    └─ ShardWriter (WebDataset tar, 1000 frames/shard)
 ```
 
-No ROS in the collector. It talks to CARLA directly; it is faster and avoids serializing images through DDS. It **must** use the same rig loader and the same conversion code as the runtime to guarantee identical extrinsics and frame conventions: the rig JSON parsing and CARLA↔ROS arithmetic live in `nuway_ml/common/carla_conv.py` and `nuway_ml/common/frames.py`, which both `nuway_carla_bridge/sensor_rig.py` and the collector import (`01_directory_structure.md` rules). The collector imports nothing from `ros2_ws`.
+No ROS in the collector. It talks to CARLA directly; it is faster and avoids serializing images through DDS. It **must** use the same rig loader and the same conversion code as the runtime to guarantee identical extrinsics and frame conventions: the rig JSON parsing, the CARLA→`base_link` extrinsics and the intrinsics `K` live in `nuway_ml/common/rig.py` (on top of `carla_conv.py`), which both `nuway_carla_bridge/sensor_rig.py` and the collector import (`01_directory_structure.md` rules). The collector imports nothing from `ros2_ws`.
 
 ## 2. Record schema (`nuway_ml/common/schema.py`)
 
@@ -42,8 +42,8 @@ class EgoControl:
 @dataclass(frozen=True, slots=True)
 class CameraCalib:
     name: str
-    K: np.ndarray                 # [3,3]
-    T_cam_from_base: np.ndarray   # [4,4]
+    K: np.ndarray                 # [3,3], from rig.py — the same function that fills /nuway/sensors/<cam>/camera_info
+    T_cam_from_base: np.ndarray   # [4,4], from rig.py — the same extrinsic that sensor_rig.py publishes on /tf_static
     width: int
     height: int
 
@@ -63,14 +63,16 @@ class FrameRecord:
     lidar: np.ndarray             # [N,4] float32: x,y,z,intensity in lidar frame — exactly what the runtime
                                   # sensor.lidar.ray_cast publishes; this is the model input and must not
                                   # contain label information
-    lidar_semantic: np.ndarray    # [N,5] float32: x,y,z,tag,object_idx from the label-only semantic LiDAR;
-                                  # used by the labelers and kept for re-labeling, never fed to a model
+    lidar_semantic: np.ndarray    # [N,5] float32: x,y,z,object_idx,tag — the label-only semantic LiDAR in the LiDAR
+                                  # frame, in the column order of the native ROS topic minus cos_angle (02 §3.1);
+                                  # gt_perception_node builds the identical array from the topic. Used by the labelers
+                                  # and kept for re-labeling, never fed to a model
     agents: list[AgentLabel]
     occupancy: np.ndarray         # [6,200,200] float16, channels per 02_interfaces
     traffic_lights: list[TLLabel]
     prev_ego_pose_map: np.ndarray # [4,4] at t-0.1 (for temporal fusion training) — also lidar of previous K frames are found by key arithmetic within the same run
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class AgentLabel:
     id: int
     class_id: int
@@ -79,10 +81,12 @@ class AgentLabel:
     visible: bool
     n_lidar_pts: int
     cam_visible: list[str]        # cameras in which the box projects with >= min_px area and depth-visible
-    history_base: np.ndarray      # [20,3] x,y,yaw at 0.1 s spacing in current base_link (NaN if unavailable)
-    future_map: np.ndarray        # [80,3] at 0.1 s in map frame (filled by post-pass, NaN beyond run end) — used by M6/M7; cheap to store now
+    history_base: np.ndarray      # [20,3] x,y,yaw at 0.1 s spacing in current base_link, history[0] = 0.1 s ago (NaN if unavailable)
+    future_map: np.ndarray        # [80,3] at 0.1 s in map frame, future[0] = +0.1 s: t = 0 is the box itself, so a
+                                  # future is 80 points where a Trajectory (t = 0 … 8 s) is 81 (02 §4). Filled by the
+                                  # post-pass, NaN beyond run end — used by M6/M7; cheap to store now
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class TLLabel:
     id: int
     state: int
@@ -98,7 +102,7 @@ Shard layout (WebDataset): `{key}.json` (everything scalar/small, lists), `{key}
 ### 3.1 Visibility filter (`nuway_ml/data/labeling/visibility.py`)
 
 An actor is `visible` if **either**:
-- semantic LiDAR returns ≥ `min_pts[class]` points with that actor's `object_idx` (car 5, pedestrian 3, bicycle 3, static 5), **or**
+- semantic LiDAR returns ≥ `min_pts[class]` points with that actor's `object_idx` (car 5, truck 5, pedestrian 3, bicycle 3, motorcycle 3, static 5), **or**
 - in any camera, the actor's 3D box projects to ≥ `min_px_area` (400 px²) inside the image **and** the depth camera at the box's projected center is within `box_depth ± (box_diag/2 + 1 m)` (i.e. not occluded).
 
 Label-only sensors: `sensor.lidar.ray_cast_semantic` co-located with `lidar_top` (identical attributes; the `lidar_top_semantic` entry with `label_only: true` in `rig_dev.json`), `sensor.camera.depth` co-located with each RGB camera (collector only, not in the rig JSON). These are never subscribed by a learned node; the semantic LiDAR is spawned at runtime only in GT-perception and mapping profiles (`02_interfaces.md` §3.1).
@@ -117,7 +121,7 @@ Class ids per `02_interfaces.md`. Traffic-cone/barrier/props tagged `static_obst
 
 ```python
 def generate_gt_occupancy(spec: GridSpec,
-                          semantic_lidar_pts: np.ndarray,   # [N,5] x,y,z,tag,object_idx in base_link
+                          semantic_lidar_pts: np.ndarray,   # [N,5] x,y,z,object_idx,tag in base_link (schema §2 order)
                           agents: list[AgentLabel],
                           lane_polygons_base: list[np.ndarray],
                           ego_footprint: np.ndarray) -> np.ndarray:  # [6,H,W]
@@ -140,7 +144,7 @@ For every traffic light whose stop line is within 60 m ahead on lanes reachable 
 
 ### 3.5 History/future post-pass
 
-After a run finishes, `postprocess_run.py` walks the run's frames in order and fills `history_base` and `future_map` for every agent id from the recorded per-frame poses (kept in a run-level `trajectories.parquet` sidecar written during collection: `[frame_idx, agent_id, x, y, yaw, vx, vy]` in map frame). This makes the perception shards immediately reusable for M6 without re-collection.
+The collector writes each run to a *staging* directory (`data/raw/perception/{town}/{run_id}/`: per-frame `.npz`/`.jpg` plus the run-level `trajectories.parquet` sidecar `[frame_idx, agent_id, x, y, yaw, vx, vy]` in map frame). After the run finishes, `postprocess_run.py` walks the frames in order, fills `history_base` and `future_map` for every agent id from the sidecar (records are frozen, so it builds new ones with `dataclasses.replace`), validates every record, and only then writes the final WebDataset shards; the staging directory is deleted on success. Shards are therefore never rewritten, and every shard on disk is complete. This makes the perception shards immediately reusable for M6 without re-collection.
 
 ## 4. Collection protocol
 
@@ -175,11 +179,11 @@ Throughput: rendering runs at default (Epic) quality — Low segfaults `load_wor
 ```
 Previous-frame LiDAR is resolved by key arithmetic inside the same run (frame_idx − 1·stride ...). Shards are written so a run's frames are contiguous; the loader keeps an LRU cache of the last 8 decoded frames per worker. If a previous frame does not exist (run start), it is replaced by the current one with identity motion and a `valid_prev` flag.
 
-Augmentation (`augment.py`, perception part): random image scale ±10%, random BEV rotation ±15° and flip (applied consistently to LiDAR, boxes, occupancy), LiDAR point dropout 0–20%, per-image color jitter.
+Augmentation (`augment.py`, perception part): random image scale ±10%, random BEV rotation ±15° and flip (applied consistently to LiDAR, boxes, occupancy), LiDAR point dropout 0–20%, per-image color jitter, and **camera dropout**: with probability 0.05 per camera the image is replaced by zeros and its entry in the `cam_valid` mask is cleared, which is exactly what `perception_node` does when the native topic loses a frame (`02_interfaces.md` §3.1), so masked inference is in-distribution.
 
 ## 6. Runtime GT perception (`gt_perception_node.py`, full version)
 
-Subscribes GT agents, `/carla/hero/lidar_top_semantic` (the `label_only` rig entry, spawned because the profile has `use_gt.perception: true`), lane graph. Calls `generate_gt_occupancy` (§3.3) directly — same function object the collector calls, no port, no bridge. Publishes `/nuway/perception/occupancy` every 2nd tick and agents with `visible` filtering applied (so GT perception ≈ "perfect but physically plausible" perception). Profile key `gt_perception.apply_visibility: true|false` toggles omniscient mode (`02_interfaces.md` §5). M8 adds a second key, `gt_perception.source: sensor | geometry` — `geometry` replaces the semantic-LiDAR inputs with the M6 static map + raycast (M6 §3.1) so the node runs render-free for cheap DAgger; `sensor`, specified here, is the default. Traffic lights are not this node's business (`gt_traffic_light_node`, M0).
+Subscribes GT agents, `/carla/hero/lidar_top_semantic` (the `label_only` rig entry, spawned because the profile has `use_gt.perception: true`; the six-field cloud is turned into the schema's `[N,5]` `x,y,z,object_idx,tag` array by `nuway_ml/common/rig.py`, dropping `cos_angle`), lane graph. Calls `generate_gt_occupancy` (§3.3) directly — same function object the collector calls, no port, no bridge. Runs on even ticks once the agents and the semantic cloud of that tick have both arrived (`02_interfaces.md` §2 barrier). Publishes `/nuway/perception/occupancy` and agents with `visible` filtering applied (so GT perception ≈ "perfect but physically plausible" perception). Profile key `gt_perception.apply_visibility: true|false` toggles omniscient mode (`02_interfaces.md` §5). M8 adds a second key, `gt_perception.source: sensor | geometry` — `geometry` replaces the semantic-LiDAR inputs with the M6 static map + raycast (M6 §3.1) so the node runs render-free for cheap DAgger; `sensor`, specified here, is the default. Traffic lights are not this node's business (`gt_traffic_light_node`, M0).
 
 ## 7. Task list
 

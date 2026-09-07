@@ -63,7 +63,7 @@ sim_cost(c) = Σ_s w_s · [ w_col · 𝟙[collision_s < ∞] · (1 + (5 − t_co
 Defaults: `w_col=1000, w_ttc=50, w_prox=10, w_prog=30, w_off=200, w_rule=500, w_comf=5, w_track=20`. Combine with rule cost: `w_rule_total = 0.3`, `w_sim = 1.0` (rule cost still carries lateral-deviation, consistency, source bias).
 
 ### 2.5 Implementation
-- C++: batched over candidates in a struct-of-arrays layout; agents' sample trajectories pre-interpolated once per cycle; OBB checks via SAT with early-out on distance. Multi-threaded over candidates (`std::thread` pool, 4 threads).
+- C++: batched over candidates in a struct-of-arrays layout; agents' sample trajectories pre-interpolated once per cycle; OBB checks via SAT with early-out on distance. Multi-threaded over candidates (`std::thread` pool, 4 threads): each candidate is scored entirely by one thread and the final aggregation runs in candidate order on the calling thread, so the result is independent of the thread count and of scheduling (M1 §5).
 - Torch reference (`forward_sim.py`): fully vectorized `[K, S, T]` rollout; used in `tests/` for parity (max metric deviation < 1e-3) and as the base for any future learned/RL selector.
 
 ## 3. Two-stage selection in `planner_node`

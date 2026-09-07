@@ -21,11 +21,12 @@
 
 ## 2. Privileged expert (`tools/collect/expert/`)
 
-A rule-based planner with GT access, in the spirit of PDM-Lite, reusing M1 components where possible (import the C++ lattice/QP via a pybind module `nuway_planning_py`, built in M6; or reimplement a simplified version in numpy — **decision: pybind the M1 planner**, so the expert and the runtime fallback share behavior).
+A rule-based planner with GT access, in the spirit of PDM-Lite, reusing M1 components where possible (import the C++ lattice/QP through the `nuway_py` pybind package, which M0 created for the parity tests and M6 extends; or reimplement a simplified version in numpy — **decision: pybind the M1 planner**, so the expert and the runtime fallback share behavior).
 
-Expert = M1 stack (FSM + lattice + QP + rule selector) with these privileged replacements:
-- Perception: GT agents (omniscient, no visibility filter), GT traffic lights.
-- Prediction: the expert uses M1's constant-velocity + lane-follow prediction from the *current* GT state only (through `nuway_planning_py`, which binds it from the `nuway_prediction` library). It does **not** read other agents' GT futures and it does **not** read Traffic Manager intent: either would make it clairvoyant in ways a student cannot imitate.
+Expert = M1 stack (FSM + lattice + QP + rule selector **+ safety layer + LTV-MPC**) with these privileged replacements:
+- Perception: GT agents (omniscient, no visibility filter), GT traffic lights, and the geometry-derived occupancy of §3.1 (the expert's safety layer reads the `occupied` channel exactly as the runtime one does).
+- Prediction: the expert uses M1's constant-velocity + lane-follow prediction from the *current* GT state only (through `nuway_py`, which binds it from the `nuway_prediction` library). It does **not** read other agents' GT futures and it does **not** read Traffic Manager intent: either would make it clairvoyant in ways a student cannot imitate.
+- Actuation in the collector: the expert's trajectory goes through the bound safety layer and MPC every tick and the resulting `ControlCommand` through the Python `LongitudinalMap` into `carla.VehicleControl` — the same three stages as the ROS stack, at the same rates (planner on even ticks, safety layer + MPC every tick). This is what makes the `gt_planning_node` reproduction criterion (±2 points) meaningful: offline and in-stack, the only difference is the transport.
 - Additional privileged heuristics (tuned for Leaderboard 2.0 scenarios): handling of `ConstructionObstacle`, `Accident`, `ParkedObstacle` (lane change into opposing lane when clear via oncoming-traffic gap check), `HazardAtSideLane`, door-opening, emergency vehicle yielding, pedestrians crossing (stop if predicted to enter lane), and `EnterActorFlow`/`MergerIntoSlowTraffic`. Each is a behavior FSM extension gated by the profile key `planning.expert_extensions` and written against `AgentArray`/`OccupancyGridMC`/`TrafficLightArray` only, so the same code runs on perceived inputs in the runtime fallback later (principle 3).
 - Expert intent is exported per frame: `BehaviorDecision` fields + which extension fired.
 
@@ -33,8 +34,10 @@ Expert must be deterministic given the seed.
 
 ### 2.1 GT twins for prediction and planning
 
-- `nuway_planning/gt_planning_node.py` wraps the expert (through `nuway_planning_py`) as a ROS node: subscribes `/nuway/gt/agents`, `/nuway/gt/traffic_lights`, `/nuway/loc/pose`, the lane graph and reference line; publishes `/nuway/planning/behavior`, `/nuway/planning/candidates` and `/nuway/planning/trajectory` with `source="gt"`. Selected by `use_gt.planning: true`; the safety layer and MPC downstream are unchanged. Its purpose is ablation (how much of a closed-loop loss is planning versus perception) and DAgger labelling in-stack (M8).
-- `nuway_prediction/gt_prediction_node.py` (rclpy; Python because it is a cheat twin that runs only in replay eval, `00_overview.md` §2.6) publishes `PredictionSamples` (S = 1, weight 1) by reading each agent's *actual* future from a recorded run. It can only run in **log replay** (`tools/eval/run_routes.py --replay <mcap>`, which feeds the recorded `/nuway/gt/agents` stream with an 8 s lookahead); in a live simulation the future does not exist yet, and the launch file refuses `use_gt.prediction: true` without `--replay`. Its purpose is the upper bound for prediction-dependent metrics in open-loop planner evaluation.
+- `nuway_planning/gt_planning_node.py` wraps the expert (through `nuway_py`) as a ROS node: subscribes `/nuway/gt/agents`, `/nuway/gt/traffic_lights`, `/nuway/perception/occupancy` (the fourth sanctioned grid consumer in Python, `00_overview.md` §2.6), `/nuway/loc/pose`, the lane graph and reference line; publishes `/nuway/planning/behavior`, `/nuway/planning/candidates` and `/nuway/planning/trajectory` with `source="gt"`, on even ticks under the current-tick barrier. Selected by `use_gt.planning: true`; the safety layer and MPC downstream are unchanged. With `planning.shadow_expert: true` (M8 DAgger) it is launched *in addition to* the live planner, remapped to `/nuway/expert/planning/*` (`02_interfaces.md` §3.7), and drives nothing. Its purpose is ablation (how much of a closed-loop loss is planning versus perception) and DAgger labelling in-stack (M8).
+- `nuway_prediction/gt_prediction_node.py` (rclpy; Python because it is a cheat twin that runs only in replay eval, `00_overview.md` §2.6) publishes `PredictionSamples` (S = 1, weight 1) by reading each agent's *actual* future from a recorded run. It can only run in **log replay**; in a live simulation the future does not exist yet, and the launch file refuses `use_gt.prediction: true` without `--replay`. Its purpose is the upper bound for prediction-dependent metrics in open-loop planner evaluation.
+
+**Log replay** (`tools/eval/run_routes.py --replay <mcap> --profile <p>`): no CARLA, no `world_manager`. The harness plays the bag's `/clock`, `/nuway/gt/**`, `/nuway/sim/vehicle_state`, `/nuway/loc/*`, `/nuway/perception/*`, `/nuway/route/*` and `/nuway/map/*` topics tick by tick, and launches only the prediction, planning and safety-layer nodes of the profile against them (`--replay` implies `use_gt.localization`, `use_gt.perception` and `use_gt.traffic_lights` are taken from the bag, and the controller does not run). `gt_prediction_node` reads the same bag 8 s ahead. Replay is lockstep too: the harness advances the clock only after the planner's output stamped with the current planning tick has arrived. The output is open-loop: the planned trajectory at every planning tick is scored with the ego metrics of §7 (L2 to the recorded trajectory at 1/2/3 s, collision rate of the plan against the recorded futures of the other agents, comfort), written to `data/eval_runs/<run>/openloop.md`. There is no driving score in replay, because nothing drives.
 
 ## 3. Record schema (`schema.py` additions)
 
@@ -42,10 +45,14 @@ Expert must be deterministic given the seed.
 @dataclass(frozen=True, slots=True)
 class PlanningFrame:
     key, timestamp, town, weather, run_id, frame_idx
-    ego: EgoRecord             # pose_map [4,4], v, a, yaw_rate, steering, history [20,3] (map), future [80,3] (map), future_v [80]
-    expert: ExpertRecord       # decision fields, selected trajectory [80,3], candidate count, cost breakdown of selected
-    agents: list[AgentLabel]   # as M2. `visible` is the 2-D raycast result of §3.1 (same meaning as M2's sensor-based
-                               # flag: "the hero could plausibly perceive this agent"), so M7 reads one flag for both datasets
+    ego: EgoRecord             # pose_map [4,4], v, a, yaw_rate, steering, history [20,3] (map), future [80,3] (map, +0.1 … +8.0 s,
+                               #   t = 0 excluded as in M2), future_v [80]
+    expert: ExpertRecord       # decision fields, selected trajectory [81,3] (the Trajectory message, t = 0 … 8 s), candidate count,
+                               #   cost breakdown of selected
+    student_traj: np.ndarray | None   # M8 DAgger only: the live planner's selected trajectory [81,3] at this frame; None in M6 data
+    agents: list[AgentLabel]   # as M2, with n_lidar_pts = 0 and cam_visible = () (no sensors). `visible` is the 2-D raycast
+                               # result of §3.1 (same meaning as M2's sensor-based flag: "the hero could plausibly perceive
+                               # this agent"), so M7 reads one flag for both datasets
     map_local: MapLocal        # lanes within 100 m: ids only (resolved from the per-town LaneGraph cache by the loader)
     route: RouteRecord         # reference line window [-20, +150] m: s, xy, heading, curvature, speed_limit, bounds
     traffic_lights: list[TLLabel]   # states + stop lines + affected lanes (no crops)
@@ -55,7 +62,7 @@ class PlanningFrame:
 
 ### 3.1 Occupancy without sensors
 `gt_occupancy.generate_from_geometry(spec, static_occ, agents, lane_polygons, ego_pose)`:
-- `occupied`: rasterized footprints of static props/parked vehicles (static agents) + building/wall/fence footprints from a **per-town static occupancy map** `data/maps/<town>/static_occ.npz` (0.25 m, map frame), built by `tools/mapping/build_static_occ.py` from the M5 semantic point-cloud map (`map.ply` + `map_tags.npy`), which covers every driving lane by construction. Cropped and rotated into `base_link`.
+- `occupied`: rasterized footprints of static props/parked vehicles (static agents) + building/wall/fence footprints from a **per-town static occupancy map** `data/maps/<town>/static_occ.npz` (0.25 m, map frame), built by `tools/mapping/build_static_occ.py` from the M5 semantic point-cloud map (`map.ply` + `map_tags.npy`). M5 builds that map for **every** collection town (M5 §2.2, its last completion criterion), and its lane-cover mapping routes see every driving lane by construction. Cropped and rotated into `base_link`.
 - `free/unknown`: a 2-D raycast from the LiDAR origin over the `occupied` raster at 1° steps (visibility emulation). Cheap (numpy) and gives realistic unknown regions behind obstacles/agents.
 - `drivable`, `dynamic`, `height_max` as in M2 (height from the static map).
 - `visible` per agent: the same 2-D raycast test hitting the agent box before any occluder.
@@ -87,13 +94,13 @@ Level of noise is scheduled by the training config (the `data/augment` Hydra gro
 
 ## 7. Open-loop evaluation (`nuway_ml/prediction/metrics.py`, `ml/scripts/eval_openloop.py`)
 
-minADE/minFDE (K = 6) at 3 s / 8 s per class, miss rate @2 m, collision rate between predicted samples of different agents, offroad rate; for ego: L2 to expert at 1/2/3 s (nuScenes-style) and comfort stats. Baselines: constant velocity, lane-follow constant velocity. Report to `data/eval_runs/<run>/openloop.md`.
+minADE/minFDE over K = 16 samples (the runtime sample count, so M7's `val/minade_16` and this report measure the same thing; a K = 1 baseline is simply ADE) at 3 s / 8 s per class, miss rate @2 m, collision rate between predicted samples of different agents, offroad rate; for ego: L2 to expert at 1/2/3 s (nuScenes-style) and comfort stats. Baselines: constant velocity, lane-follow constant velocity. Report to `data/eval_runs/<run>/openloop.md`.
 
 ## 8. Task list
 
-1. [ ] `nuway_planning_py` pybind module exposing FSM, lattice, QP, selector, collision checker, Frenet utils, and the const-vel + lane-follow predictor (bound from the `nuway_prediction` library, which the module links — the expert consumes M1's prediction, §2, and must not reimplement it).
+1. [ ] Extend the `nuway_py` pybind package (M0) with FSM, lattice, QP, selector, collision checker, the const-vel + lane-follow predictor (bound from the `nuway_prediction` library, which the package links — the expert consumes M1's prediction, §2, and must not reimplement it), the safety layer and the MPC (from `nuway_control`, for the collector's actuation, §2).
 2. [ ] Expert with extensions; deterministic; eval on M1 protocol (≥ 85) and scenario routes (≥ 70). Fix M1 planner bugs found here (they are shared).
-3. [ ] `gt_planning_node.py` (+ `use_gt.planning` launch wiring) and `gt_prediction_node.py` (+ `--replay` mode in `run_routes.py`, launch refusal outside replay); M1 protocol with `use_gt.planning: true` reproduces the expert score.
+3. [ ] `gt_planning_node.py` (+ `use_gt.planning` and `planning.shadow_expert` launch wiring with the `/nuway/expert/planning/*` remap) and `gt_prediction_node.py` (+ `--replay` mode in `run_routes.py` as specified in §2.1, launch refusal outside replay); M1 protocol with `use_gt.planning: true` reproduces the expert score.
 4. [ ] `tools/mapping/build_static_occ.py`: per-town `static_occ.npz` from the M5 semantic map.
 5. [ ] `generate_from_geometry` + raycast visibility + tests; consistency test vs M2 sensor-derived occupancy on 100 aligned frames (IoU of `occupied` > 0.7); per-frame generation time ≤ 1 ms.
 6. [ ] Scenario library (≥ 8 scenario types) + unit smoke tests (each spawns and ticks 100 steps).
@@ -104,10 +111,11 @@ minADE/minFDE (K = 6) at 3 s / 8 s per class, miss rate @2 m, collision rate bet
 
 ## 9. Decisions log
 
-- (2026-09-02) Expert = M1 planner + privileged inputs + scenario extensions, exposed via pybind. One planner codebase.
+- (2026-09-02) Expert = M1 planner + privileged inputs + scenario extensions, exposed via pybind (`nuway_py`). One planner codebase.
+- (2026-09-06) The collector's expert also runs the bound safety layer and MPC, not a Python controller, so that offline collection and `gt_planning_node` differ only in transport; and the geometry-derived occupancy feeds the expert's safety layer like the runtime one, which makes `gt_planning_node.py` the fourth sanctioned grid consumer in Python.
 - (2026-09-02) No rendering for planning data; occupancy emulated from a static map + 2-D raycast.
 - (2026-09-05) The learned data-validation model was dropped from the completion criteria: it depended on M7's encoder, which made M6 circular. M7's open-loop criterion validates the data instead.
 - (2026-09-05) Occupancy is not stored in planning shards; it is regenerated deterministically in the loader from the static map and the agent list. Saves ≈ 1.4 TB.
 - (2026-09-05) Static occupancy comes from the M5 semantic map, not from M2 shards: M5 now precedes M6, its mapping routes cover every lane, and the Traffic-Manager-driven M2 hero did not.
 - (2026-09-05) The prediction and planning GT twins live here because both need the expert and the recorded futures that M6 produces.
-- (2026-09-06) Both twins delivered here are Python. `gt_planning_node.py` was always going to be (the expert is Python behind `nuway_planning_py`); `gt_prediction_node` moves from C++ to rclpy under the cheat-twin rule (`00_overview.md` §2.6). It is the clearest case in the repo: the launch file refuses `use_gt.prediction: true` outside `--replay`, so it never runs in a live simulation at all.
+- (2026-09-06) Both twins delivered here are Python. `gt_planning_node.py` was always going to be (the expert is Python behind `nuway_py`); `gt_prediction_node` moves from C++ to rclpy under the cheat-twin rule (`00_overview.md` §2.6). It is the clearest case in the repo: the launch file refuses `use_gt.prediction: true` outside `--replay`, so it never runs in a live simulation at all.

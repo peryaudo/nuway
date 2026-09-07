@@ -14,6 +14,8 @@ MODULES = [
     "nuway_ml.common.tick",
     "nuway_ml.common.qos",
     "nuway_ml.common.frames",
+    "nuway_ml.common.rig",
+    "nuway_ml.common.longitudinal_map",
 ]
 
 

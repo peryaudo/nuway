@@ -1,0 +1,30 @@
+{
+  "vehicle": "vehicle.lincoln.mkz_2020",
+  "sensors": [
+    {"id": "lidar_top", "type": "sensor.lidar.ray_cast",
+     "x": 0.0, "y": 0.0, "z": 2.4, "roll": 0, "pitch": 0, "yaw": 0,
+     "attributes": {"channels": 32, "range": 75, "points_per_second": 600000,
+                    "rotation_frequency": 20, "upper_fov": 10, "lower_fov": -30,
+                    "dropoff_general_rate": 0.0, "dropoff_intensity_limit": 1.0,
+                    "dropoff_zero_intensity": 0.0, "noise_stddev": 0.0, "sensor_tick": 0.05}},
+    {"id": "cam_front", "type": "sensor.camera.rgb", "x": 1.5, "y": 0.0, "z": 2.0, "roll": 0, "pitch": 0, "yaw": 0,
+     "attributes": {"image_size_x": 704, "image_size_y": 256, "fov": 90, "sensor_tick": 0.05}},
+    {"id": "cam_left", "type": "sensor.camera.rgb", "x": 0.5, "y": -0.9, "z": 2.0, "roll": 0, "pitch": 0, "yaw": -90,
+     "attributes": {"image_size_x": 704, "image_size_y": 256, "fov": 90, "sensor_tick": 0.05}},
+    {"id": "cam_right", "type": "sensor.camera.rgb", "x": 0.5, "y": 0.9, "z": 2.0, "roll": 0, "pitch": 0, "yaw": 90,
+     "attributes": {"image_size_x": 704, "image_size_y": 256, "fov": 90, "sensor_tick": 0.05}},
+    {"id": "cam_rear", "type": "sensor.camera.rgb", "x": -1.5, "y": 0.0, "z": 2.0, "roll": 0, "pitch": 0, "yaw": 180,
+     "attributes": {"image_size_x": 704, "image_size_y": 256, "fov": 90, "sensor_tick": 0.05}},
+    {"id": "imu", "type": "sensor.other.imu", "x": 0.0, "y": 0.0, "z": 0.0, "roll": 0, "pitch": 0, "yaw": 0,
+     "attributes": {"sensor_tick": 0.05}},
+    {"id": "gnss", "type": "sensor.other.gnss", "x": 0.0, "y": 0.0, "z": 0.0, "roll": 0, "pitch": 0, "yaw": 0,
+     "attributes": {"sensor_tick": 0.05}},
+    {"id": "cam_chase", "type": "sensor.camera.rgb", "viz_only": true,
+     "x": -6.0, "y": 0.0, "z": 3.0, "roll": 0, "pitch": -15, "yaw": 0,
+     "attributes": {"image_size_x": 640, "image_size_y": 360, "fov": 90, "sensor_tick": 0.25}},
+    {"id": "lidar_top_semantic", "type": "sensor.lidar.ray_cast_semantic", "label_only": true,
+     "x": 0.0, "y": 0.0, "z": 2.4, "roll": 0, "pitch": 0, "yaw": 0,
+     "attributes": {"channels": 32, "range": 75, "points_per_second": 600000, "rotation_frequency": 20,
+                    "upper_fov": 10, "lower_fov": -30, "sensor_tick": 0.05}}
+  ]
+}

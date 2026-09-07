@@ -17,6 +17,7 @@ dev = [
   "gersemi",
   "pyyaml",
   "types-pyyaml",
+  "types-setuptools>=84.0.0.20260812",
 ]
 carla = ["carla==0.9.16"]
 infer = ["nuway-ml[torch]"]       # run learned profiles (M3+) without training tooling
@@ -30,6 +31,9 @@ leaderboard = ["py-trees", "networkx", "shapely"]
 package = false                    # the root is not installable
 python-preference = "only-system"  # must be Jazzy's /usr/bin/python3.12
 default-groups = ["dev"]
+# colcon builds ament_python packages with `setup.py develop`, removed in setuptools 80,
+# and the venv's setuptools shadows the distro's through PYTHONPATH (03 §6.1).
+constraint-dependencies = ["setuptools<80"]
 
 [tool.uv.workspace]
 members = ["ml"]
@@ -110,6 +114,7 @@ warn_unreachable = true
 # is appended the moment it lands (M0 §3 tasks 6, 7, 11, 12; M1/M7 for the rest).
 files = [
   "ml/nuway_ml", "tools", "tests",
+  "ros2_ws/src/nuway_carla_bridge",
 ]
 exclude = ["ros2_ws/(build|install|log)/", "ros2_ws/src/carla_msgs/", "data/", "external/"]
 # The ros2_ws Python packages sit one directory deeper than their import name

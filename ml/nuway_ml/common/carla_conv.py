@@ -127,3 +127,17 @@ def angular_velocity_to_ros(omega_deg: LocationLike) -> Array:
             -omega_deg.z * DEG_TO_RAD,
         ]
     )
+
+
+def steer_from_ros(steering_angle_rad: float, max_steer_rad: float) -> float:
+    """ROS front-wheel angle (rad, CCW positive) -> CARLA ``VehicleControl.steer`` in [-1, 1].
+
+    The native ``vehicle_control_cmd`` topic keeps CARLA's convention, positive =
+    right (``docs/02_interfaces.md`` §3.1), hence the sign flip.
+    """
+    return max(-1.0, min(1.0, -steering_angle_rad / max_steer_rad))
+
+
+def steer_to_ros(steer: float, max_steer_rad: float) -> float:
+    """CARLA ``VehicleControl.steer`` -> ROS front-wheel angle in radians."""
+    return -steer * max_steer_rad

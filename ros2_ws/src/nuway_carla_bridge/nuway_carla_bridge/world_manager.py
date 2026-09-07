@@ -386,6 +386,11 @@ class WorldManagerNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (
             if self._startup_pending
             else self._lockstep_timeout_s
         )
+        if self._startup_pending:
+            self.get_logger().info(
+                f"first tick of episode {self._episode_id}: k={k} "
+                f"(sim {elapsed_s:.3f}s); waiting up to {timeout_s:.0f}s for its ControlCommand"
+            )
         waited_s, timed_out = self._wait_for_command(k, timeout_s)
         self._startup_pending = False
         status = NodeDiag.STATUS_OK

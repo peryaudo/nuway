@@ -27,6 +27,7 @@ nuway/
 ├── configs/                               # runtime configuration (YAML)
 │   ├── profiles/                          # one per launch profile
 │   │   ├── m0_gt_all.yaml
+│   │   ├── m0_gt_all.yaml                 # M0: Town03, rig_dev, every use_gt toggle true, pure pursuit + PID
 │   │   ├── sysid.yaml                     # M0 system identification: generated straight (configs/maps/sysid_straight.xodr), rig_none, no route
 │   │   ├── m1_classical.yaml
 │   │   ├── m3_learned_perception.yaml
@@ -180,8 +181,13 @@ nuway/
 │       │   └── test/
 │       ├── nuway_viz/                     # marker_node.cpp, foxglove layouts, rviz configs
 │       └── nuway_bringup/
+│           ├── nuway_bringup/
+│           │   ├── profile.py             # profile YAML -> per-node parameter dicts (defaults < profile keys < <node>: block);
+│           │   │                          #   no rclpy, tested by tests/integration/test_bringup_profile.py
+│           │   └── launch_util.py         # profile_launch()/stack_node(): the launch-file side of profile.py
 │           ├── launch/stack.launch.py     # THE launch file; reads a profile YAML
-│           └── launch/*.launch.py         # per-subsystem launches used by stack.launch.py
+│           └── launch/*.launch.py         # per-subsystem launches used by stack.launch.py (sim, map, localization,
+│                                          #   perception, prediction, planning, control, viz)
 │
 ├── ml/                                    # uv workspace member `nuway-ml` (hatchling)
 │   ├── pyproject.toml                     # package metadata + runtime deps only; no [tool.ruff]/[tool.mypy] here

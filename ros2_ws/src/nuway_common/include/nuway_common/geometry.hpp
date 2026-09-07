@@ -20,6 +20,8 @@ constexpr double kPi = 3.14159265358979323846;
 // std::vector; use these aliases instead of spelling it out.
 using Vector2dList =
     std::vector<Eigen::Vector2d, Eigen::aligned_allocator<Eigen::Vector2d>>;
+using Vector3dList =
+    std::vector<Eigen::Vector3d, Eigen::aligned_allocator<Eigen::Vector3d>>;
 using Vector4dList =
     std::vector<Eigen::Vector4d, Eigen::aligned_allocator<Eigen::Vector4d>>;
 

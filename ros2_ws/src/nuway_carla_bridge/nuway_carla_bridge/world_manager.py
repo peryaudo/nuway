@@ -2,8 +2,10 @@
 
 Responsibilities (``M0_bringup.md`` §2.1, ``docs/02_interfaces.md`` §2):
 
-1. connect, load the town if different, export ``data/maps/<town>/map.xodr``
-   once, set synchronous mode and the Traffic Manager to sync;
+1. connect, load the town if different (a ``carla.town`` ending in ``.xodr``
+   is generated from that OpenDRIVE file and named by its stem; M0 sysid),
+   export ``data/maps/<town>/map.xodr`` once, set synchronous mode and the
+   Traffic Manager to sync;
 2. spawn the hero and the rig (``sensor_rig``), publish ``/tf_static`` and
    ``camera_info``;
 3. own the tick loop in **lockstep**: ``world.tick()``, publish ``/clock`` and
@@ -67,6 +69,18 @@ from nuway_ml.common.tick import TICK_DT_S, tick_index
 NODE_NAME = "world_manager"
 HERO_ROLE = "hero"
 RESET_DROP_MARGIN_M = 0.15  # teleport slightly above the ground and let physics settle
+GENERATED_MAP_NAME = (
+    "OpenDriveMap"  # CARLA's name for every generate_opendrive_world() map
+)
+OPENDRIVE_GENERATION_PARAMETERS = carla.OpendriveGenerationParameters(
+    vertex_distance=2.0,
+    max_road_length=500.0,
+    wall_height=0.0,
+    additional_width=1.0,
+    smooth_junctions=True,
+    enable_mesh_visibility=True,
+    enable_pedestrian_navigation=False,
+)
 WEATHER_PRESETS = {
     name: getattr(carla.WeatherParameters, name)
     for name in dir(carla.WeatherParameters)
@@ -104,7 +118,12 @@ class WorldManagerNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (
         self._world = self._load_world(
             str(p["carla.town"]), bool(p["carla.no_rendering"])
         )
-        self._town = self._world.get_map().name.split("/")[-1]
+        town_param = str(p["carla.town"])
+        self._town = (
+            Path(town_param).stem
+            if town_param.endswith(".xodr")
+            else self._world.get_map().name.split("/")[-1]
+        )
         self._export_opendrive()
         self._apply_sync_settings(
             bool(p["carla.sync"]),
@@ -207,7 +226,23 @@ class WorldManagerNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (
 
     def _load_world(self, town: str, no_rendering: bool) -> carla.World:
         world = self._client.get_world()
-        if town not in world.get_map().name:
+        if town.endswith(".xodr"):
+            # A generated OpenDRIVE world (M0 sysid: configs/maps/sysid_straight.xodr).
+            # CARLA names every generated map "OpenDriveMap", so the current world
+            # is reused only when its OpenDRIVE matches the file.
+            xodr = Path(town).read_text()
+            current = world.get_map()
+            if (
+                not current.name.endswith(GENERATED_MAP_NAME)
+                or current.to_opendrive() != xodr
+            ):
+                self.get_logger().info(
+                    f"generating world from {town} (current: {current.name})"
+                )
+                world = self._client.generate_opendrive_world(
+                    xodr, OPENDRIVE_GENERATION_PARAMETERS
+                )
+        elif town not in world.get_map().name:
             self.get_logger().info(f"loading {town} (current: {world.get_map().name})")
             world = self._client.load_world(town)
         if no_rendering:

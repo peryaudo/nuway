@@ -1,0 +1,35 @@
+<?xml version="1.0" standalone="yes"?>
+<OpenDRIVE>
+  <header revMajor="1" revMinor="4" name="sysid_straight" version="1.0" date="2026-09-07" north="52" south="-52" east="3000.0" west="0">
+    <geoReference><![CDATA[+proj=tmerc +lat_0=0 +lon_0=0 +k=1 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs]]></geoReference>
+  </header>
+  <road name="straight" length="3000.0" id="1" junction="-1">
+    <link/>
+    <type s="0" type="motorway"><speed max="120" unit="km/h"/></type>
+    <planView>
+      <geometry s="0" x="0" y="0" hdg="0" length="3000.0"><line/></geometry>
+    </planView>
+    <elevationProfile><elevation s="0" a="0" b="0" c="0" d="0"/></elevationProfile>
+    <lateralProfile/>
+    <lanes>
+      <laneOffset s="0" a="0" b="0" c="0" d="0"/>
+      <laneSection s="0">
+        <left>
+          <lane id="3" type="driving" level="false"><link/><width sOffset="0" a="45.0" b="0" c="0" d="0"/><roadMark sOffset="0" type="none" weight="standard" color="white" laneChange="none"/></lane>
+          <lane id="2" type="driving" level="false"><link/><width sOffset="0" a="3.5" b="0" c="0" d="0"/><roadMark sOffset="0" type="solid" weight="standard" color="white" width="0.125" laneChange="none"/></lane>
+          <lane id="1" type="driving" level="false"><link/><width sOffset="0" a="3.5" b="0" c="0" d="0"/><roadMark sOffset="0" type="broken" weight="standard" color="white" width="0.125" laneChange="both"/></lane>
+        </left>
+        <center>
+          <lane id="0" type="none" level="false"><link/><roadMark sOffset="0" type="solid solid" weight="standard" color="yellow" width="0.125" laneChange="none"/></lane>
+        </center>
+        <right>
+          <lane id="-1" type="driving" level="false"><link/><width sOffset="0" a="3.5" b="0" c="0" d="0"/><roadMark sOffset="0" type="broken" weight="standard" color="white" width="0.125" laneChange="both"/></lane>
+          <lane id="-2" type="driving" level="false"><link/><width sOffset="0" a="3.5" b="0" c="0" d="0"/><roadMark sOffset="0" type="solid" weight="standard" color="white" width="0.125" laneChange="none"/></lane>
+          <lane id="-3" type="driving" level="false"><link/><width sOffset="0" a="45.0" b="0" c="0" d="0"/><roadMark sOffset="0" type="none" weight="standard" color="white" laneChange="none"/></lane>
+        </right>
+      </laneSection>
+    </lanes>
+    <objects/>
+    <signals/>
+  </road>
+</OpenDRIVE>

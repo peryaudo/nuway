@@ -5,7 +5,7 @@ How to take a brand-new machine to a working `nuway` development environment.
 **Status.** Sections 0–5 were executed end-to-end on the reference dev box (0–3 and 5 on
 2026-09-06, 4 on 2026-09-07 when M0 task 1 landed `setup_env.sh`); the versions and outputs shown
 are what those runs actually produced. Section 6 (`tools/eval/setup_leaderboard.sh`) is an M1
-deliverable and cannot be run yet. Section 7 runs once M0 task 5 lands `check_native_ros2.py`.
+deliverable and cannot be run yet. Section 7 was run on 2026-09-07 with M0 task 5's `check_native_ros2.py`.
 
 The authority on *what* the environment is remains `00_overview.md` §4 and
 `03_style_and_conventions.md` §6 — this document is only the procedure. If the two disagree,
@@ -118,6 +118,7 @@ redirects to returns 403). Launch:
 
 ```bash
 cd ~/carla && ./CarlaUE4.sh -RenderOffScreen --ros2 -carla-rpc-port=2000
+# or, once §4 has run: tools/carla/start_carla.sh --wait   (the one place the flags live)
 ```
 
 > **Never pass `-quality-level=Low`.** It segfaults the server on the first `load_world()`
@@ -225,14 +226,10 @@ The commits are pinned in the script and listed in `03_style_and_conventions.md`
 
 ## 7. End-to-end check
 
-> Blocked on M0 task 5: `tools/carla/check_native_ros2.py` does not exist yet. The `ros2 topic
-> list` output below is a real capture and is valid to check against today, by spawning a rig
-> manually through the CARLA Python API.
-
-With CARLA running (§3) and the environment sourced (§4):
+With CARLA running (§3, or `tools/carla/start_carla.sh --wait`) and the environment sourced (§4):
 
 ```bash
-python3 tools/carla/check_native_ros2.py
+uv run tools/carla/check_native_ros2.py --town Town03
 ```
 
 This is M0 task 5. It spawns a hero and rig, and asserts the properties recorded in

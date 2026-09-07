@@ -95,7 +95,8 @@ nuway/
 │       │   │   ├── qos.hpp                # the QoS profiles from 02_interfaces.md §3.11
 │       │   │   ├── tick.hpp               # TickIndex(stamp), IsPlanningTick(k); current-tick barrier helper (02 §2)
 │       │   │   ├── frames.hpp             # frame ids and the topic names shared by more than one package (mirrors frames.py)
-│       │   │   └── params.hpp             # declare/get param helpers
+│       │   │   ├── params.hpp             # declare/get param helpers
+│       │   │   └── node_main.hpp          # RunNode<T>(): the one main() body of every C++ node (init, spin, shutdown, node-boundary catch)
 │       │   └── test/
 │       ├── nuway_py/                      # THE pybind11 package (one per repo). M0: nuway_common + nuway_control::LongitudinalMap
 │       │                                  #   for the parity tests; M6: FSM, lattice, QP, selector, collision, const-vel predictor,
@@ -293,7 +294,7 @@ nuway/
 │   └── eval_runs/                         # <run_id>/: report.md, results.csv, per-route mcap + renders (docs/02 §8)
 │
 ├── tests/                                 # cross-cutting integration tests
-│   ├── fixtures/                          # gen_*.py generators + small committed JSON fixtures
+│   ├── fixtures/                          # gen_*.py generators (CLI, may print) + small committed CSV/JSON fixtures
 │   └── integration/
 ├── .github/workflows/                     # CI: format, tidy, sanitizer, ruff, mypy, pytest (see docs/03 §7.4)
 ├── .clang-format                          # BasedOnStyle: Google (see docs/03)

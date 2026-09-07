@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>nuway_map</name>
+  <version>0.0.0</version>
+  <description>OpenDRIVE parser, lane graph and the map_server node (M0).</description>
+  <maintainer email="peryaudo@gmail.com">Tetsui Ohkubo</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <buildtool_depend>nuway_cmake</buildtool_depend>
+
+  <depend>eigen</depend>
+  <depend>libpugixml-dev</depend>
+  <depend>libnanoflann-dev</depend>
+  <depend>rclcpp</depend>
+  <depend>nuway_common</depend>
+  <depend>nuway_msgs</depend>
+
+  <test_depend>ament_cmake_gtest</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

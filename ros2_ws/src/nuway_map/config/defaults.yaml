@@ -1,0 +1,8 @@
+# Package defaults for map_server_node; the profile overrides them (docs/02 §5).
+map_server_node:
+  ros__parameters:
+    map_dir: data/maps          # <map_dir>/<town>/map.xodr, written by world_manager
+    town: Town03
+    default_speed_limit_mps: 8.33
+    centerline_spacing_m: 1.0
+    poll_period_s: 1.0          # wall-clock file poll; start-up only, before any tick

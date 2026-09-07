@@ -10,6 +10,11 @@ arithmetic lives here.
 State across ticks: the per-actor history ring buffers (0.1 s spacing, sampled
 on planning ticks) and the traffic-light id cache; :meth:`GtPublisher.reset`
 clears the ring buffers (``docs/02_interfaces.md`` §7).
+
+Traffic lights are matched to ``TrafficLightMapping`` ids through their
+affected lanes (``M0_bringup.md`` §2.2): CARLA's affected waypoints and the
+OpenDRIVE ``<signalReference>`` records describe the same lanes, whereas the
+stop waypoints sit at the trigger-volume edge, which the map does not carry.
 """
 
 from __future__ import annotations
@@ -33,8 +38,6 @@ from nuway_msgs.msg import (
 )
 from rclpy.node import Node
 
-from nuway_carla_bridge.ros_conv import pose_from_se3
-from nuway_carla_bridge.ros_qos import qos
 from nuway_ml.common.carla_conv import (
     angular_velocity_to_ros,
     location_to_ros,
@@ -53,12 +56,13 @@ from nuway_ml.common.frames import (
 from nuway_ml.common.geometry import SE3, apply, compose, inverse, quaternion_to_yaw
 from nuway_ml.common.rig import VehicleGeometry
 from nuway_ml.common.tick import is_planning_tick
+from nuway_rclpy.ros_conv import pose_from_se3
+from nuway_rclpy.ros_qos import qos
 
 Array = NDArray[np.float64]
 
 HISTORY_LEN = int(Agent.HISTORY_LEN)
 TL_ID_UNMAPPED_FLAG = 0x80000000
-TL_STOP_LINE_MATCH_M = 2.0
 BICYCLE_HINTS = (
     "bike",
     "bicycle",
@@ -90,7 +94,7 @@ class _LaneIndex:
     """Lane-graph lookup: (road_id, lane_id_odr) -> [(lane_id, centerline (N, 2))]."""
 
     by_odr: dict[tuple[int, int], list[tuple[int, Array]]] = field(default_factory=dict)
-    tl_stop_lines: list[tuple[int, Array]] = field(default_factory=list)
+    tl_by_lane: dict[int, int] = field(default_factory=dict)
 
     @classmethod
     def from_msg(cls, msg: LaneGraph) -> _LaneIndex:
@@ -102,9 +106,8 @@ class _LaneIndex:
                 (int(lane.road_id), int(lane.lane_id_odr)), []
             ).append((int(lane.id), pts))
         for tl in msg.traffic_lights:
-            index.tl_stop_lines.append(
-                (int(tl.id), np.array([tl.stop_line.x, tl.stop_line.y]))
-            )
+            for lane_id in tl.affected_lane_ids:
+                index.tl_by_lane[int(lane_id)] = int(tl.id)
         return index
 
     def lane_id_at(self, road_id: int, lane_id_odr: int, xy: Array) -> int | None:
@@ -116,14 +119,16 @@ class _LaneIndex:
                 best = (d, lane_id)
         return None if best is None else best[1]
 
-    def tl_id_near(self, xy: Array) -> int | None:
-        """TrafficLightMapping id whose stop line is within 2 m of ``xy``."""
-        best: tuple[float, int] | None = None
-        for tl_id, stop in self.tl_stop_lines:
-            d = float(np.linalg.norm(stop - xy))
-            if d < TL_STOP_LINE_MATCH_M and (best is None or d < best[0]):
-                best = (d, tl_id)
-        return None if best is None else best[1]
+    def tl_id_for_lanes(self, lane_ids: list[int]) -> int | None:
+        """TrafficLightMapping id governing most of ``lane_ids`` (None if none does)."""
+        votes = collections.Counter(
+            self.tl_by_lane[lane_id]
+            for lane_id in lane_ids
+            if lane_id in self.tl_by_lane
+        )
+        if not votes:
+            return None
+        return int(votes.most_common(1)[0][0])
 
 
 @dataclass
@@ -325,18 +330,18 @@ class GtPublisher:
         affected: list[int] = []
         tl_id: int | None = None
         if self._lanes is not None:
-            tl_id = self._lanes.tl_id_near(stop_line[:2])
             for wp in tl.get_affected_lane_waypoints():
                 xy = location_to_ros(wp.transform.location)[:2]
                 lane_id = self._lanes.lane_id_at(int(wp.road_id), int(wp.lane_id), xy)
                 if lane_id is not None and lane_id not in affected:
                     affected.append(lane_id)
+            tl_id = self._lanes.tl_id_for_lanes(affected)
         if tl_id is None:
             tl_id = int(tl.id) | TL_ID_UNMAPPED_FLAG
             if self._lanes is not None and int(tl.id) not in self._unmapped_warned:
                 self._unmapped_warned.add(int(tl.id))
                 self.warnings.append(
-                    f"traffic light actor {tl.id} has no LaneGraph mapping within 2 m"
+                    f"traffic light actor {tl.id} governs no LaneGraph-mapped lane"
                 )
         entry = _TlStatic(tl_id, stop_line, affected)
         if self._lanes is not None:

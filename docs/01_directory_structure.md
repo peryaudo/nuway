@@ -106,6 +106,9 @@ nuway/
 │       │                                  #   for the parity tests; M6: FSM, lattice, QP, selector, collision, const-vel predictor,
 │       │                                  #   safety layer, MPC for the expert and gt_planning_node. Deliberate exception to the
 │       │                                  #   "ml/ owns everything tools/ imports" rule (see Rules)
+│       ├── nuway_rclpy/                   # python: the rclpy-side helpers every Python node package shares (M0):
+│       │   └── nuway_rclpy/               #   ros_qos.py (QoSProfile from the 02 §3.11 table), ros_conv.py (SE3 <-> Pose,
+│       │                                  #   stamps). nuway_ml never imports rclpy, so these cannot live there
 │       ├── nuway_carla_bridge/            # python (rclpy) — talks to CARLA Python API. Two nodes: world_manager and
 │       │   ├── nuway_carla_bridge/        #   control_adapter. gt_publisher.py and sensor_rig.py are MODULES hosted by the
 │       │   │   ├── world_manager.py       #   world_manager node (one process, one CARLA client). Node: owns world.tick() in
@@ -125,8 +128,10 @@ nuway/
 │       │   └── include/nuway_map/
 │       ├── nuway_route/                   # C++: A* on lane graph, reference line builder
 │       ├── nuway_localization/            # C++
+│       │   ├── config/defaults.yaml
+│       │   ├── include/nuway_localization/
 │       │   ├── src/
-│       │   │   ├── gt_pose_node.cpp       # cheat twin (M0)
+│       │   │   ├── gt_pose_node.cpp       # cheat twin (M0): GT odom + vehicle_state -> /nuway/loc/pose + TF, noise.* params
 │       │   │   ├── voxel_hash_map.cpp / icp.cpp / scan_context.cpp   # M5 libraries
 │       │   │   ├── lidar_odometry.cpp / lidar_odometry_node.cpp      # M5
 │       │   │   ├── scan_to_map.cpp / scan_to_map_node.cpp            # M5
@@ -135,7 +140,9 @@ nuway/
 │       │   └── tools/                     # map_builder, pose_graph_refine binaries (M5)
 │       ├── nuway_perception/               # python except lidar_preproc_node
 │       │   ├── src/lidar_preproc_node.cpp    # escalation path only: C++ pillarization if Python preproc > 8 ms (M3)
+│       │   ├── config/defaults.yaml
 │       │   ├── nuway_perception/          # python
+│       │   │   ├── gt_twin_node.py           # base of the GT twins: tick barrier, reset, TickTimeout degradation, diag (M0)
 │       │   │   ├── gt_perception_node.py     # cheat twin: AgentArray + OccupancyGridMC from GT (M0/M2)
 │       │   │   ├── gt_traffic_light_node.py  # cheat twin: TrafficLightArray from GT (M0)
 │       │   │   ├── perception_node.py        # inference (M3); optionally hosts traffic_light_node (M4); imports the

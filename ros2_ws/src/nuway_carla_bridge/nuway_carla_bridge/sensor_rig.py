@@ -18,8 +18,6 @@ from rclpy.node import Node
 from sensor_msgs.msg import CameraInfo
 from tf2_ros import StaticTransformBroadcaster
 
-from nuway_carla_bridge.ros_conv import transform_from_se3
-from nuway_carla_bridge.ros_qos import qos
 from nuway_ml.common.frames import FRAME_BASE_LINK, TOPIC_CAMERA_INFO_FMT
 from nuway_ml.common.rig import (
     Rig,
@@ -28,6 +26,8 @@ from nuway_ml.common.rig import (
     intrinsics,
     sensor_in_base_link,
 )
+from nuway_rclpy.ros_conv import transform_from_se3
+from nuway_rclpy.ros_qos import qos
 
 if TYPE_CHECKING:
     from rclpy.publisher import Publisher

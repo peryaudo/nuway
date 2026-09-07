@@ -1,23 +1,17 @@
 <?xml version="1.0"?>
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
-  <name>nuway_carla_bridge</name>
+  <name>nuway_perception</name>
   <version>0.0.0</version>
-  <description>The CARLA side of nuway (M0): world_manager (owns the client, lockstep tick, /clock, GT topics via gt_publisher, the rig via sensor_rig, reset/weather services) and control_adapter (ControlCommand to CarlaEgoVehicleControl).</description>
+  <description>Perception nodes. M0: the cheat twins gt_perception_node (AgentArray in base_link + the static-drivable OccupancyGridMC) and gt_traffic_light_node.</description>
   <maintainer email="peryaudo@gmail.com">Tetsui Ohkubo</maintainer>
   <license>MIT</license>
 
   <exec_depend>rclpy</exec_depend>
-  <exec_depend>tf2_ros_py</exec_depend>
   <exec_depend>std_msgs</exec_depend>
   <exec_depend>geometry_msgs</exec_depend>
-  <exec_depend>sensor_msgs</exec_depend>
-  <exec_depend>nav_msgs</exec_depend>
-  <exec_depend>rosgraph_msgs</exec_depend>
   <exec_depend>nuway_msgs</exec_depend>
   <exec_depend>nuway_rclpy</exec_depend>
-  <exec_depend>carla_msgs</exec_depend>
-
 
   <export>
     <build_type>ament_python</build_type>

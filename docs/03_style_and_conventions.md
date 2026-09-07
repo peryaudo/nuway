@@ -471,7 +471,7 @@ convention = "pep257"
 "**/launch/*.launch.py" = ["D", "ANN"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["nuway_ml", "nuway_py", "nuway_eval", "nuway_carla_bridge", "nuway_perception", "nuway_prediction", "nuway_planning", "nuway_bringup", "nuway_viz"]
+known-first-party = ["nuway_ml", "nuway_py", "nuway_eval", "nuway_rclpy", "nuway_carla_bridge", "nuway_perception", "nuway_prediction", "nuway_planning", "nuway_bringup", "nuway_viz"]
 
 [tool.mypy]
 python_version = "3.12"
@@ -481,11 +481,11 @@ warn_unreachable = true
 # actually checks them; the override below relaxes strictness for them.
 files = [
   "ml/nuway_ml", "tools", "tests",
-  "ros2_ws/src/nuway_carla_bridge", "ros2_ws/src/nuway_perception",
+  "ros2_ws/src/nuway_carla_bridge", "ros2_ws/src/nuway_rclpy", "ros2_ws/src/nuway_perception",
   "ros2_ws/src/nuway_prediction", "ros2_ws/src/nuway_planning",
   "ros2_ws/src/nuway_bringup", "ros2_ws/src/nuway_viz",
 ]
-exclude = ["ros2_ws/(build|install|log)/", "ros2_ws/src/carla_msgs/", "data/"]
+exclude = ["ros2_ws/(build|install|log)/", "ros2_ws/src/carla_msgs/", "ros2_ws/src/[a-z_]+/setup\\.py$", "data/"]
 # The ros2_ws Python packages sit one directory deeper than their import name
 # (ros2_ws/src/<pkg>/<pkg>/); mypy_path makes `import nuway_perception` resolve
 # without an install step. tools/eval holds the nuway_eval package.

@@ -1,0 +1,7 @@
+# Package defaults for gt_pose_node; the profile overrides them (docs/02 §5).
+gt_pose_node:
+  ros__parameters:
+    noise.translation_sigma_m: 0.0   # Gaussian noise on x, y of the published pose (0 = exact GT)
+    noise.yaw_sigma_rad: 0.0         # Gaussian noise on yaw
+    noise.latency_ticks: 0           # publish the GT pose of tick k - latency stamped k
+    noise.seed: 0                    # RNG seed (plus the episode id at every reset): deterministic per episode

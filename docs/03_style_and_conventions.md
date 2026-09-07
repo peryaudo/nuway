@@ -231,7 +231,7 @@ Modern, pinned, identical on every developer machine and in CI. This section is 
 
 1. Verify prerequisites: Ubuntu 24.04, `/opt/ros/jazzy`, `uv`, `ninja`, `ccache`, `mold`, `cmake ≥ 3.28`, `gcc-13`; print the install command for anything missing and stop.
 2. `source /opt/ros/jazzy/setup.bash`; `export COLCON_DEFAULTS_FILE=$REPO/ros2_ws/colcon_defaults.yaml`; `export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp`.
-3. Create `.venv` if absent (`uv venv --python /usr/bin/python3.12 --system-site-packages`), then `uv sync` (with `--group carla --group train` when `NUWAY_FULL=1`).
+3. Create `.venv` if absent (`uv venv --python /usr/bin/python3.12 --system-site-packages`), then `uv sync` (with `--group carla --group train --group viz` when `NUWAY_FULL=1`).
 4. `source .venv/bin/activate`; `source ros2_ws/install/setup.bash` if the workspace has been built.
 5. `uv run pre-commit install` if the git hook is missing.
 
@@ -252,7 +252,7 @@ Decided in M0 and kept current here whenever `uv.lock` or the workflows change a
 | ruff, mypy, pytest, pre-commit, gersemi | exact in lock | `pyproject.toml` `dev` group, `uv.lock` |
 | torch | ≥ 2.4, `cu126` index | `ml/pyproject.toml`, `[[tool.uv.index]]` |
 | hydra-core, wandb | exact in lock | `pyproject.toml` `train` group, `uv.lock` |
-| GTSAM / OSQP / nanoflann | 4.2.0 / 0.2.0 / 1.5.4, from apt | `package.xml` + rosdep (§6.2) |
+| GTSAM / osqp-vendor / nanoflann | 4.2.0 / 0.2.0 (the `ros-jazzy-osqp-vendor` package version, not OSQP's own) / 1.5.4, from apt | `package.xml` + rosdep (§6.2) |
 | osqp-eigen | tag, by commit hash | `ros2_ws/src/osqp_eigen_vendor/CMakeLists.txt` |
 
 ---
@@ -393,6 +393,7 @@ dev = [
 ]
 carla = ["carla==0.9.16"]
 train = ["hydra-core", "wandb"]   # config management and run/metric logging (§9.7)
+viz = ["matplotlib", "rosbags"]   # headless rendering (02_interfaces.md §8); never imported by runtime nodes
 
 [tool.uv]
 package = false                    # the root is not installable
@@ -563,7 +564,7 @@ Applies to `ml/`, `tools/`, `tests/`, and the rclpy packages and launch files in
 
 - [PEP 8](https://peps.python.org/pep-0008/) for code layout and naming, [PEP 257](https://peps.python.org/pep-0257/) for docstrings, [PEP 484](https://peps.python.org/pep-0484/)/[PEP 604](https://peps.python.org/pep-0604/) for type hints. No house style on top; `ruff` is the arbiter.
 - Formatting is fully delegated to `ruff format` (Black-compatible): 88 columns, double quotes, trailing commas as the formatter decides. Never hand-format. `# fmt: off` / `# fmt: on` only around literal tables, always paired.
-- Python 3.10 exactly (`target-version = "py312"`): use `match`, `X | None`, `dict[str, int]` builtins generics; no `typing.Optional`, `typing.List`. No 3.11+ features.
+- Python 3.12 exactly (`target-version = "py312"`): use `match`, `X | None`, `dict[str, int]` builtins generics; no `typing.Optional`, `typing.List`. No 3.13+ features.
 
 ### 9.2 Naming
 

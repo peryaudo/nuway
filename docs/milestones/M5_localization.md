@@ -9,6 +9,7 @@
 - [ ] Initialization from GNSS + heading search succeeds within 3 s (60 ticks) from a standstill anywhere on the road.
 - [ ] Closed-loop: profile `m5_no_gt.yaml` (learned perception + learned traffic lights + learned localization) scores ≥ 90% of the `m4_learned_tl` score on the M1 protocol.
 - [ ] Localization node chain CPU time ≤ 20 ms per 10 Hz cycle.
+- [ ] Leaderboard (deferred from M1, `M1_classical_planning.md` §3.12): `run_leaderboard.sh` with `m5_no_gt.yaml` completes ≥ 8 of 10 dev routes under the official runner, and the Leaderboard's own driving score is within 5 points of our harness running the same profile on the same routes.
 
 ---
 
@@ -38,7 +39,7 @@ KISS-ICP recipe, implemented in-repo (no external KISS-ICP dependency; ~600 line
 3. Motion prediction: constant velocity: `T_pred = T_{k-1} · (T_{k-2}^{-1} T_{k-1})`.
 4. Local map: voxel hash map (voxel 1.0 m, ≤ 20 points/voxel), points within 100 m of the current pose; insert the downsampled scan after registration; remove far voxels.
 5. Registration: point-to-point ICP with adaptive threshold (KISS-ICP's `σ` from the model deviation of previous predictions), robust Cauchy kernel, Gauss-Newton on SE(3) with Eigen, max 50 iterations, convergence on `‖Δ‖ < 1e-4`. Nearest neighbors from the voxel hash (search 27 neighboring voxels).
-6. Output `T_{k-1→k}` and an information estimate: use the GN Hessian at convergence scaled by residual variance (cap the resulting σ at 0.05 m / 0.2° min, 0.5 m / 2° max).
+6. Output `T_{k-1→k}` and an information estimate: use the GN Hessian at convergence scaled by residual variance (cap the resulting σ at 0.05 m / 0.2° min, 0.5 m / 2° max). Published as `nuway_msgs/OdometryDelta` (delta + 6×6 covariance + both keyframe stamps, `02_interfaces.md` §4), so the smoother's `BetweenFactor` receives the adaptive noise model.
 
 Tests: synthetic cube-room point clouds with known motion → recovered transform within 1 cm / 0.1°; timing test ≤ 12 ms for 30k input points.
 
@@ -95,7 +96,7 @@ On start or on `ResetEvent`: discard the smoother graph, local map and extrapola
 7. [ ] `pose_extrapolator.cpp` + node; TF publishing; parity with `gt_pose_node` output rate/format.
 8. [ ] Initialization and `ResetEvent` handling; test from 20 random spawn points and across 5 consecutive resets.
 9. [ ] `eval_localization.py`; achieve ATE criteria; tune noise models; record in Decisions log.
-10. [ ] Profile `m5_no_gt.yaml`; closed-loop eval under our harness **and** under the Leaderboard runner (M1 §3.12; this is the first profile that legitimately runs there); report.
+10. [ ] Profile `m5_no_gt.yaml`; closed-loop eval under our harness **and** under the Leaderboard runner (M1 §3.12; the first profile that legitimately runs there — this closes the completion/score-parity criteria deferred from M1); report.
 11. [ ] `tests/integration/test_m5_no_gt.py` (short route, learned perception + localization, asserts completion).
 
 ## 5. Decisions log

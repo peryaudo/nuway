@@ -4,7 +4,7 @@
 
 **Completion criteria**
 - [ ] Closed-loop, no GT anywhere, profile `m8_learned_planner.yaml`: driving score > M7 (lattice) score on the M1 protocol **and** on the M6 scenario routes; safety-layer intervention rate < 50% of the lattice path's; comfort (mean |jerk|) not worse. The report also states the gap to the M1 GT baseline and to the M6 expert; there is no pass/fail threshold on that gap (`00_overview.md` §3), but it must be printed.
-- [ ] Fallback engages correctly in an injected-failure test (planner node killed → lattice path continues within 0.3 s; learned candidates all infeasible → lattice selected).
+- [ ] Fallback engages correctly in an injected-failure test (prediction node killed, so learned candidates vanish → lattice path continues within 0.3 s; learned candidates all infeasible → lattice selected).
 - [ ] After ≥ 3 DAgger rounds: closed-loop score improves monotonically or plateaus; report shows it.
 - [ ] Learned candidates are QP-refined in ≤ 5 ms for M=8 on CPU.
 
@@ -51,7 +51,7 @@ Time consistency term in the selector (`consistency` cost, M1) is raised for lea
 ## 4. DAgger loop (`nuway_ml/planning/dagger.py`, `tools/collect/collect_dagger.py`)
 
 Round r:
-1. Run the current student (full stack, no GT, profile m7) on the collection route set with the M6 scenario library, `n_routes` ≈ 200, render-free is **not** possible here (perception needs sensors) → run with rendering but at Low quality; measured, not assumed: at ≈ 15 ticks/s and ≈ 3 min of sim time per route this is ≈ 12 h per round on one GPU, so rounds are run overnight. Alternative "cheap DAgger": `use_gt.perception=true`, `use_gt.traffic_lights=true`, `use_gt.localization=true`, render-free, with agent visibility from the M6 geometric raycast (§3.1) rather than the sensor-based filter (which would need the semantic LiDAR and depth cameras, i.e. rendering) — use this for rounds 1–2, then one rendered round.
+1. Run the current student (full stack, no GT, profile m7) on the collection route set with the M6 scenario library, `n_routes` ≈ 200, render-free is **not** possible here (perception needs sensors) → run with rendering at default (Epic) quality — Low is unusable (`00_overview.md` §4): at the measured 15–26 ticks/s (`00_overview.md` §4 table) and ≈ 3 min of sim time per route this is ≈ 8–14 h per round on one GPU, so rounds are run overnight. Alternative "cheap DAgger": `use_gt.perception=true`, `use_gt.traffic_lights=true`, `use_gt.localization=true`, render-free, with `gt_perception.source: geometry` (`02_interfaces.md` §5): occupancy and agent visibility come from the M6 static map + raycast (M6 §3.1) instead of the semantic LiDAR the sensor mode needs — use this for rounds 1–2, then one rendered round.
 2. At every frame, also run the expert (`gt_planning_node` from M6 alongside the student, both subscribed to the same GT inputs) and log its trajectory + decision as the label; the student's *own* trajectory is logged too. Frames are `PlanningFrame` with `expert.*` filled by the expert and `student_traj` added.
 3. Aggregate: dataset_r = dataset_{r−1} ∪ new frames (weight new frames ×2 for the first epoch).
 4. Fine-tune planning head (+ encoder at 0.1× lr) for 3 epochs: `uv run python -m nuway_ml.planning.train stage=dagger dagger.round=<r>`, one W&B run per round (`job_type=dagger`, tagged `round_<r>`).

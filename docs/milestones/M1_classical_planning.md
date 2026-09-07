@@ -9,7 +9,7 @@
 - [ ] MPC solve time p99 < 3 ms; planner cycle p99 < 15 ms.
 - [ ] `tools/eval/run_routes.py --profile m1_classical` produces `data/eval_runs/<run_id>/report.md` + `results.csv` + per-route MCAP.
 - [ ] Every infraction row in `report.md` links a rendered incident sheet under `<route>/incidents/`, produced by the run itself with `eval.render: incidents` (`02_interfaces.md` §8.2). Rendering the same bag twice produces byte-identical PNGs.
-- [ ] `tools/eval/run_leaderboard.sh --routes dev_town03.xml` runs the stack under the official Leaderboard 2.x runner (`leaderboard_evaluator.py`, ROS agent) and completes ≥ 8 of 10 routes; the Leaderboard's own driving score is within 5 points of our harness on the same routes.
+- [ ] `tools/eval/run_leaderboard.sh --routes dev_town03.xml` runs the stack under the official Leaderboard 2.x runner (`leaderboard_evaluator.py`, ROS agent): the agent registers, sensor payloads and `/clock` flow, the lockstep gate holds (the runner blocks each tick until our `ControlCommand`), controls are applied, and the runner's JSON results land next to ours. Route completions and score parity are **not** M1 criteria: the runner provides no GT of any kind, and before M3/M5 the stack has no perception or localization source under it, so those criteria are deferred to M5 (`M5_localization.md`; §3.12).
 
 ---
 
@@ -88,7 +88,7 @@ Combine path × speed → Cartesian trajectories via `frenet.hpp::ToCartesian`, 
 
 ### 3.4 `nuway_planning/collision_checker` (C++)
 
-Ego footprint: rectangle `length × width` (from vehicle YAML) inflated by `margin_lon = 1.0`, `margin_lat = 0.4`. For each candidate and each prediction sample, check oriented-box overlap at t ∈ {0, 0.5, …, 8} using the separating axis theorem; agent boxes inflated by `0.2`. Cost = `Σ_samples weight · 𝟙[collision]` and `min_ttc` = first colliding t. Also compute `min_distance(t)` (approximate by circle-disc decomposition: 3 discs per vehicle) for the selector's proximity cost.
+Ego footprint: rectangle `length × width` (from vehicle YAML) inflated by `margin_lon = 1.0`, `margin_lat = 0.4`. For each candidate and each prediction sample, check oriented-box overlap at t ∈ {0, 0.5, …, 8} using the separating axis theorem (t = 0 uses the agent's current observed pose; t = 0.5 … 8 come from the sample, which carries T = 16 steps starting at 0.5 s); agent boxes inflated by `0.2`. Cost = `Σ_samples weight · 𝟙[collision]` and `min_ttc` = first colliding t. Also compute `min_distance(t)` (approximate by circle-disc decomposition: 3 discs per vehicle) for the selector's proximity cost.
 
 ### 3.5 `nuway_planning/piecewise_jerk_qp` (C++, OSQP)
 
@@ -174,7 +174,7 @@ Debug: publish predicted MPC trajectory as markers.
 
 ### 3.9 Traffic in the world manager
 
-`world_manager` reads the profile's `carla.traffic:` block (`02_interfaces.md` §5): `n_vehicles`, `n_walkers`, `seed`, `tm_port`, `hybrid_physics: false`. Spawn via Traffic Manager with `tm.set_random_device_seed(seed)`, `set_global_distance_to_leading_vehicle(2.5)`, `ignore_lights_percentage(0)`. Walkers via `WalkerAIController`. All in sync mode. Traffic is despawned and respawned on every `/nuway/sim/reset` so that route N+1 never sees route N's actors.
+`world_manager` reads the profile's `carla.traffic:` block (`02_interfaces.md` §5): `n_vehicles`, `n_walkers`, `seed`, `tm_port`, `hybrid_physics: false`. Spawn via Traffic Manager with `tm.set_random_device_seed(seed)`, `set_global_distance_to_leading_vehicle(2.5)`, `ignore_lights_percentage(0)`. The seed is the profile's `carla.traffic.seed` unless the `/nuway/sim/reset` call that started the route carried `traffic_seed >= 0` (`Reset.srv`, `02_interfaces.md` §4), which is how the harness sets it per route. Walkers via `WalkerAIController`. All in sync mode. Traffic is despawned and respawned on every `/nuway/sim/reset` so that route N+1 never sees route N's actors.
 
 ### 3.10 Evaluation harness (`nuway_eval`, `tools/eval/`)
 
@@ -219,7 +219,7 @@ The official Leaderboard runner owns the CARLA client, the tick, the sensors and
 - `leaderboard_agent.py` is a Leaderboard `AutonomousAgent` (`ROS2` track). `sensors()` returns the rig from `configs/sensors/rig_leaderboard.json` (same extrinsics as `rig_dev.json`, checked by a test; stays within the Leaderboard's sensor-count limits, so `cam_tl` from M4 is excluded there). `run_step(input_data, timestamp)` publishes the sensor payloads on the same `/carla/hero/*` topic names and types as the native interface, publishes `/clock` for that tick, publishes `/nuway/sim/vehicle_state` from the speedometer pseudo-sensor (`valid_steering: false`), then **blocks** until `/nuway/control/command` stamped with that tick arrives (or the watchdog fires) and returns the converted `carla.VehicleControl`. This preserves the lockstep protocol: the runner cannot tick until we have answered.
 - The map comes from the Leaderboard's OpenDRIVE pseudo-sensor on the first step, written to `data/maps/<town>.xodr` and served by `map_server` exactly as in our harness. The route is the Leaderboard's `global_plan`, converted to goals by the M0 route loader.
 - `/nuway/sim/reset` and `/nuway/sim/set_weather` are served by the agent (`setup()`/`destroy()` per route) and publish `ResetEvent` like `world_manager` does.
-- No CARLA client is opened by the stack. GT toggles are meaningless under the Leaderboard: the agent refuses to start with any `use_gt.*: true` except `localization` (Leaderboard provides no GT pose either; before M5 the localization twin is fed from the IMU/GNSS/speedometer by dead reckoning and the stack is expected to score poorly; from M5 on `m5_no_gt.yaml` is the Leaderboard profile).
+- No CARLA client is opened by the stack. GT toggles are meaningless under the Leaderboard: the agent refuses to start with **any** `use_gt.*: true` — the runner provides no privileged access of any kind, GT pose included. Before M5 the stack therefore has no localization source under the runner (and before M3, no perception source), so M1 validates the integration mechanically — lockstep, topics, controls, results plumbing — and the route-completion and score-parity criteria are deferred to M5, where `m5_no_gt.yaml` is the first profile that legitimately drives there.
 - `run_leaderboard.sh` launches the stack with `configs/profiles/leaderboard.yaml`, then the Leaderboard evaluator with `--agent leaderboard_agent.py --track ROS2`, and copies the Leaderboard's JSON results next to our `results.csv`. Scores from the two are compared in the report.
 
 ## 4. Task list
@@ -242,7 +242,7 @@ The official Leaderboard runner owns the CARLA client, the tick, the sensors and
 16. [ ] `cam_chase` rig entry, `/nuway/viz/chase_cam` publisher in `sensor_rig.py`, `chase_writer.py`; `eval.chase_cam` off in `leaderboard.yaml`.
 17. [ ] Tune: lattice sets, selector weights, MPC weights on dev routes until criteria met. Record final weights in configs and a short tuning note in the Decisions log.
 18. [ ] `tests/integration/test_m1_traffic.py` (short route, 20 vehicles, asserts no collision and completion) and `test_m1_determinism.py` (same route twice, asserts identical command sequences).
-19. [ ] `leaderboard_agent.py`, `rig_leaderboard.json` (+ parity test vs `rig_dev.json`), `configs/profiles/leaderboard.yaml`, `run_leaderboard.sh`; run the dev routes under the official runner; compare scores in the report.
+19. [ ] `leaderboard_agent.py`, `rig_leaderboard.json` (+ parity test vs `rig_dev.json`), `configs/profiles/leaderboard.yaml`, `run_leaderboard.sh`; run a dev route under the official runner as the mechanical integration check (route completions and score parity are M5 criteria, §3.12).
 
 ## 5. Determinism checklist
 
@@ -250,6 +250,7 @@ The official Leaderboard runner owns the CARLA client, the tick, the sensors and
 - Every stateful node clears on `ResetEvent`; the harness flags routes with lockstep timeouts.
 - OSQP settings: `adaptive_rho: false`, fixed `max_iter`, `polish: true` for reproducibility; single-threaded BLAS in every node (`OMP_NUM_THREADS=1` set by the launch file, not read by nodes).
 - Random seeds: Traffic Manager, walker spawn, weather selection — all derived from the route seed.
+- **Scope.** The bit-identical criteria (identical `results.csv` rows, identical command sequences) apply to classical/GT profiles. Learned profiles (M3 on) inherit deterministic *inputs* from lockstep, but CUDA kernels (scatter atomics, cudnn autotuning, `torch.compile`) are not bit-deterministic; milestone reports for learned profiles run the protocol at least twice and report the score spread instead of asserting bit-identity (`00_overview.md` §2.5).
 
 ## 6. Decisions log
 
@@ -260,6 +261,7 @@ The official Leaderboard runner owns the CARLA client, the tick, the sensors and
 - (2026-09-05) Visualization is specified as a rendering contract with two back-ends (`02_interfaces.md` §8), not as "a Foxglove layout". A live GUI is unreadable to CI, to a post-hoc session on a bag, and to the LLM agent doing most of the work in this repo, so a Foxglove-only layer leaves the project with no way to debug a bad route except re-running it in front of a human. Renders on disk cost some MB per route in a gitignored directory; that is the whole price.
 - (2026-09-05) `eval.render` defaults to `incidents`, not `full`: a route is 6k–12k ticks, and the frames worth looking at are the ones the scorer already flagged.
 - (2026-09-05) Leaderboard integration lives in M1, not in a later milestone, so that every subsequent milestone is measured under both our harness and the official runner and no design decision can silently break Leaderboard compatibility.
+- (2026-09-06) The M1 Leaderboard criterion is mechanical integration only. The official runner provides no GT of any kind (perception included), and before M3/M5 the stack has nothing to fill those roles under it, so route completions and score parity against our harness are deferred to M5 — the first milestone whose `m5_no_gt.yaml` legitimately drives there.
 
 ## 7. Open questions
 

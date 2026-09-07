@@ -27,7 +27,7 @@ These apply to every milestone. Violating them requires updating this document f
 2. **Explicit interfaces only.** No learnable feature maps cross a ROS topic boundary. Perception → planning carries an agent list and a multi-channel occupancy grid, both human-readable and visualizable. The prediction model and its ego planning head (M7/M8) are *one* module sharing one encoder in one process; what leaves that process is `PredictionSamples` and `TrajectoryCandidates`, nothing else. See `02_interfaces.md`.
 3. **The classical path always works.** Whatever learned component is added, the FSM + lattice + QP + MPC path from Milestone 1 stays runnable and is the fallback at runtime.
 4. **No Kalman filters.** State estimation is done with fixed-lag factor-graph smoothing (localization) and learned velocity attributes + nearest-neighbor association (perception). Where a "filter" is truly needed for high-rate control, use model-based forward propagation (extrapolation), not an EKF.
-5. **Deterministic, lockstep simulation.** CARLA runs in synchronous mode, `fixed_delta_seconds = 0.05`. One process (the world manager) owns `world.tick()` and does **not** tick again until it has received the `ControlCommand` stamped for the current tick (see `02_interfaces.md` §2). Every rate in the stack is a multiple of the 20 Hz tick; nothing runs faster than one callback per tick, and nothing is timed by wall-clock inside the stack. `realtime_factor` only slows the loop down for humans watching; it never changes results.
+5. **Deterministic, lockstep simulation.** CARLA runs in synchronous mode, `fixed_delta_seconds = 0.05`. One process (the world manager) owns `world.tick()` and does **not** tick again until it has received the `ControlCommand` stamped for the current tick (see `02_interfaces.md` §2). Every rate in the stack is a multiple of the 20 Hz tick; nothing runs faster than one callback per tick, and nothing is timed by wall-clock inside the stack. `realtime_factor` only slows the loop down for humans watching; it never changes results. Bit-identical replay (same seed → identical outputs) is guaranteed for the classical/GT profiles only: GPU inference kernels are not bit-stable, so the learned profiles (M3 on) have deterministic inputs but statistically reproducible outputs, and their reports state the spread over repeated runs (`M1_classical_planning.md` §5).
 6. **Runtime nodes in C++ (rclcpp); ML inference nodes and GT cheat twins in Python (rclpy); training in Python.** The C++ rule is about the *learned closed-loop path*, not about ground truth. A cheat twin is measurement scaffolding: it is never the thing a learned component ships behind, it is the thing the learned component is measured against, and it is written in whichever language lets its logic be **single-sourced with the offline code that generates the labels**. Point clouds and grids therefore cross into Python in two places, both deliberate: the ML inference nodes that consume or produce them (`perception_node.py`, `prediction_node.py`), and `gt_perception_node.py`. No other Python node subscribes to a point cloud or a grid, and no C++ node receives one from Python except through `nuway_msgs` topics. The one twin that stays C++ is `gt_pose_node`: it publishes every tick, its publication is what triggers the controller, it must stay swap-identical with the C++ `pose_extrapolator_node` (M5), and at its size there is no duplicated implementation to remove (`M0_bringup.md` §5, 2026-09-06).
 7. **Evaluation harness first.** Milestone 1 delivers the harness; every later milestone reports the same metrics from the same harness.
 8. **Each milestone ends with a runnable stack.** Never leave `main` in a state where `ros2 launch nuway_bringup stack.launch.py` cannot complete a route with some combination of GT toggles.
@@ -37,11 +37,11 @@ These apply to every milestone. Violating them requires updating this document f
 | # | Name | Deliverable | Completion criterion |
 |---|------|-------------|----------------------|
 | M0 | Bring-up | CARLA native ROS 2 connection, world manager, OpenDRIVE map server, route planner, vehicle system ID, pure-pursuit + PID controller. All perception/localization from GT. | 10 routes completed in empty towns, lateral error < 0.3 m |
-| M1 | Classical planning | LTV-MPC, behavior FSM, Frenet lattice sampler, piecewise-jerk QP refinement, rule-based selector, safety layer, constant-velocity prediction, evaluation harness, **Leaderboard 2.x integration** (ROS agent wrapper, external tick owner, no CARLA client in the stack). | Driving score > 40 on Town03/05, 10 routes × 3 weathers, reproducible; same stack completes a route under the official Leaderboard runner |
+| M1 | Classical planning | LTV-MPC, behavior FSM, Frenet lattice sampler, piecewise-jerk QP refinement, rule-based selector, safety layer, constant-velocity prediction, evaluation harness, **Leaderboard 2.x integration** (ROS agent wrapper, external tick owner, no CARLA client in the stack). | Driving score > 40 on Town03/05, 10 routes × 3 weathers, reproducible; same stack runs under the official Leaderboard runner (mechanical integration; route completions and score parity are deferred to M5) |
 | M2 | Perception data pipeline | Sensor-rich data collection, auto-labeling with visibility filtering, GT occupancy generator, WebDataset shards. | ≥ 150k labeled frames across ≥ 6 towns; dataset loader test passes |
 | M3 | BEV perception | BEVFusion (LiDAR + 4 cameras), temporal fusion, CenterPoint heads with velocity, occupancy head, NN tracker. Replaces GT agents/occupancy. | Vehicle mAP > 0.6; driving score drop vs GT perception < 20% |
 | M4 | Traffic light perception | Map-projected crop classifier, lane–traffic-light association verified against CARLA on every town, visibility latch near the stop line. Replaces GT traffic lights. | State accuracy > 0.97 within 40 m; red-light infractions ≤ 1.5× GT |
-| M5 | Localization | KISS-ICP-style LiDAR odometry, offline mapping, scan-to-map registration, fixed-lag smoother (GTSAM), TF publisher. Replaces GT pose. **Milestone: the stack drives with zero GT.** | ATE < 0.2 m; driving score drop vs GT pose < 10% |
+| M5 | Localization | KISS-ICP-style LiDAR odometry, offline mapping, scan-to-map registration, fixed-lag smoother (GTSAM), TF publisher. Replaces GT pose. **Milestone: the stack drives with zero GT.** | ATE < 0.2 m; driving score drop vs GT pose < 10%; Leaderboard completions + score parity (deferred from M1) |
 | M6 | Planning data pipeline | Privileged expert planner, render-free high-throughput collection, prediction/planning labels, noise injection, open-loop eval, GT prediction and GT planning cheat nodes. | ≥ 3M frames; expert score ≥ 85; data sanity report |
 | M7 | Flow-matching prediction | Scene encoder, flow-matching velocity net, joint multi-agent sampling. Planner remains lattice; prediction becomes learned. | Driving score ≥ M5 (no-GT, lattice) + 10 |
 | M8 | Learned planning head + DAgger | Ego planning head on the shared encoder, QP refinement of learned output, DAgger loop, runtime fallback logic. | Beats lattice baseline on driving score and intervention rate |
@@ -83,8 +83,10 @@ on the command line (it always boots `Town10HD_Opt`), `load_world` is the only w
 town, so low quality is simply unusable here. At default (Epic) quality, map switching is
 stable: a 7-load soak across Town01/03/05/10HD passes.
 
-The cost of that is speed. Measured with the M0 rig (4 × 800×450 RGB + 32-beam LiDAR +
-semantic LiDAR + IMU + GNSS, all at 20 Hz), synchronous mode, `fixed_delta_seconds = 0.05`:
+The cost of that is speed. Measured with the M0 *verification* rig (4 × 800×450 RGB + 32-beam
+LiDAR + semantic LiDAR + IMU + GNSS, all at 20 Hz — heavier cameras than `rig_dev.json`'s
+704×256, so the production rig should tick somewhat faster), synchronous mode,
+`fixed_delta_seconds = 0.05`:
 
 | Town | tick rate | vs. realtime |
 |------|-----------|--------------|
@@ -115,7 +117,7 @@ only makes a route take longer, never behave differently. CARLA itself holds ≈
 | └ iLQR refinement of learned candidates, 8 s horizon (M10) | 10 Hz | ≤ 12 ms |
 | MPC | 20 Hz | ≤ 3 ms |
 
-Because CARLA is in lockstep, exceeding these budgets slows the simulation but does not change results. Budgets exist to keep interactive development pleasant and Leaderboard timeouts safe.
+Because CARLA is in lockstep, exceeding these budgets slows the simulation but does not change results. The CARLA-tick row is already known to be exceeded at Epic quality on Town05 and Town10HD (§4 table); that is an accepted wall-clock cost. Budgets exist to keep interactive development pleasant and Leaderboard timeouts safe.
 
 ## 6. Conventions summary (full detail in `02_interfaces.md`)
 

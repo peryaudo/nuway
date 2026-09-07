@@ -31,6 +31,7 @@ nuway/
 │   │   ├── m3_learned_perception.yaml
 │   │   ├── m4_learned_tl.yaml
 │   │   ├── m5_no_gt.yaml
+│   │   ├── mapping.yaml                   # M5 offline mapping runs (GT pose, label-only semantic LiDAR)
 │   │   ├── m7_learned_prediction.yaml
 │   │   ├── m8_learned_planner.yaml
 │   │   └── leaderboard.yaml
@@ -161,6 +162,8 @@ nuway/
 │   │   ├── common/
 │   │   │   ├── geometry.py                # numpy/torch SE2 utils, must mirror nuway_common
 │   │   │   ├── frenet.py                  # mirrors nuway_common/frenet.hpp
+│   │   │   ├── trajectory.py              # mirrors nuway_common/trajectory.hpp resampling (M8 spline resample)
+│   │   │   ├── longitudinal_map.py        # mirrors nuway_control's LongitudinalMap; parity-tested (M0)
 │   │   │   ├── carla_conv.py              # left-handed <-> ROS conversion (Python side; see Rules)
 │   │   │   ├── occupancy.py               # GridSpec + world<->grid: numpy, no torch (gt_perception_node imports it)
 │   │   │   │                               # bilinear_sample(): torch, imported lazily inside the function
@@ -255,6 +258,7 @@ nuway/
 │
 ├── data/                                  # gitignored
 │   ├── raw/
+│   ├── sysid/                             # M0 system-identification logs + residual plots
 │   ├── shards/
 │   ├── maps/                              # per town: .xodr, map.ply, static_occ.npz, tl_bulbs.json, tl_overrides.yaml, reports
 │   ├── checkpoints/                       # <experiment>/<timestamp>/: ckpts, viz/, .hydra/config.yaml

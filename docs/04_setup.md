@@ -76,11 +76,12 @@ sudo rosdep init && rosdep update
 sudo apt-get install -y \
   build-essential gcc-13 g++-13 clang-18 clang-tidy-18 \
   cmake ninja-build ccache mold git \
-  libeigen3-dev libnanoflann-dev ros-jazzy-gtsam ros-jazzy-osqp-vendor
+  libeigen3-dev libnanoflann-dev libpcl-dev ros-jazzy-gtsam ros-jazzy-osqp-vendor
 ```
 
-On Jazzy/noble the math stack comes from apt — GTSAM 4.2.0, OSQP 0.2.0 and nanoflann 1.5.4 are
-all packaged, so `osqp-eigen` is the only vendored dependency in the workspace
+On Jazzy/noble the math stack comes from apt — GTSAM 4.2.0, OSQP (via `ros-jazzy-osqp-vendor`
+0.2.0, the vendor package's version, not OSQP's own) and nanoflann 1.5.4 are all packaged, so
+`osqp-eigen` is the only vendored dependency in the workspace
 (`03_style_and_conventions.md` §6.2). Confirm CMake can actually see them — `cmake --find-package`
 is unreliable here, so use a real configure step:
 

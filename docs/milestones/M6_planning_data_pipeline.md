@@ -25,7 +25,7 @@ A rule-based planner with GT access, in the spirit of PDM-Lite, reusing M1 compo
 
 Expert = M1 stack (FSM + lattice + QP + rule selector) with these privileged replacements:
 - Perception: GT agents (omniscient, no visibility filter), GT traffic lights.
-- Prediction: the expert uses M1's constant-velocity + lane-follow prediction from the *current* GT state only. It does **not** read other agents' GT futures and it does **not** read Traffic Manager intent: either would make it clairvoyant in ways a student cannot imitate.
+- Prediction: the expert uses M1's constant-velocity + lane-follow prediction from the *current* GT state only (through `nuway_planning_py`, which binds it from the `nuway_prediction` library). It does **not** read other agents' GT futures and it does **not** read Traffic Manager intent: either would make it clairvoyant in ways a student cannot imitate.
 - Additional privileged heuristics (tuned for Leaderboard 2.0 scenarios): handling of `ConstructionObstacle`, `Accident`, `ParkedObstacle` (lane change into opposing lane when clear via oncoming-traffic gap check), `HazardAtSideLane`, door-opening, emergency vehicle yielding, pedestrians crossing (stop if predicted to enter lane), and `EnterActorFlow`/`MergerIntoSlowTraffic`. Each is a behavior FSM extension gated by the profile key `planning.expert_extensions` and written against `AgentArray`/`OccupancyGridMC`/`TrafficLightArray` only, so the same code runs on perceived inputs in the runtime fallback later (principle 3).
 - Expert intent is exported per frame: `BehaviorDecision` fields + which extension fired.
 
@@ -91,7 +91,7 @@ minADE/minFDE (K = 6) at 3 s / 8 s per class, miss rate @2 m, collision rate bet
 
 ## 8. Task list
 
-1. [ ] `nuway_planning_py` pybind module exposing FSM, lattice, QP, selector, collision checker, Frenet utils.
+1. [ ] `nuway_planning_py` pybind module exposing FSM, lattice, QP, selector, collision checker, Frenet utils, and the const-vel + lane-follow predictor (bound from the `nuway_prediction` library, which the module links — the expert consumes M1's prediction, §2, and must not reimplement it).
 2. [ ] Expert with extensions; deterministic; eval on M1 protocol (≥ 85) and scenario routes (≥ 70). Fix M1 planner bugs found here (they are shared).
 3. [ ] `gt_planning_node.py` (+ `use_gt.planning` launch wiring) and `gt_prediction_node.py` (+ `--replay` mode in `run_routes.py`, launch refusal outside replay); M1 protocol with `use_gt.planning: true` reproduces the expert score.
 4. [ ] `tools/mapping/build_static_occ.py`: per-town `static_occ.npz` from the M5 semantic map.

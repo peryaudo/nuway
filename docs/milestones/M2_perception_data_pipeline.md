@@ -91,7 +91,7 @@ class TLLabel:
     crop_bbox: np.ndarray | None  # [4] xyxy pixels
 ```
 
-Shard layout (WebDataset): `{key}.json` (everything scalar/small, lists), `{key}.cam_front.jpg` …, `{key}.lidar.npy`, `{key}.lidar_sem.npy`, `{key}.occ.npy`. Shard files: `data/shards/perception/{town}/{run_id}-{shard_idx:04d}.tar`. A `manifest.json` per run lists shards, frame count, weather, traffic config, seeds. LiDAR coordinates are float32 on purpose: float16 has a spacing of about 6 cm beyond 64 m, which is a quarter of a pillar. Budget ≈ 1.2 MB per frame (two clouds ≈ 0.7 MB, occupancy 0.48 MB, images 0.15 MB), so the ≥ 150k-frame target is ≈ 200 GB and the full protocol below ≈ 700 GB; check disk before the full run.
+Shard layout (WebDataset): `{key}.json` (everything scalar/small, lists), `{key}.cam_front.jpg` …, `{key}.lidar.npy`, `{key}.lidar_sem.npy`, `{key}.occ.npy`. Shard files: `data/shards/perception/{town}/{run_id}-{shard_idx:04d}.tar`. A `manifest.json` per run lists shards, frame count, weather, traffic config, seeds. LiDAR coordinates are float32 on purpose: float16 has a spacing of about 6 cm beyond 64 m, which is a quarter of a pillar. Budget ≈ 1.7 MB per frame (two clouds ≈ 1.1 MB: 30k × 4 × 4 B runtime + 30k × 5 × 4 B semantic; occupancy 0.48 MB; images 0.15 MB), so the ≥ 150k-frame target is ≈ 260 GB and the full protocol below ≈ 1 TB; check disk before the full run.
 
 ## 3. Labelers
 
@@ -157,7 +157,7 @@ seed_base: 1000
 ```
 Hero driven by Traffic Manager autopilot with randomized `distance_to_leading_vehicle` and `vehicle_percentage_speed_difference` per run, so viewpoints vary. Ego collisions do not stop a run (they're fine for perception data; they're flagged in the manifest).
 
-Throughput: rendering 4 RGB + 4 depth + 2 LiDAR at Low quality is ~12–18 ticks/s on the 3090 Ti → one 300 s run ≈ 6 min wall; 8 × 8 × 3 = 192 runs ≈ 20 h. Acceptable; run overnight in batches with `--resume`.
+Throughput: rendering runs at default (Epic) quality — Low segfaults `load_world` (`00_overview.md` §4). With 4 RGB + 4 depth + 2 LiDAR expect roughly 8–20 ticks/s on the 3090 Ti (the `00_overview.md` §4 table measured 15–41 FPS at Epic with a lighter rig; the four depth cameras add load) → one 300 s run ≈ 5–13 min wall; 8 × 8 × 3 = 192 runs ≈ 25–40 h. Measure on the first batch and record the number here; run overnight in batches with `--resume`.
 
 ## 5. Dataset loader (`nuway_ml/data/perception_dataset.py`)
 
@@ -179,7 +179,7 @@ Augmentation (`augment.py`, perception part): random image scale ±10%, random B
 
 ## 6. Runtime GT perception (`gt_perception_node.py`, full version)
 
-Subscribes GT agents, `/carla/hero/lidar_top_semantic` (the `label_only` rig entry, spawned because the profile has `use_gt.perception: true`), lane graph. Calls `generate_gt_occupancy` (§3.3) directly — same function object the collector calls, no port, no bridge. Publishes `/nuway/perception/occupancy` every 2nd tick and agents with `visible` filtering applied (so GT perception ≈ "perfect but physically plausible" perception). Profile key `gt_perception.apply_visibility: true|false` toggles omniscient mode (`02_interfaces.md` §5). Traffic lights are not this node's business (`gt_traffic_light_node`, M0).
+Subscribes GT agents, `/carla/hero/lidar_top_semantic` (the `label_only` rig entry, spawned because the profile has `use_gt.perception: true`), lane graph. Calls `generate_gt_occupancy` (§3.3) directly — same function object the collector calls, no port, no bridge. Publishes `/nuway/perception/occupancy` every 2nd tick and agents with `visible` filtering applied (so GT perception ≈ "perfect but physically plausible" perception). Profile key `gt_perception.apply_visibility: true|false` toggles omniscient mode (`02_interfaces.md` §5). M8 adds a second key, `gt_perception.source: sensor | geometry` — `geometry` replaces the semantic-LiDAR inputs with the M6 static map + raycast (M6 §3.1) so the node runs render-free for cheap DAgger; `sensor`, specified here, is the default. Traffic lights are not this node's business (`gt_traffic_light_node`, M0).
 
 ## 7. Task list
 

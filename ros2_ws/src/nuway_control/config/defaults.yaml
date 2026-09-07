@@ -1,0 +1,16 @@
+# Package defaults for pure_pursuit_pid_node; the profile overrides them (docs/02 §5).
+pure_pursuit_pid_node:
+  ros__parameters:
+    vehicle: configs/vehicle/lincoln_mkz_2020.yaml   # wheelbase, limits, sysid fit
+    lookahead_gain_s: 0.6           # L_d = clamp(gain * v + base, min, max)  (M0 §2.7)
+    lookahead_base_m: 2.0
+    lookahead_min_m: 3.0
+    lookahead_max_m: 20.0
+    a_lat_max_mps2: 2.0             # curvature speed bound sqrt(a_lat_max / |kappa|)
+    curvature_horizon_m: 30.0       # look this far ahead for the curvature bound
+    kp: 0.8                         # speed PID -> accel
+    ki: 0.2
+    kd: 0.05
+    integral_limit_mps2: 1.5        # anti-windup bound on the integral term
+    end_decel_mps2: 1.5             # stop profile toward the end of the line
+    max_lateral_error_m: 5.0        # farther off the line: emergency_stop

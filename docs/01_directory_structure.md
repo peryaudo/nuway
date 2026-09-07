@@ -163,9 +163,14 @@ nuway/
 │       │   └── include/nuway_planning/
 │       ├── nuway_control/                 # C++
 │       │   ├── src/
+│       │   │   ├── longitudinal_map.cpp        # a_des -> throttle/brake from sysid table (M0)
+│       │   │   ├── vehicle_model.cpp           # configs/vehicle/<vehicle>.yaml -> VehicleModel (geometry, limits, fit, map) (M0)
+│       │   │   ├── pure_pursuit_pid.cpp        # the controller as a library (gtest without rclcpp) (M0)
 │       │   │   ├── pure_pursuit_pid_node.cpp   # M0
-│       │   │   ├── mpc_node.cpp                # M1
-│       │   │   └── longitudinal_map.cpp        # a_des -> throttle/brake from sysid table
+│       │   │   └── mpc_node.cpp                # M1
+│       │   ├── include/nuway_control/
+│       │   ├── config/defaults.yaml
+│       │   └── test/
 │       ├── nuway_viz/                     # marker_node.cpp, foxglove layouts, rviz configs
 │       └── nuway_bringup/
 │           ├── launch/stack.launch.py     # THE launch file; reads a profile YAML

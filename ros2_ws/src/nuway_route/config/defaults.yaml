@@ -1,0 +1,12 @@
+# Package defaults for route_planner_node; the profile overrides them (docs/02 §5).
+route_planner_node:
+  ros__parameters:
+    lane_change_penalty_m: 20.0     # A* cost of a lateral (neighbor) edge, in metres of travel
+    waypoint_max_dist_m: 10.0       # a waypoint farther than this from every lane fails the plan
+    ego_max_dist_m: 10.0            # same for the ego pose (with a heading check)
+    spacing_m: 0.5                  # reference line sample spacing
+    blend_length_m: 30.0            # quintic lateral blend at lane-change edges
+    extension_m: 50.0               # continue the last lane past the goal
+    reroute_lateral_m: 5.0          # reroute when off the line by more than this ...
+    reroute_heading_rad: 0.5236     # ... or heading-off by more than 30 deg ...
+    reroute_ticks: 40               # ... for this many consecutive ticks (2 s at 20 Hz)

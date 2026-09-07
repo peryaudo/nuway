@@ -96,6 +96,7 @@ nuway/
 │       │   │   ├── tick.hpp               # TickIndex(stamp), IsPlanningTick(k); current-tick barrier helper (02 §2)
 │       │   │   ├── frames.hpp             # frame ids and the topic names shared by more than one package (mirrors frames.py)
 │       │   │   ├── params.hpp             # declare/get param helpers
+│       │   │   ├── ros_conv.hpp           # geometry_msgs <-> Eigen / SE2 / SE3 field copies for nodes (mirrors ros_conv.py)
 │       │   │   └── node_main.hpp          # RunNode<T>(): the one main() body of every C++ node (init, spin, shutdown, node-boundary catch)
 │       │   └── test/
 │       ├── nuway_py/                      # THE pybind11 package (one per repo). M0: nuway_common + nuway_control::LongitudinalMap

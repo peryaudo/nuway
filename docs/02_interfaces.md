@@ -122,7 +122,7 @@ Semantic LiDAR and depth cameras are **never** subscribed by a learned node. In 
 | `/nuway/map/lane_graph` | `nuway_msgs/LaneGraph` | map_server | transient_local (latched) |
 | `/nuway/route/plan` | `nuway_msgs/Route` | route_planner | transient_local; republished only on reroute |
 | `/nuway/route/reference_line` | `nuway_msgs/ReferenceLine` | route_planner | 0.5 m spacing, curvature, speed limit; republished only on reroute (a reroute is the only thing that changes it, and a new line disturbs the planner's warm starts and consistency cost) |
-| `/nuway/route/waypoints` (sub) | `nav_msgs/Path` | eval harness (`route_runner.py`) / `leaderboard_agent` / user | map frame; the whole route as an ordered waypoint list, published once per episode. `route_planner_node` plans A* through *all* waypoints in sequence at once, so there is no per-goal replanning. The loader from the Leaderboard route XML / `global_plan` to this message is `nuway_ml/common/routes.py`, shared by both publishers. |
+| `/nuway/route/waypoints` (sub) | `nav_msgs/Path` | eval harness (`route_runner.py`) / `leaderboard_agent` / user | map frame, QoS `latched` (published once per episode; a planner node that starts later must still see it); the whole route as an ordered waypoint list. `route_planner_node` plans A* through *all* waypoints in sequence at once, so there is no per-goal replanning. The loader from the Leaderboard route XML / `global_plan` to this message is `nuway_ml/common/routes.py`, shared by both publishers. |
 
 ### 3.4 Localization
 | Topic | Type | Producer |
@@ -188,7 +188,7 @@ Every publisher and subscription names one of these (`nuway_common/qos.hpp`, `nu
 |---------|-------------|------------|---------|----------|
 | `sensor` | best_effort | volatile | keep_last 1 | CARLA-native sensor topics (subscriptions must match CARLA's publisher) |
 | `stream` | reliable | volatile | keep_last 2 | every per-tick or per-2-tick `/nuway/**` data topic (`loc`, `perception`, `prediction`, `planning`, `control`, `gt`) |
-| `latched` | reliable | transient_local | keep_last 1 | `/nuway/map/lane_graph`, `/nuway/route/plan`, `/nuway/route/reference_line`, `/nuway/sensors/*/camera_info`, `/tf_static` |
+| `latched` | reliable | transient_local | keep_last 1 | `/nuway/map/lane_graph`, `/nuway/route/waypoints`, `/nuway/route/plan`, `/nuway/route/reference_line`, `/nuway/sensors/*/camera_info`, `/tf_static` |
 | `event` | reliable | transient_local | keep_last 10 | `/nuway/sim/reset_event`, `/nuway/sim/tick_timeout`, `/nuway/route/waypoints` |
 | `diag` | reliable | volatile | keep_last 10 | `/nuway/diag/**` — reliable because the harness reads the lockstep-timeout, degradation, safety-intervention and MPC-failure events from it (§8.2, M1 §3.10); a dropped diag message would be a dropped incident |
 | `viz` | best_effort | volatile | keep_last 1 | `/nuway/viz/**`, `/nuway/perception/tl_debug` |

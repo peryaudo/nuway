@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Leaderboard 2.x route format; positions are CARLA convention (nuway_ml.common.routes converts). -->
+<!-- Generated on the Town03 lane graph (M0 task 8: one route; task 13 completes the set). -->
+<routes>
+  <route id="dev03_00" town="Town03">
+    <waypoints>
+      <position x="234.60" y="21.40" z="0.00"/>
+      <position x="231.55" y="142.21" z="1.17"/>
+      <position x="137.93" y="196.69" z="2.15"/>
+      <position x="17.11" y="196.99" z="0.00"/>
+      <position x="-45.42" y="131.50" z="0.00"/>
+      <position x="-74.27" y="36.52" z="0.22"/>
+      <position x="-74.59" y="-84.12" z="-0.82"/>
+      <position x="-54.95" y="-194.98" z="0.00"/>
+      <position x="65.46" y="-192.36" z="0.00"/>
+      <position x="185.18" y="-193.90" z="0.00"/>
+      <position x="234.17" y="-105.00" z="0.00"/>
+      <position x="209.37" y="-5.35" z="0.00"/>
+      <position x="88.91" y="-7.20" z="0.12"/>
+      <position x="84.78" y="-122.01" z="8.00"/>
+      <position x="154.83" y="-180.97" z="0.26"/>
+      <position x="166.21" y="-193.90" z="0.00"/>
+    </waypoints>
+  </route>
+</routes>

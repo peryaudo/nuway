@@ -22,6 +22,8 @@ constexpr int kLaneIdOffset = 32;
 constexpr int kLanesPerSection = 64;
 constexpr int kSectionsPerRoad = 64;
 constexpr std::uint32_t kTrafficLightHighBit = 0x80000000U;
+// Longitudinal slack past a lane end that still counts as "on the lane".
+constexpr double kEndTolerance = 0.2;
 
 // Cumulative lateral position of the centre of `lane` in `section` at road
 // arc length s; positive to the left of the reference line.
@@ -735,10 +737,11 @@ const nuway_common::ReferenceLine* LaneGraph::reference_line(
   return &index_->reference_lines[it->second];
 }
 
-std::optional<LaneQuery> LaneGraph::NearestLane(double x, double y, double yaw,
-                                                double max_dist) const {
+std::vector<LaneQuery> LaneGraph::LanesNear(double x, double y,
+                                            double max_dist) const {
+  std::vector<LaneQuery> out;
   if (index_ == nullptr || index_->cloud.pts.empty()) {
-    return std::nullopt;
+    return out;
   }
   // Samples are <= spacing apart, so a point within max_dist of the line is
   // within max_dist + spacing of a sample.
@@ -752,24 +755,47 @@ std::optional<LaneQuery> LaneGraph::NearestLane(double x, double y, double yaw,
   for (const auto& match : matches) {
     candidates.insert(index_->cloud.lane_of_point[match.first]);
   }
-  std::optional<LaneQuery> best;
   for (const std::uint32_t lane_id : candidates) {
     const nuway_common::ReferenceLine* line = reference_line(lane_id);
+    if (line == nullptr) {
+      continue;
+    }
     const std::optional<nuway_common::FrenetPoint> frenet =
         line->ToFrenet(x, y, max_dist);
     if (!frenet.has_value()) {
       continue;
     }
-    if (frenet->s < -1e-6 || frenet->s > line->length() + 1e-6) {
+    // ToFrenet clamps s to the line, so a point past either end projects
+    // onto the end point with a longitudinal residual: reject those.
+    const nuway_common::CartesianPoint foot = line->PointAt(frenet->s);
+    const double along = ((x - foot.x) * std::cos(foot.heading)) +
+                         ((y - foot.y) * std::sin(foot.heading));
+    if (std::abs(along) > kEndTolerance) {
+      continue;
+    }
+    out.push_back(LaneQuery{lane_id, frenet->s, frenet->d});
+  }
+  std::sort(out.begin(), out.end(), [](const LaneQuery& a, const LaneQuery& b) {
+    return std::abs(a.d) < std::abs(b.d);
+  });
+  return out;
+}
+
+std::optional<LaneQuery> LaneGraph::NearestLane(double x, double y, double yaw,
+                                                double max_dist) const {
+  std::optional<LaneQuery> best;
+  for (const LaneQuery& query : LanesNear(x, y, max_dist)) {
+    const nuway_common::ReferenceLine* line = reference_line(query.lane_id);
+    if (line == nullptr) {
       continue;
     }
     const double heading_err =
-        std::abs(nuway_common::WrapAngle(line->HeadingAt(frenet->s) - yaw));
+        std::abs(nuway_common::WrapAngle(line->HeadingAt(query.s) - yaw));
     if (heading_err > options_.heading_tolerance_rad) {
       continue;
     }
-    if (!best.has_value() || std::abs(frenet->d) < std::abs(best->d)) {
-      best = LaneQuery{lane_id, frenet->s, frenet->d};
+    if (!best.has_value() || std::abs(query.d) < std::abs(best->d)) {
+      best = query;
     }
   }
   return best;

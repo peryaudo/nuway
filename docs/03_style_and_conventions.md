@@ -203,7 +203,7 @@ Modern, pinned, identical on every developer machine and in CI. This section is 
   ```
 
   `ninja-build`, `ccache` and `mold` come from apt and are listed in `setup_env.sh`'s prerequisite check. Use `make` nowhere.
-- **`nuway_cmake` package.** A tiny `ament_cmake` package that every `nuway_*` C++ package depends on (`<buildtool_depend>nuway_cmake</buildtool_depend>`). It provides `nuway_target_defaults(<target>)`, which sets: `CXX_STANDARD 17`, `CXX_EXTENSIONS OFF`; warnings `-Wall -Wextra -Wpedantic -Wshadow -Wnon-virtual-dtor -Wold-style-cast -Woverloaded-virtual -Wnull-dereference -Wdouble-promotion -Wformat=2 -Werror` (`-Werror` disabled with `-DNUWAY_WERROR=OFF` for third-party debugging only); third-party include directories marked `SYSTEM`; and the options `NUWAY_CLANG_TIDY=ON|OFF` (sets `CMAKE_CXX_CLANG_TIDY` to the uv-managed wheel binary described below), `NUWAY_SANITIZE=<none|address,undefined|thread>` and `NUWAY_LTO=ON|OFF`. Packages do not set compiler flags themselves. `CMakeLists.txt` files are formatted by `gersemi` (pinned in the `dev` group, enforced in pre-commit).
+- **`nuway_cmake` package.** A tiny `ament_cmake` package that every `nuway_*` C++ package depends on (`<buildtool_depend>nuway_cmake</buildtool_depend>`). It provides `nuway_target_defaults(<target>)`, which sets: `CXX_STANDARD 17`, `CXX_EXTENSIONS OFF`; warnings `-Wall -Wextra -Wpedantic -Wshadow -Wnon-virtual-dtor -Wold-style-cast -Woverloaded-virtual -Wnull-dereference -Wdouble-promotion -Wformat=2 -Werror` (`-Werror` disabled with `-DNUWAY_WERROR=OFF` for third-party debugging only); third-party include directories marked `SYSTEM`; `nuway_target_defaults(<target> PYBIND)` for a pybind11 extension module drops `-Wnull-dereference`, which GCC emits from the optimiser inside CPython's headers regardless of their `SYSTEM` status (2026-09-07); and the options `NUWAY_CLANG_TIDY=ON|OFF` (sets `CMAKE_CXX_CLANG_TIDY` to the uv-managed wheel binary described below), `NUWAY_SANITIZE=<none|address,undefined|thread>` and `NUWAY_LTO=ON|OFF`. Packages do not set compiler flags themselves. `CMakeLists.txt` files are formatted by `gersemi` (pinned in the `dev` group, enforced in pre-commit).
 - **Dependencies.** Resolution order: (1) ROS/Ubuntu apt via `rosdep` (`rclcpp`, Eigen, PCL, gtest, tf2, …); (2) an `<lib>_vendor` `ament_cmake` package under `ros2_ws/src/` for anything not in Jazzy's apt, following the ROS vendor-package convention: CMake `FetchContent` pinned to a release **tag and commit hash**, built once as part of the workspace, exported with `ament_export_targets`. No git submodules, no system-wide `make install`, no `find_package` of something that rosdep cannot install. Every dependency is declared in `package.xml` so `rosdep install --from-paths ros2_ws/src -yi` fully prepares a fresh machine.
 
   On Jazzy/noble most of the math stack resolves at step (1), unlike on Humble: `ros-jazzy-gtsam`
@@ -232,7 +232,7 @@ Modern, pinned, identical on every developer machine and in CI. This section is 
 
 1. Verify prerequisites: Ubuntu 24.04, `/opt/ros/jazzy`, `uv`, `ninja`, `ccache`, `mold`, `cmake ≥ 3.28`, `gcc-13`; print the install command for anything missing and stop.
 2. `source /opt/ros/jazzy/setup.bash`; `export COLCON_DEFAULTS_FILE=$REPO/ros2_ws/colcon_defaults.yaml`; `export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp`.
-3. Create `.venv` if absent (`uv venv --python /usr/bin/python3.12 --system-site-packages`), then `uv sync` (with `--group carla --group train --group viz --group leaderboard` when `NUWAY_FULL=1`; `NUWAY_INFER=1` adds only `--group carla --group infer` for a box that runs learned profiles but never trains).
+3. Create `.venv` if absent (`uv venv --python /usr/bin/python3.12 --system-site-packages`), then `uv sync` (with `--group carla --group train --group viz --group leaderboard` when `NUWAY_FULL=1`; `NUWAY_INFER=1` adds only `--group carla --group infer` for a box that runs learned profiles but never trains). Without a flag the sync is `--inexact`: it installs everything the lock requires for the default groups but does not strip groups an earlier flagged sync installed, so re-sourcing in a new shell never removes torch or carla from a workstation (2026-09-07).
 4. `source .venv/bin/activate`; `source ros2_ws/install/setup.bash` if the workspace has been built.
 5. `uv run pre-commit install` if the git hook is missing.
 
@@ -316,11 +316,13 @@ Checks: >
   modernize-*,
   -modernize-use-trailing-return-type,
   -modernize-avoid-c-arrays,
+  -modernize-use-nodiscard,
   performance-*,
   readability-*,
   -readability-magic-numbers,
   -readability-else-after-return,
-  -readability-function-cognitive-complexity
+  -readability-function-cognitive-complexity,
+  -readability-identifier-length
 WarningsAsErrors: '*'
 HeaderFilterRegex: '.*/ros2_ws/src/nuway_[a-z_]+/.*'
 FormatStyle: file
@@ -352,6 +354,8 @@ CheckOptions:
   readability-identifier-naming.EnumConstantCase: CamelCase
   readability-identifier-naming.EnumConstantPrefix: 'k'
   readability-identifier-naming.MacroDefinitionCase: UPPER_CASE
+  # Include guards end in '_' (§2.2), which UPPER_CASE rejects.
+  readability-identifier-naming.MacroDefinitionIgnoredRegexp: '^NUWAY_[A-Z0-9_]+_HPP_$'
   # Cheap accessors/mutators are allowed to be snake_case (Google "Function
   # Names"): a bare member name `foo()` or a setter `set_foo()`. The regexp
   # must not admit arbitrary snake_case methods, so it requires the accessor
@@ -370,6 +374,8 @@ Notes:
 
 - `llvm-header-guard` is deliberately **not** enabled: it derives the expected guard from the file path and, with `WarningsAsErrors: '*'`, would fail every correctly named `NUWAY_<PKG>_<FILE>_HPP_` guard. Missing and misnamed guards are caught by `tools/lint/check_header_guards.py`, which pre-commit and CI run next to clang-tidy.
 - `readability-magic-numbers` is off because planning and control code is full of justified tunables; those must still be named constants when reused (§2.1).
+- `modernize-use-nodiscard` is off (2026-09-07): it demands `[[nodiscard]]` on every const member function that returns a value, i.e. on every accessor, which the Google guide does not ask for and which buries the signatures. `[[nodiscard]]` is still used deliberately on functions whose ignored result is a bug (a `bool` success flag, an `std::optional` lookup).
+- `readability-identifier-length` is off (2026-09-07): geometry, Frenet and control code names coordinates `x`, `y`, `s`, `d`, `k`, `dt` by long-standing convention, and the check has no notion of that. Names longer than one or two characters are still expected everywhere the quantity is not a coordinate, angle or index; review enforces that.
 - The accessor exemption is deliberately narrow: `resolution()`, `set_resolution()`, `lane_id()` pass; `compute_costs()` does not (it is a verb phrase and must be `ComputeCosts()`). Review rejects accessor-named methods that do more than return or assign a member.
 - Checks may only be disabled repo-wide in `.clang-tidy` with a comment explaining why. Inline `// NOLINT(check-name)` requires a trailing justification: `// NOLINT(bugprone-narrowing-conversions): CARLA API takes float`. Bare `// NOLINT` is rejected in review.
 - Generated code (`nuway_msgs` headers, pybind stubs) and vendored packages are excluded by `HeaderFilterRegex` and by not being under `nuway_*` source dirs.
@@ -415,7 +421,7 @@ explicit = true
 
 [tool.pytest.ini_options]
 testpaths = ["ml/tests", "tools", "tests"]
-addopts = "--strict-markers"
+addopts = "--strict-markers -p no:launch_testing -p no:launch_ros -p no:ament_lint -p no:ament_copyright -p no:ament_flake8 -p no:ament_pep257 -p no:ament_xmllint"  # ROS pytest plugins leak in via system site packages; launch_testing breaks pytest >= 8
 markers = ["slow: minutes-long", "carla: needs a running CARLA server", "gpu: needs CUDA", "import_light: must pass in an env without torch"]
 
 [tool.ruff]

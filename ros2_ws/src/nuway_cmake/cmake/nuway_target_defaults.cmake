@@ -1,8 +1,10 @@
-# nuway_target_defaults(<target>)
+# nuway_target_defaults(<target> [PYBIND])
 #
 # Applies the project-wide compiler configuration to one target
 # (docs/03_style_and_conventions.md §6.2). Packages call this on every library
-# and executable instead of setting flags themselves.
+# and executable instead of setting flags themselves. PYBIND marks a pybind11
+# extension module: GCC's -Wnull-dereference is emitted by the optimiser and
+# ignores the SYSTEM status of CPython's headers, so that one flag is dropped.
 #
 # Cache options (pass with -DNAME=VALUE through `colcon build --cmake-args`):
 #   NUWAY_WERROR      ON|OFF   warnings are errors (default ON)
@@ -48,11 +50,16 @@ if(NUWAY_CLANG_TIDY)
 endif()
 
 function(nuway_target_defaults target)
+    cmake_parse_arguments(NUWAY "PYBIND" "" "" ${ARGN})
+    set(_flags ${_nuway_warning_flags})
+    if(NUWAY_PYBIND)
+        list(REMOVE_ITEM _flags -Wnull-dereference)
+    endif()
     set_target_properties(
         ${target}
         PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF
     )
-    target_compile_options(${target} PRIVATE ${_nuway_warning_flags})
+    target_compile_options(${target} PRIVATE ${_flags})
     if(NUWAY_WERROR)
         target_compile_options(${target} PRIVATE -Werror)
     endif()

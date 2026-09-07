@@ -15,11 +15,13 @@ Checks: >
   modernize-*,
   -modernize-use-trailing-return-type,
   -modernize-avoid-c-arrays,
+  -modernize-use-nodiscard,
   performance-*,
   readability-*,
   -readability-magic-numbers,
   -readability-else-after-return,
-  -readability-function-cognitive-complexity
+  -readability-function-cognitive-complexity,
+  -readability-identifier-length
 WarningsAsErrors: '*'
 HeaderFilterRegex: '.*/ros2_ws/src/nuway_[a-z_]+/.*'
 FormatStyle: file
@@ -51,6 +53,8 @@ CheckOptions:
   readability-identifier-naming.EnumConstantCase: CamelCase
   readability-identifier-naming.EnumConstantPrefix: 'k'
   readability-identifier-naming.MacroDefinitionCase: UPPER_CASE
+  # Include guards end in '_' (§2.2), which UPPER_CASE rejects.
+  readability-identifier-naming.MacroDefinitionIgnoredRegexp: '^NUWAY_[A-Z0-9_]+_HPP_$'
   # Cheap accessors/mutators are allowed to be snake_case (Google "Function
   # Names"): a bare member name `foo()` or a setter `set_foo()`. The regexp
   # must not admit arbitrary snake_case methods, so it requires the accessor

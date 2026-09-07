@@ -66,7 +66,10 @@ if [ ! -f "${NUWAY_ROOT}/.venv/pyvenv.cfg" ]; then
   (cd "${NUWAY_ROOT}" && uv venv --python /usr/bin/python3.12 --system-site-packages .venv) \
     || _nuway_fail "uv venv failed" || return 1
 fi
-_nuway_sync_args=()
+# Without a flag the sync is --inexact: it installs what the lock requires but
+# keeps groups a previous NUWAY_FULL=1 / NUWAY_INFER=1 sync already installed,
+# so re-sourcing in a new shell never strips torch or carla from a workstation.
+_nuway_sync_args=(--inexact)
 if [ "${NUWAY_FULL:-0}" = "1" ]; then
   _nuway_sync_args=(--group carla --group train --group viz --group leaderboard)
 elif [ "${NUWAY_INFER:-0}" = "1" ]; then

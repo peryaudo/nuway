@@ -4,8 +4,10 @@
 #include <pybind11/pybind11.h>
 
 #include "bind_common.hpp"
+#include "bind_control.hpp"
 
 PYBIND11_MODULE(_core, module) {
   module.doc() = "nuway C++ libraries bound for parity tests and the M6 expert";
   nuway_py::BindCommon(module);
+  nuway_py::BindControl(module);
 }

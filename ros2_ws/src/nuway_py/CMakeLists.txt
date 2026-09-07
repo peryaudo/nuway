@@ -8,9 +8,18 @@ find_package(Python3 REQUIRED COMPONENTS Interpreter Development)
 find_package(pybind11_vendor REQUIRED)
 find_package(pybind11 REQUIRED)
 find_package(nuway_common REQUIRED)
+find_package(nuway_control REQUIRED)
 
-pybind11_add_module(_core src/bindings.cpp src/bind_common.cpp)
-target_link_libraries(_core PRIVATE nuway_common::nuway_common)
+pybind11_add_module(
+    _core
+    src/bindings.cpp
+    src/bind_common.cpp
+    src/bind_control.cpp
+)
+target_link_libraries(
+    _core
+    PRIVATE nuway_common::nuway_common nuway_control::nuway_control_lib
+)
 nuway_target_defaults(_core PYBIND)
 
 ament_python_install_package(${PROJECT_NAME})

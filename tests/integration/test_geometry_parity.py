@@ -8,12 +8,20 @@ agree to floating-point tolerance. Skipped when ``nuway_py`` is not importable
 from __future__ import annotations
 
 import math
+from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pytest
 
-from nuway_ml.common import carla_conv, frenet, geometry, occupancy, tick
+from nuway_ml.common import (
+    carla_conv,
+    frenet,
+    geometry,
+    longitudinal_map,
+    occupancy,
+    tick,
+)
 
 nuway_py = pytest.importorskip("nuway_py")
 
@@ -239,3 +247,43 @@ def test_tick_parity() -> None:
         assert tick.tick_stamp(k) == tuple(nuway_py.tick_stamp(k))
         assert tick.tick_time_s(k) == pytest.approx(nuway_py.tick_time_s(k), abs=ATOL)
         assert tick.is_planning_tick(k) == nuway_py.is_planning_tick(k)
+
+
+def test_longitudinal_map_parity() -> None:
+    vehicle = (
+        Path(__file__).resolve().parents[2] / "configs/vehicle/lincoln_mkz_2020.yaml"
+    )
+    map_py = longitudinal_map.LongitudinalMap.from_yaml(vehicle)
+    map_cpp = nuway_py.LongitudinalMap.from_yaml(str(vehicle))
+    assert map_cpp is not None
+    np.testing.assert_allclose(map_py.v_bins, map_cpp.v_bins, atol=ATOL)
+    np.testing.assert_allclose(map_py.accel_table, map_cpp.accel_table, atol=ATOL)
+    np.testing.assert_allclose(map_py.coast_accel, map_cpp.coast_accel, atol=ATOL)
+    for _ in range(1000):
+        # Out-of-range inputs on purpose: both sides must clamp identically.
+        v = float(RNG.uniform(-5.0, 40.0))
+        pedal = float(RNG.uniform(-0.2, 1.2))
+        accel_des = float(RNG.uniform(-12.0, 8.0))
+        assert map_py.accel(v, pedal) == pytest.approx(
+            map_cpp.accel(v, pedal), abs=ATOL
+        )
+        assert map_py.decel(v, pedal) == pytest.approx(
+            map_cpp.decel(v, pedal), abs=ATOL
+        )
+        assert map_py.coast(v) == pytest.approx(map_cpp.coast(v), abs=ATOL)
+        assert map_py.inverse(v, accel_des) == pytest.approx(
+            map_cpp.inverse(v, accel_des), abs=ATOL
+        )
+    # Table-row inversion on a non-monotone row stays defined on both sides.
+    bins = [0.0, 0.5, 1.0]
+    for values in ([1.0, 3.0, 2.0], [0.0, -2.0, -1.0], [1.0, 1.0, 1.0]):
+        for target in (-5.0, 0.0, 1.0, 1.5, 2.5, 9.0):
+            assert (
+                longitudinal_map._invert_monotone(  # parity test of the module helper
+                    np.asarray(bins), np.asarray(values), target
+                )
+                == pytest.approx(
+                    nuway_py.invert_monotone(bins, values, target), abs=ATOL
+                )
+            )
+    assert nuway_py.LongitudinalMap.from_yaml("/nonexistent.yaml") is None

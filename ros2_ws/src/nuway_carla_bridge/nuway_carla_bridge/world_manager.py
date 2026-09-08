@@ -472,12 +472,20 @@ class WorldManagerNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (
         rpy = quaternion_to_rpy(actor_pose.rotation)
         loc = location_from_ros(actor_pose.translation)
         rot = rotation_from_ros(rpy)
+        # Toggling physics recreates the PhysX vehicle, so suspension travel,
+        # wheel spin and the rest of its internal state do not carry over
+        # from the previous episode (they did: the first tick after a
+        # teleport from a moving hero differed by 1.7 cm and 0.1 m/s from
+        # one after a standing hero, and the bit-identical criterion needs
+        # every episode of a route to start from the same state).
+        self._hero.set_simulate_physics(False)
         self._hero.set_transform(
             carla.Transform(
                 carla.Location(x=loc.x, y=loc.y, z=loc.z),
                 carla.Rotation(pitch=rot.pitch, yaw=rot.yaw, roll=rot.roll),
             )
         )
+        self._hero.set_simulate_physics(True)
         self._hero.set_target_velocity(carla.Vector3D(0.0, 0.0, 0.0))
         self._hero.set_target_angular_velocity(carla.Vector3D(0.0, 0.0, 0.0))
         self._hero.apply_control(

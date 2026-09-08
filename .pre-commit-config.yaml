@@ -8,12 +8,12 @@ repos:
         name: clang-format
         entry: uv run --frozen clang-format --dry-run --Werror
         language: system
-        files: '^(ros2_ws/src/nuway_[a-z_]+/|tests/).*\.(hpp|cpp)$'
+        files: '^(ros2_ws/src/nuway_[a-z_]+/|tests/).*\.(h|cc)$'
       - id: clang-tidy
         name: clang-tidy
         entry: tools/lint/tidy_cpp.sh
         language: system
-        files: '^ros2_ws/src/nuway_[a-z_]+/.*\.cpp$'
+        files: '^ros2_ws/src/nuway_[a-z_]+/.*\.cc$'
       - id: gersemi
         name: gersemi
         entry: uv run --frozen gersemi --check
@@ -24,7 +24,7 @@ repos:
         entry: uv run --frozen python tools/lint/check_header_guards.py
         language: system
         pass_filenames: false
-        files: '^ros2_ws/src/nuway_[a-z_]+/.*\.hpp$'
+        files: '^ros2_ws/src/nuway_[a-z_]+/.*\.h$'
       - id: ruff-format
         name: ruff format
         entry: uv run --frozen ruff format --check

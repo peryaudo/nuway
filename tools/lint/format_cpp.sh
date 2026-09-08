@@ -20,8 +20,8 @@ cpp_files=()
 cmake_files=()
 if [ "${#files[@]}" -eq 0 ]; then
   while IFS= read -r f; do cpp_files+=("$f"); done < <(
-    find ros2_ws/src -path 'ros2_ws/src/nuway_*' \( -name '*.hpp' -o -name '*.cpp' \) | sort
-    find tests -type f \( -name '*.hpp' -o -name '*.cpp' \) 2>/dev/null | sort
+    find ros2_ws/src -path 'ros2_ws/src/nuway_*' \( -name '*.h' -o -name '*.cc' \) | sort
+    find tests -type f \( -name '*.h' -o -name '*.cc' \) 2>/dev/null | sort
   )
   while IFS= read -r f; do cmake_files+=("$f"); done < <(
     find ros2_ws/src -path 'ros2_ws/src/nuway_*' \( -name 'CMakeLists.txt' -o -name '*.cmake' \) | sort
@@ -29,7 +29,7 @@ if [ "${#files[@]}" -eq 0 ]; then
 else
   for f in "${files[@]}"; do
     case "$f" in
-      *.hpp|*.cpp) cpp_files+=("$f") ;;
+      *.h|*.cc) cpp_files+=("$f") ;;
       CMakeLists.txt|*/CMakeLists.txt|*.cmake) cmake_files+=("$f") ;;
     esac
   done

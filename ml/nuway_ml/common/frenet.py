@@ -1,6 +1,6 @@
 """Reference line and Cartesian <-> Frenet conversion (M0).
 
-Mirrors ``nuway_common/frenet.hpp``: a polyline sampled along arc length ``s``
+Mirrors ``nuway_common/frenet.h``: a polyline sampled along arc length ``s``
 (meters, map frame) with per-sample heading (rad) and curvature (1/m). Frenet
 coordinates are ``(s, d)`` with ``d`` positive to the left (ROS convention).
 Cartesian points are ``p(s) + d * n(theta(s))`` with the heading interpolated on

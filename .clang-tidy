@@ -54,7 +54,7 @@ CheckOptions:
   readability-identifier-naming.EnumConstantPrefix: 'k'
   readability-identifier-naming.MacroDefinitionCase: UPPER_CASE
   # Include guards end in '_' (§2.2), which UPPER_CASE rejects.
-  readability-identifier-naming.MacroDefinitionIgnoredRegexp: '^NUWAY_[A-Z0-9_]+_HPP_$'
+  readability-identifier-naming.MacroDefinitionIgnoredRegexp: '^NUWAY_[A-Z0-9_]+_H_$'
   # Cheap accessors/mutators are allowed to be snake_case (Google "Function
   # Names"): a bare member name `foo()` or a setter `set_foo()`. The regexp
   # must not admit arbitrary snake_case methods, so it requires the accessor

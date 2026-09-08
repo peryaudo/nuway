@@ -44,7 +44,7 @@ if(BUILD_TESTING)
         occupancy
         tick
     )
-        ament_add_gtest(${unit}_test test/${unit}_test.cpp)
+        ament_add_gtest(${unit}_test test/${unit}_test.cc)
         target_link_libraries(${unit}_test nuway_common)
         nuway_target_defaults(${unit}_test)
     endforeach()

@@ -89,19 +89,19 @@ nuway/
 │       │   └── CMakeLists.txt
 │       ├── nuway_common/                  # C++ header-mostly library
 │       │   ├── include/nuway_common/
-│       │   │   ├── geometry.hpp           # SE2, SE3 helpers, angle wrap
-│       │   │   ├── frenet.hpp             # reference line, cartesian<->frenet
-│       │   │   ├── bicycle_model.hpp      # kinematic bicycle, discretization, jacobians
-│       │   │   ├── trajectory.hpp         # Trajectory struct, resampling, interpolation
-│       │   │   ├── carla_conv.hpp         # left-handed <-> ROS conversion, GNSS <-> map (C++ side; see Rules)
-│       │   │   ├── occupancy.hpp          # multi-channel grid accessor, bilinear sample
-│       │   │   ├── diag.hpp               # NodeDiag publisher helper, scoped timer
-│       │   │   ├── qos.hpp                # the QoS profiles from 02_interfaces.md §3.11
-│       │   │   ├── tick.hpp               # TickIndex(stamp), IsPlanningTick(k); current-tick barrier helper (02 §2)
-│       │   │   ├── frames.hpp             # frame ids and the topic names shared by more than one package (mirrors frames.py)
-│       │   │   ├── params.hpp             # declare/get param helpers
-│       │   │   ├── ros_conv.hpp           # geometry_msgs <-> Eigen / SE2 / SE3 field copies for nodes (mirrors ros_conv.py)
-│       │   │   └── node_main.hpp          # RunNode<T>(): the one main() body of every C++ node (init, spin, shutdown, node-boundary catch)
+│       │   │   ├── geometry.h           # SE2, SE3 helpers, angle wrap
+│       │   │   ├── frenet.h             # reference line, cartesian<->frenet
+│       │   │   ├── bicycle_model.h      # kinematic bicycle, discretization, jacobians
+│       │   │   ├── trajectory.h         # Trajectory struct, resampling, interpolation
+│       │   │   ├── carla_conv.h         # left-handed <-> ROS conversion, GNSS <-> map (C++ side; see Rules)
+│       │   │   ├── occupancy.h          # multi-channel grid accessor, bilinear sample
+│       │   │   ├── diag.h               # NodeDiag publisher helper, scoped timer
+│       │   │   ├── qos.h                # the QoS profiles from 02_interfaces.md §3.11
+│       │   │   ├── tick.h               # TickIndex(stamp), IsPlanningTick(k); current-tick barrier helper (02 §2)
+│       │   │   ├── frames.h             # frame ids and the topic names shared by more than one package (mirrors frames.py)
+│       │   │   ├── params.h             # declare/get param helpers
+│       │   │   ├── ros_conv.h           # geometry_msgs <-> Eigen / SE2 / SE3 field copies for nodes (mirrors ros_conv.py)
+│       │   │   └── node_main.h          # RunNode<T>(): the one main() body of every C++ node (init, spin, shutdown, node-boundary catch)
 │       │   └── test/
 │       ├── nuway_py/                      # THE pybind11 package (one per repo). M0: nuway_common + nuway_control::LongitudinalMap
 │       │                                  #   for the parity tests; M6: FSM, lattice, QP, selector, collision, const-vel predictor,
@@ -122,27 +122,27 @@ nuway/
 │       │   └── launch/
 │       ├── nuway_map/                     # C++
 │       │   ├── src/
-│       │   │   ├── opendrive_parser.cpp   # OpenDRIVE -> LaneGraph
-│       │   │   ├── lane_graph.cpp         # lanes, successors, neighbors, TL/stop associations
-│       │   │   ├── tl_overrides.cpp       # loads configs/maps/<town>/tl_overrides.yaml (M4)
-│       │   │   └── map_server_node.cpp    # publishes nuway_msgs/LaneGraph (latched), query srv
+│       │   │   ├── opendrive_parser.cc   # OpenDRIVE -> LaneGraph
+│       │   │   ├── lane_graph.cc         # lanes, successors, neighbors, TL/stop associations
+│       │   │   ├── tl_overrides.cc       # loads configs/maps/<town>/tl_overrides.yaml (M4)
+│       │   │   └── map_server_node.cc    # publishes nuway_msgs/LaneGraph (latched), query srv
 │       │   └── include/nuway_map/
 │       ├── nuway_route/                   # C++: A* on lane graph, reference line builder
-│       │   └── tools/route_gen.cpp        # `ros2 run nuway_route route_gen`: seeded successor walks -> tools/eval/routes/*.xml,
+│       │   └── tools/route_gen.cc        # `ros2 run nuway_route route_gen`: seeded successor walks -> tools/eval/routes/*.xml,
 │       │                                  #   every route validated with the stack's RoutePlanner (M0 task 13)
 │       ├── nuway_localization/            # C++
 │       │   ├── config/defaults.yaml
 │       │   ├── include/nuway_localization/
 │       │   ├── src/
-│       │   │   ├── gt_pose_node.cpp       # cheat twin (M0): GT odom + vehicle_state -> /nuway/loc/pose + TF, noise.* params
-│       │   │   ├── voxel_hash_map.cpp / icp.cpp / scan_context.cpp   # M5 libraries
-│       │   │   ├── lidar_odometry.cpp / lidar_odometry_node.cpp      # M5
-│       │   │   ├── scan_to_map.cpp / scan_to_map_node.cpp            # M5
-│       │   │   ├── smoother.cpp / smoother_node.cpp                  # M5 (GTSAM fixed-lag)
-│       │   │   └── pose_extrapolator.cpp / pose_extrapolator_node.cpp  # M5 (per-tick odom->base_link)
+│       │   │   ├── gt_pose_node.cc       # cheat twin (M0): GT odom + vehicle_state -> /nuway/loc/pose + TF, noise.* params
+│       │   │   ├── voxel_hash_map.cc / icp.cc / scan_context.cc   # M5 libraries
+│       │   │   ├── lidar_odometry.cc / lidar_odometry_node.cc      # M5
+│       │   │   ├── scan_to_map.cc / scan_to_map_node.cc            # M5
+│       │   │   ├── smoother.cc / smoother_node.cc                  # M5 (GTSAM fixed-lag)
+│       │   │   └── pose_extrapolator.cc / pose_extrapolator_node.cc  # M5 (per-tick odom->base_link)
 │       │   └── tools/                     # map_builder, pose_graph_refine binaries (M5)
 │       ├── nuway_perception/               # python except lidar_preproc_node
-│       │   ├── src/lidar_preproc_node.cpp    # escalation path only: C++ pillarization if Python preproc > 8 ms (M3)
+│       │   ├── src/lidar_preproc_node.cc    # escalation path only: C++ pillarization if Python preproc > 8 ms (M3)
 │       │   ├── config/defaults.yaml
 │       │   ├── nuway_perception/          # python
 │       │   │   ├── gt_twin_node.py           # base of the GT twins: tick barrier, reset, TickTimeout degradation, diag (M0)
@@ -153,35 +153,35 @@ nuway/
 │       │   │   └── traffic_light_node.py     # crop, classify, latch (M4)
 │       │   └── launch/
 │       ├── nuway_prediction/
-│       │   ├── src/const_vel.cpp / const_vel_node.cpp   # M1; library (bound by nuway_py for the M6 expert) + node
+│       │   ├── src/const_vel.cc / const_vel_node.cc   # M1; library (bound by nuway_py for the M6 expert) + node
 │       │   ├── include/nuway_prediction/
 │       │   └── nuway_prediction/
 │       │       ├── gt_prediction_node.py     # cheat twin: futures from a recorded CARLA log, replay eval only (M6)
 │       │       └── prediction_node.py        # M7; also hosts the M8 ego planning head
 │       ├── nuway_planning/                # C++ except gt_planning_node.py
 │       │   ├── src/
-│       │   │   ├── behavior_fsm.cpp / behavior_fsm_node.cpp      # M1
-│       │   │   ├── lattice_sampler.cpp                           # M1
-│       │   │   ├── collision_checker.cpp                         # M1
-│       │   │   ├── piecewise_jerk_qp.cpp                         # M1
-│       │   │   ├── rule_selector.cpp                             # M1
-│       │   │   ├── safety_layer_node.cpp                         # M1
-│       │   │   ├── planner_node.cpp        # orchestrates: candidates -> refine -> select
-│       │   │   ├── forward_sim_scorer.cpp  # M9
-│       │   │   └── ilqr.cpp                # M10
+│       │   │   ├── behavior_fsm.cc / behavior_fsm_node.cc      # M1
+│       │   │   ├── lattice_sampler.cc                           # M1
+│       │   │   ├── collision_checker.cc                         # M1
+│       │   │   ├── piecewise_jerk_qp.cc                         # M1
+│       │   │   ├── rule_selector.cc                             # M1
+│       │   │   ├── safety_layer_node.cc                         # M1
+│       │   │   ├── planner_node.cc        # orchestrates: candidates -> refine -> select
+│       │   │   ├── forward_sim_scorer.cc  # M9
+│       │   │   └── ilqr.cc                # M10
 │       │   ├── nuway_planning/gt_planning_node.py   # cheat twin: M6 expert (via nuway_py) as a node (M6)
 │       │   └── include/nuway_planning/
 │       ├── nuway_control/                 # C++
 │       │   ├── src/
-│       │   │   ├── longitudinal_map.cpp        # a_des -> throttle/brake from sysid table (M0)
-│       │   │   ├── vehicle_model.cpp           # configs/vehicle/<vehicle>.yaml -> VehicleModel (geometry, limits, fit, map) (M0)
-│       │   │   ├── pure_pursuit_pid.cpp        # the controller as a library (gtest without rclcpp) (M0)
-│       │   │   ├── pure_pursuit_pid_node.cpp   # M0
-│       │   │   └── mpc_node.cpp                # M1
+│       │   │   ├── longitudinal_map.cc        # a_des -> throttle/brake from sysid table (M0)
+│       │   │   ├── vehicle_model.cc           # configs/vehicle/<vehicle>.yaml -> VehicleModel (geometry, limits, fit, map) (M0)
+│       │   │   ├── pure_pursuit_pid.cc        # the controller as a library (gtest without rclcpp) (M0)
+│       │   │   ├── pure_pursuit_pid_node.cc   # M0
+│       │   │   └── mpc_node.cc                # M1
 │       │   ├── include/nuway_control/
 │       │   ├── config/defaults.yaml
 │       │   └── test/
-│       ├── nuway_viz/                     # marker_node.cpp, foxglove layouts, rviz configs
+│       ├── nuway_viz/                     # marker_node.cc, foxglove layouts, rviz configs
 │       └── nuway_bringup/
 │           ├── nuway_bringup/
 │           │   ├── profile.py             # profile YAML -> per-node parameter dicts (defaults < profile keys < <node>: block);
@@ -196,15 +196,15 @@ nuway/
 │   ├── nuway_ml/
 │   │   ├── common/
 │   │   │   ├── geometry.py                # numpy/torch SE2 utils, must mirror nuway_common
-│   │   │   ├── frenet.py                  # mirrors nuway_common/frenet.hpp
-│   │   │   ├── trajectory.py              # mirrors nuway_common/trajectory.hpp resampling (M8 spline resample)
+│   │   │   ├── frenet.py                  # mirrors nuway_common/frenet.h
+│   │   │   ├── trajectory.py              # mirrors nuway_common/trajectory.h resampling (M8 spline resample)
 │   │   │   ├── longitudinal_map.py        # mirrors nuway_control's LongitudinalMap; parity-tested (M0)
 │   │   │   ├── carla_conv.py              # left-handed <-> ROS conversion (Python side; see Rules)
 │   │   │   ├── occupancy.py               # GridSpec + world<->grid: numpy, no torch (gt_perception_node imports it)
 │   │   │   │                               # bilinear_sample(): torch, imported lazily inside the function
 │   │   │   ├── frames.py                  # frame name constants shared with the ROS side
 │   │   │   ├── qos.py                     # the QoS table of 02 §3.11 as plain data (no rclpy import)
-│   │   │   ├── tick.py                    # tick_index(stamp), is_planning_tick(k); mirrors tick.hpp (02 §2)
+│   │   │   ├── tick.py                    # tick_index(stamp), is_planning_tick(k); mirrors tick.h (02 §2)
 │   │   │   ├── rig.py                     # the one rig-JSON parser: entries, CARLA->base_link extrinsics, intrinsics K from
 │   │   │   │                               # size+FOV. Used by sensor_rig.py (tf_static, camera_info), the collectors and
 │   │   │   │                               # CameraCalib (M2), so every K and every extrinsic has one source
@@ -338,7 +338,7 @@ nuway/
 ## Rules
 
 - **`nuway_msgs` is the only package that defines messages and services.** Any new message or service requires an entry in `02_interfaces.md`.
-- **`nuway_common/carla_conv.hpp` (C++) and `nuway_ml/common/carla_conv.py` (Python) are the only code that knows CARLA's coordinate convention.** `nuway_carla_bridge` and the collectors under `tools/collect/` call `carla_conv.py` (through `rig.py` for everything rig-related); they contain no conversion arithmetic of their own. The two files are parity-tested against each other, including the GNSS ↔ map conversion added in M5. Everything downstream is ROS-convention.
+- **`nuway_common/carla_conv.h` (C++) and `nuway_ml/common/carla_conv.py` (Python) are the only code that knows CARLA's coordinate convention.** `nuway_carla_bridge` and the collectors under `tools/collect/` call `carla_conv.py` (through `rig.py` for everything rig-related); they contain no conversion arithmetic of their own. The two files are parity-tested against each other, including the GNSS ↔ map conversion added in M5. Everything downstream is ROS-convention.
 - **`nuway_ml/common/*` must mirror `nuway_common/*`** for geometry/frenet/occupancy/carla_conv/tick conventions. There is a cross-language test (`tests/integration/test_geometry_parity.py`) that runs the C++ versions through the `nuway_py` pybind package and compares outputs. Keep it green.
 - **`nuway_py` is the one pybind package and the one sanctioned import from `ros2_ws` into `tools/`.** It exists so that the M6 expert, `gt_planning_node.py` and the parity tests run the *same* C++ planner/controller code as the runtime, which is worth more than the "everything `tools/` imports lives in `ml/`" rule it bends. It is available only after `colcon build` with `ros2_ws/install/setup.bash` sourced; `setup_env.sh` does that. It ships no stubs, so it is listed in the mypy `ignore_missing_imports` override (`03_style_and_conventions.md` §7.3). Nothing else under `ros2_ws` may be imported by `tools/` or `ml/`. This is why the evaluation harness (`nuway_eval`) lives under `tools/eval/` and the tracker under `ml/nuway_ml/perception/`: anything a script or a training-side tool imports is outside `ros2_ws`.
 - **`ml/` never imports `rclpy`.** `nuway_ml` must import in an environment with no ROS (the collectors, `render_bag.py`, training). Code that needs `rclpy` and is not a node lives in `tools/eval/nuway_eval/`.

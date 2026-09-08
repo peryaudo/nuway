@@ -7,7 +7,7 @@ Run from the repo root with `source setup_env.sh` in the same shell. Report ever
 
 Scope: packages/files touched on the current branch (`git diff --name-only main...HEAD` plus uncommitted). Use `--all` in `$ARGUMENTS` for the whole tree.
 
-C++ (if any `.cpp`/`.hpp`/`CMakeLists.txt` changed):
+C++ (if any `.cc`/`.h`/`CMakeLists.txt` changed):
 ```bash
 colcon build --packages-select <pkgs>
 tools/lint/format_cpp.sh              # check mode; --fix only if asked

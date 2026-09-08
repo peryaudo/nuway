@@ -31,10 +31,10 @@ candidates (lattice + refined learned) ─► rule_selector (M1) → costs
                                    argmin → selected
 ```
 
-## 2. `ForwardSimScorer` (`nuway_planning/src/forward_sim_scorer.cpp`, with a torch reference impl in `nuway_ml/planning/forward_sim.py` for tests and for possible RL later)
+## 2. `ForwardSimScorer` (`nuway_planning/src/forward_sim_scorer.cc`, with a torch reference impl in `nuway_ml/planning/forward_sim.py` for tests and for possible RL later)
 
 ### 2.1 Ego closed-loop model
-- Kinematic bicycle (`bicycle_model.hpp`), `dt = 0.1`, steering lag `τ_steer`, accel lag `τ_throttle` from the vehicle YAML.
+- Kinematic bicycle (`bicycle_model.h`), `dt = 0.1`, steering lag `τ_steer`, accel lag `τ_throttle` from the vehicle YAML.
 - Tracking controller: pure pursuit (lookahead `max(3, 0.6·v)`) for steering + P-controller on speed error to the candidate's `v(t)`, clipped by limits. Deliberately simple: the point is to measure what a *feasible* execution of the candidate does, not to replicate MPC exactly.
 
 ### 2.2 Other agents
@@ -82,7 +82,7 @@ Defaults: `w_col=1000, w_ttc=50, w_prox=10, w_prog=30, w_off=200, w_rule=500, w_
 ## 5. Task list
 
 1. [ ] `forward_sim.py` (torch reference) + scenario tests.
-2. [ ] `forward_sim_scorer.cpp` + parity test vs torch; timing test.
+2. [ ] `forward_sim_scorer.cc` + parity test vs torch; timing test.
 3. [ ] Agent Mode B (IDM along lane) in C++; tests (agent brakes for ego).
 4. [ ] `planner_node` two-stage selection, diversity guard, breakdown publishing; config `configs/planning/forward_sim.yaml`; profile `m9_forward_sim.yaml` (includes `m8_learned_planner.yaml`, sets `planning.selector: forward_sim`).
 5. [ ] Foxglove "sim rollout" layer.

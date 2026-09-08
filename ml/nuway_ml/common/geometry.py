@@ -1,6 +1,6 @@
 """SE2/SE3 helpers and angle wrapping, ROS convention (M0).
 
-Mirrors ``nuway_common/geometry.hpp``: x forward, y left, z up, yaw
+Mirrors ``nuway_common/geometry.h``: x forward, y left, z up, yaw
 counter-clockwise positive, radians. Quaternions are ``(x, y, z, w)`` arrays, the
 order of ``geometry_msgs/Quaternion`` and of Eigen's coefficient storage.
 """

@@ -13,9 +13,9 @@ find_package(nuway_msgs REQUIRED)
 # the pybind11 extension module.
 add_library(
     nuway_control_lib
-    src/longitudinal_map.cpp
-    src/vehicle_model.cpp
-    src/pure_pursuit_pid.cpp
+    src/longitudinal_map.cc
+    src/vehicle_model.cc
+    src/pure_pursuit_pid.cc
 )
 target_include_directories(
     nuway_control_lib
@@ -31,7 +31,7 @@ target_link_libraries(
 set_target_properties(nuway_control_lib PROPERTIES POSITION_INDEPENDENT_CODE ON)
 nuway_target_defaults(nuway_control_lib)
 
-add_executable(pure_pursuit_pid_node src/pure_pursuit_pid_node.cpp)
+add_executable(pure_pursuit_pid_node src/pure_pursuit_pid_node.cc)
 target_link_libraries(
     pure_pursuit_pid_node
     PRIVATE
@@ -50,7 +50,7 @@ install(DIRECTORY config DESTINATION share/${PROJECT_NAME})
 if(BUILD_TESTING)
     find_package(ament_cmake_gtest REQUIRED)
     foreach(unit longitudinal_map pure_pursuit_pid)
-        ament_add_gtest(${unit}_test test/${unit}_test.cpp)
+        ament_add_gtest(${unit}_test test/${unit}_test.cc)
         target_link_libraries(${unit}_test nuway_control_lib)
         target_compile_definitions(
             ${unit}_test

@@ -1,4 +1,4 @@
-"""Frame ids and shared topic names (M0). Mirrors ``nuway_common/frames.hpp``."""
+"""Frame ids and shared topic names (M0). Mirrors ``nuway_common/frames.h``."""
 
 FRAME_MAP = "map"
 FRAME_ODOM = "odom"

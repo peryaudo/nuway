@@ -11,7 +11,7 @@ find_package(nuway_common REQUIRED)
 find_package(nuway_msgs REQUIRED)
 
 # Library: no rclcpp.
-add_library(nuway_map_lib src/opendrive_parser.cpp src/lane_graph.cpp)
+add_library(nuway_map_lib src/opendrive_parser.cc src/lane_graph.cc)
 target_include_directories(
     nuway_map_lib
     PUBLIC
@@ -29,7 +29,7 @@ target_link_libraries(
 )
 nuway_target_defaults(nuway_map_lib)
 
-add_executable(map_server_node src/map_server_node.cpp)
+add_executable(map_server_node src/map_server_node.cc)
 target_link_libraries(
     map_server_node
     PRIVATE nuway_map_lib rclcpp::rclcpp nuway_common::nuway_common_ros
@@ -44,7 +44,7 @@ install(DIRECTORY config DESTINATION share/${PROJECT_NAME})
 if(BUILD_TESTING)
     find_package(ament_cmake_gtest REQUIRED)
     foreach(unit opendrive_parser lane_graph)
-        ament_add_gtest(${unit}_test test/${unit}_test.cpp)
+        ament_add_gtest(${unit}_test test/${unit}_test.cc)
         target_link_libraries(${unit}_test nuway_map_lib)
         target_compile_definitions(
             ${unit}_test

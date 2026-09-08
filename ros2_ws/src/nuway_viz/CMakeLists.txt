@@ -8,7 +8,7 @@ find_package(visualization_msgs REQUIRED)
 find_package(nuway_common REQUIRED)
 find_package(nuway_msgs REQUIRED)
 
-add_executable(marker_node src/marker_node.cpp)
+add_executable(marker_node src/marker_node.cc)
 target_include_directories(
     marker_node
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include

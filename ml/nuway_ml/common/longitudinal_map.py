@@ -1,6 +1,6 @@
 """Longitudinal actuator map: (speed, accel) <-> throttle / brake (M0).
 
-Mirrors ``nuway_control/longitudinal_map.hpp`` (parity-tested through
+Mirrors ``nuway_control/longitudinal_map.h`` (parity-tested through
 ``nuway_py``). The tables come from the sysid fit in
 ``configs/vehicle/<vehicle>.yaml`` (``M0_bringup.md`` §2.6)::
 

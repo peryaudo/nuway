@@ -1,10 +1,10 @@
 """Check include guards of every nuway C++ header (M0).
 
-Expected macro: ``NUWAY_<PACKAGE>_<PATH>_<FILE>_HPP_`` derived from the header's
+Expected macro: ``NUWAY_<PACKAGE>_<PATH>_<FILE>_H_`` derived from the header's
 path below its package's ``include/`` directory (``docs/03_style_and_conventions.md``
-§2.2), e.g. ``include/nuway_common/frenet.hpp`` -> ``NUWAY_COMMON_FRENET_HPP_``.
+§2.2), e.g. ``include/nuway_common/frenet.h`` -> ``NUWAY_COMMON_FRENET_H_``.
 Headers outside ``include/`` use their path relative to the package directory,
-prefixed with the package name (``nuway_map/src/foo.hpp`` -> ``NUWAY_MAP_SRC_FOO_HPP_``).
+prefixed with the package name (``nuway_map/src/foo.h`` -> ``NUWAY_MAP_SRC_FOO_H_``).
 ``#pragma once`` is rejected. Exit status 1 lists every offending file.
 """
 
@@ -26,7 +26,7 @@ def expected_guard(header: Path, package_dir: Path) -> str:
         rel = header.relative_to(include_dir)
     else:
         rel = Path(package_dir.name) / header.relative_to(package_dir)
-    parts = [p.upper() for p in rel.with_suffix("").parts] + ["HPP"]
+    parts = [p.upper() for p in rel.with_suffix("").parts] + ["H"]
     return "_".join(parts).replace("-", "_") + "_"
 
 
@@ -54,7 +54,7 @@ def iter_headers(src_dir: Path) -> list[tuple[Path, Path]]:
     for package_dir in sorted(src_dir.glob("nuway_*")):
         if not (package_dir / "package.xml").is_file():
             continue
-        for header in sorted(package_dir.rglob("*.hpp")):
+        for header in sorted(package_dir.rglob("*.h")):
             pairs.append((header, package_dir))
     return pairs
 

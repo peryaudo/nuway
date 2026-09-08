@@ -11,7 +11,7 @@ find_package(nav_msgs REQUIRED)
 find_package(nuway_common REQUIRED)
 find_package(nuway_msgs REQUIRED)
 
-add_executable(gt_pose_node src/gt_pose_node.cpp)
+add_executable(gt_pose_node src/gt_pose_node.cc)
 target_include_directories(
     gt_pose_node
     PRIVATE $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>

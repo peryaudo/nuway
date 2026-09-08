@@ -32,7 +32,7 @@ Training is joint with M7 (multi-task, `w_plan = 1.0`) from the M7 checkpoint, 1
 ## 2. Runtime (`nuway_prediction/prediction_node.py` + `planner_node` changes)
 
 There is no separate learned-planner node. The ego planning head runs inside the M7 node `nuway_prediction/prediction_node.py`, so the encoder runs once per cycle; the node publishes both `/nuway/prediction/samples` and `/nuway/planning/learned_candidates` (`TrajectoryCandidates`, `source="learned"`). This is the "one module, one process" case named in `00_overview.md` principle 2: the shared `context` tensor never leaves the process.
-- Ego candidates (S + M = 24) at 0.5 s → interpolated to 0.1 s by a C² spline (the Python twin of `nuway_common/trajectory.hpp::Resample`, `nuway_ml/common/trajectory.py`) with speed/accel from derivatives; 81 points each.
+- Ego candidates (S + M = 24) at 0.5 s → interpolated to 0.1 s by a C² spline (the Python twin of `nuway_common/trajectory.h::Resample`, `nuway_ml/common/trajectory.py`) with speed/accel from derivatives; 81 points each.
 - Each candidate carries `Trajectory.sample_index` = the index of the prediction sample it is consistent with (Source A) or `-1` (Source B) (`02_interfaces.md` §4).
 
 `planner_node` (C++) now:

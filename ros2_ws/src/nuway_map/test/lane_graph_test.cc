@@ -37,7 +37,7 @@ constexpr const char* kTestXodr = R"(<?xml version="1.0"?>
         <right>
           <lane id="-1" type="driving"><width sOffset="0" a="3.5" b="0" c="0" d="0"/><roadMark sOffset="0" type="broken" laneChange="both"/></lane>
           <lane id="-2" type="driving"><width sOffset="0" a="3.0" b="0" c="0" d="0"/><roadMark sOffset="0" type="solid" laneChange="none"/></lane>
-          <lane id="-3" type="sidewalk"><width sOffset="0" a="2.0" b="0" c="0" d="0"/></lane>
+          <lane id="-3" type="shoulder"><width sOffset="0" a="2.0" b="0" c="0" d="0"/></lane>
         </right>
       </laneSection>
     </lanes>
@@ -75,16 +75,16 @@ constexpr const char* kTestXodr = R"(<?xml version="1.0"?>
         <left><lane id="1" type="driving"><link><successor id="1"/></link><width sOffset="0" a="3.5" b="0" c="0" d="0"/></lane></left>
         <center><lane id="0" type="none"/></center>
         <right>
-          <lane id="-1" type="driving"><link><successor id="-1"/></link><width sOffset="0" a="3.5" b="0" c="0" d="0"/></lane>
-          <lane id="-2" type="driving"><link><successor id="-2"/></link><width sOffset="0" a="3.0" b="0" c="0" d="0"/></lane>
+          <lane id="-1" type="driving"><link><successor id="-1"/></link><width sOffset="0" a="3.5" b="0" c="0" d="0"/><roadMark sOffset="0" type="broken" laneChange="both"/><roadMark sOffset="3" type="solid" laneChange="none"/></lane>
+          <lane id="-2" type="driving"><link><successor id="-2"/></link><width sOffset="0" a="3.0" b="0" c="0" d="0"/><roadMark sOffset="0" type="solid" laneChange="none"/></lane>
         </right>
       </laneSection>
       <laneSection s="5">
         <left><lane id="1" type="driving"><link><predecessor id="1"/></link><width sOffset="0" a="3.5" b="0" c="0" d="0"/></lane></left>
         <center><lane id="0" type="none"/></center>
         <right>
-          <lane id="-1" type="driving"><link><predecessor id="-1"/></link><width sOffset="0" a="3.5" b="0" c="0" d="0"/></lane>
-          <lane id="-2" type="driving"><link><predecessor id="-2"/></link><width sOffset="0" a="3.0" b="0" c="0" d="0"/></lane>
+          <lane id="-1" type="driving"><link><predecessor id="-1"/></link><width sOffset="0" a="3.5" b="0" c="0" d="0"/><roadMark sOffset="0" type="broken" laneChange="both"/></lane>
+          <lane id="-2" type="driving"><link><predecessor id="-2"/></link><width sOffset="0" a="3.0" b="0" c="0" d="0"/><roadMark sOffset="0" type="solid" laneChange="none"/></lane>
         </right>
       </laneSection>
     </lanes>
@@ -207,7 +207,7 @@ TEST(LaneGraph, IdsAreStableAndNonZero) {
 TEST(LaneGraph, BuildsLanesWithCenterlines) {
   const LaneGraph graph = BuildTestGraph();
   // Road 1: lanes 1, -1, -2 kept (sidewalk dropped); road 5: 3; road 2: 6.
-  EXPECT_EQ(graph.lanes().size(), 12U);
+  EXPECT_EQ(graph.lanes().size(), 13U);  // incl. the shoulder of road 1
   const Lane* right1 = graph.lane(Id(1, 0, -1));
   ASSERT_NE(right1, nullptr);
   EXPECT_EQ(right1->type, LaneType::kDriving);
@@ -275,9 +275,19 @@ TEST(LaneGraph, NeighborsAndChangeFlags) {
   const Lane* right2 = graph.lane(Id(1, 0, -2));
   ASSERT_NE(right2, nullptr);
   EXPECT_EQ(right2->left_neighbor, Id(1, 0, -1));
-  EXPECT_EQ(right2->right_neighbor, 0U);     // sidewalk is not drivable
+  EXPECT_EQ(right2->right_neighbor, 0U);     // shoulder is not drivable
   EXPECT_TRUE(right2->left_change_allowed);  // crossing -1's broken mark
   EXPECT_FALSE(right2->right_change_allowed);
+  // Road 2, section 0: lane -1's mark is broken for 3 m then solid, so the
+  // one flag per lane says no (every record must allow it); section 1 has a
+  // single broken record and allows it.
+  const Lane* r2s0 = graph.lane(Id(2, 0, -1));
+  ASSERT_NE(r2s0, nullptr);
+  EXPECT_EQ(r2s0->right_neighbor, Id(2, 0, -2));
+  EXPECT_FALSE(r2s0->right_change_allowed);
+  EXPECT_FALSE(graph.lane(Id(2, 0, -2))->left_change_allowed);
+  EXPECT_TRUE(graph.lane(Id(2, 1, -1))->right_change_allowed);
+  EXPECT_TRUE(graph.lane(Id(2, 1, -2))->left_change_allowed);
   const Lane* left1 = graph.lane(Id(1, 0, 1));
   ASSERT_NE(left1, nullptr);
   EXPECT_EQ(left1->left_neighbor, 0U);
@@ -322,7 +332,8 @@ TEST(LaneGraph, SignalsAndObjects) {
   EXPECT_EQ(crosswalk.footprint.size(), 4U);
   // u along the crosswalk (rotated 90 deg from the road): spans y in [-8, 8]
   // and x in [3.5, 6.5]; lanes 1, -1, -2 of road 1 cross it.
-  EXPECT_EQ(crosswalk.crossing_lane_ids.size(), 3U);
+  EXPECT_EQ(crosswalk.crossing_lane_ids.size(),
+            4U);  // 3 driving + the shoulder
   EXPECT_TRUE(graph.geo_reference().valid);
 }
 
@@ -350,7 +361,53 @@ TEST(LaneGraph, NearestLaneUsesHeading) {
   EXPECT_EQ(UnwrapId(graph.LaneIdAt(2, -1, 7.0)), Id(2, 1, -1));
   EXPECT_EQ(UnwrapId(graph.LaneIdAt(2, -1, 2.0)), Id(2, 0, -1));
   EXPECT_FALSE(graph.LaneIdAt(77, -1, 2.0).has_value());
+  EXPECT_FALSE(graph.LaneIdAt(2, -1, 11.0).has_value());  // past the road
+  // The shoulder (y = -9, 2 m wide) is nearer to this point than lane -2
+  // (y = -5) but is not a lane to be on: the queries skip it.
+  q = UnwrapQuery(graph.NearestLane(12.0, -7.5, 0.0, 5.0));
+  EXPECT_EQ(q.lane_id, Id(1, 0, -2));
+  EXPECT_NEAR(q.d, -2.5, 1e-6);
+  for (const LaneQuery& query : graph.LanesNear(12.0, -7.5, 5.0)) {
+    EXPECT_NE(query.lane_id, Id(1, 0, -3));
+  }
   EXPECT_EQ(UnwrapId(graph.LaneIdNear(2, -1, 47.0, -1.0)), Id(2, 1, -1));
+}
+
+// A section too short to carry lanes (an export artifact) must not cut the
+// road: the links of its neighbours pass through it.
+constexpr const char* kZeroLengthSectionXodr = R"(<?xml version="1.0"?>
+<OpenDRIVE>
+  <header revMajor="1" revMinor="4" name="z"/>
+  <road name="r" length="10.0" id="3" junction="-1">
+    <planView><geometry s="0" x="0" y="0" hdg="0" length="10"><line/></geometry></planView>
+    <lanes>
+      <laneSection s="0">
+        <center><lane id="0" type="none"/></center>
+        <right><lane id="-1" type="driving"><link><successor id="-1"/></link><width sOffset="0" a="3.5" b="0" c="0" d="0"/></lane></right>
+      </laneSection>
+      <laneSection s="5">
+        <center><lane id="0" type="none"/></center>
+        <right><lane id="-1" type="driving"><link><predecessor id="-1"/><successor id="-1"/></link><width sOffset="0" a="3.5" b="0" c="0" d="0"/></lane></right>
+      </laneSection>
+      <laneSection s="5.0000005">
+        <center><lane id="0" type="none"/></center>
+        <right><lane id="-1" type="driving"><link><predecessor id="-1"/></link><width sOffset="0" a="3.5" b="0" c="0" d="0"/></lane></right>
+      </laneSection>
+    </lanes>
+  </road>
+</OpenDRIVE>)";
+
+TEST(LaneGraph, LinksPassThroughAZeroLengthSection) {
+  std::string error;
+  const LaneGraph graph = LaneGraph::Build(
+      UnwrapMap(ParseOpenDrive(kZeroLengthSectionXodr, &error), error));
+  EXPECT_EQ(graph.lanes().size(), 2U);  // the 0.5 um section carries none
+  const Lane* first = graph.lane(Id(3, 0, -1));
+  const Lane* last = graph.lane(Id(3, 2, -1));
+  ASSERT_NE(first, nullptr);
+  ASSERT_NE(last, nullptr);
+  EXPECT_EQ(first->successors, std::vector<std::uint32_t>{last->id});
+  EXPECT_EQ(last->predecessors, std::vector<std::uint32_t>{first->id});
 }
 
 TEST(LaneGraph, MessageRoundTrip) {
@@ -379,7 +436,8 @@ TEST(LaneGraph, MessageRoundTrip) {
   }
   EXPECT_EQ(back.traffic_lights().size(), 1U);
   EXPECT_EQ(back.stop_signs().front().trigger_volume.size(), 4U);
-  EXPECT_EQ(back.crosswalks().front().crossing_lane_ids.size(), 3U);
+  EXPECT_EQ(back.crosswalks().front().crossing_lane_ids.size(),
+            4U);  // 3 driving + the shoulder
   const LaneQuery q = UnwrapQuery(back.NearestLane(12.0, -2.5, 0.0, 3.0));
   EXPECT_EQ(q.lane_id, Id(1, 0, -1));
 }

@@ -140,11 +140,13 @@ class LaneGraph {
   std::optional<std::uint32_t> LaneIdNear(int road_id, int lane_id_odr,
                                           double x, double y) const;
 
-  // Nearest lane by centerline distance with a heading-consistency check.
+  // Nearest drivable lane (driving or bidirectional; never a shoulder or a
+  // parking lane) by centerline distance with a heading-consistency check.
   std::optional<LaneQuery> NearestLane(double x, double y, double yaw,
                                        double max_dist) const;
-  // Every lane whose centerline passes within max_dist, nearest first, with
-  // no heading check (for yaw-less route waypoints: either direction).
+  // Every drivable lane whose centerline passes within max_dist, nearest
+  // first, with no heading check (for yaw-less route waypoints: either
+  // direction).
   std::vector<LaneQuery> LanesNear(double x, double y, double max_dist) const;
   // The per-lane reference line (built lazily on first use, cached).
   const nuway_common::ReferenceLine* reference_line(std::uint32_t id) const;

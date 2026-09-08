@@ -69,8 +69,12 @@ bool IsDrivable(LaneType type) {
   return type == LaneType::kDriving || type == LaneType::kBidirectional;
 }
 
-// The road mark on the outer side of the lane (or the centre mark for 0):
-// the first record, as CARLA emits one mark per lane.
+// The road mark on the outer side of the lane (or the centre mark for 0),
+// summarised over the whole section: CARLA emits several <roadMark> records
+// along a lane (broken 0-33 m, solid 33-42 m on Town03 road 7), and the graph
+// keeps one flag per lane, so a change is allowed only where *every* record
+// allows it. Conservative: never schedules a change across a solid stretch;
+// a lane that turns broken later costs the planner a longer legal path.
 LaneChange OuterMark(const OdrLaneSection& section, int lane_id_odr) {
   if (lane_id_odr == 0) {
     return LaneChange::kNone;  // lane 0 separates opposite directions
@@ -79,7 +83,70 @@ LaneChange OuterMark(const OdrLaneSection& section, int lane_id_odr) {
   if (lane == nullptr || lane->marks.empty()) {
     return LaneChange::kNone;
   }
-  return lane->marks.front().lane_change;
+  bool increase = true;
+  bool decrease = true;
+  for (const RoadMark& mark : lane->marks) {
+    increase = increase && (mark.lane_change == LaneChange::kBoth ||
+                            mark.lane_change == LaneChange::kIncrease);
+    decrease = decrease && (mark.lane_change == LaneChange::kBoth ||
+                            mark.lane_change == LaneChange::kDecrease);
+  }
+  if (increase && decrease) {
+    return LaneChange::kBoth;
+  }
+  if (increase) {
+    return LaneChange::kIncrease;
+  }
+  return decrease ? LaneChange::kDecrease : LaneChange::kNone;
+}
+
+// Sections shorter than a millimetre (an export artifact: Town03 road 575 has
+// a 1 um one) carry no lanes; links from their neighbours pass through them.
+bool HasLanes(const OdrLaneSection& section) {
+  return section.s_end - section.s >= 1e-3;
+}
+
+// Follows a lane's in-road link towards +s (or -s) through sections without
+// lanes; returns the (section index, OpenDRIVE lane id) it lands on, or
+// nullopt when the chain ends or leaves the road.
+std::optional<std::pair<int, int>> FollowInRoad(const OdrRoad& road,
+                                                int section_idx,
+                                                int lane_id_odr,
+                                                bool towards_plus_s) {
+  int idx = section_idx;
+  int id = lane_id_odr;
+  const int n = static_cast<int>(road.sections.size());
+  while (true) {
+    const OdrLane* lane = road.sections[static_cast<std::size_t>(idx)].Find(id);
+    if (lane == nullptr) {
+      return std::nullopt;
+    }
+    const int link = towards_plus_s ? lane->successor : lane->predecessor;
+    idx += towards_plus_s ? 1 : -1;
+    if (link == kNoLink || idx < 0 || idx >= n) {
+      return std::nullopt;
+    }
+    id = link;
+    if (HasLanes(road.sections[static_cast<std::size_t>(idx)])) {
+      return std::make_pair(idx, id);
+    }
+  }
+}
+
+// First and last section index that carry lanes (the road's ends for the
+// purpose of road-to-road links).
+std::pair<int, int> LaneSectionRange(const OdrRoad& road) {
+  int first = 0;
+  int last = static_cast<int>(road.sections.size()) - 1;
+  while (first < last &&
+         !HasLanes(road.sections[static_cast<std::size_t>(first)])) {
+    ++first;
+  }
+  while (last > first &&
+         !HasLanes(road.sections[static_cast<std::size_t>(last)])) {
+    --last;
+  }
+  return {first, last};
 }
 
 bool AllowsIncrease(LaneChange change) {
@@ -277,7 +344,7 @@ LaneGraph LaneGraph::Build(const OpenDriveMap& map,
       const OdrLaneSection& section = road.sections[section_idx];
       const double s0 = section.s;
       const double s1 = section.s_end;
-      if (s1 - s0 < 1e-3) {
+      if (!HasLanes(section)) {
         continue;
       }
       const int n = std::max(2, static_cast<int>(std::ceil(
@@ -343,19 +410,18 @@ LaneGraph LaneGraph::Build(const OpenDriveMap& map,
       continue;
     }
     const bool forward = lane.lane_id_odr < 0;  // travels towards +s
-    const int last_section = static_cast<int>(road.sections.size()) - 1;
+    const auto [first_section, last_section] = LaneSectionRange(road);
 
     // Successors in the driving direction.
     const int ahead_link =
         forward ? odr_lane->successor : odr_lane->predecessor;
-    const bool at_road_end =
-        forward ? lane.section_idx == last_section : lane.section_idx == 0;
+    const bool at_road_end = forward ? lane.section_idx == last_section
+                                     : lane.section_idx == first_section;
     if (!at_road_end) {
-      if (ahead_link != kNoLink) {
-        PushUnique(
-            &lane.successors,
-            MakeLaneId(static_cast<int>(lane.road_id),
-                       lane.section_idx + (forward ? 1 : -1), ahead_link));
+      if (const auto next =
+              FollowInRoad(road, lane.section_idx, lane.lane_id_odr, forward)) {
+        PushUnique(&lane.successors, MakeLaneId(static_cast<int>(lane.road_id),
+                                                next->first, next->second));
       }
     } else {
       const RoadLink& link = forward ? road.successor : road.predecessor;
@@ -371,14 +437,14 @@ LaneGraph LaneGraph::Build(const OpenDriveMap& map,
     // Predecessors in the driving direction.
     const int behind_link =
         forward ? odr_lane->predecessor : odr_lane->successor;
-    const bool at_road_start =
-        forward ? lane.section_idx == 0 : lane.section_idx == last_section;
+    const bool at_road_start = forward ? lane.section_idx == first_section
+                                       : lane.section_idx == last_section;
     if (!at_road_start) {
-      if (behind_link != kNoLink) {
-        PushUnique(
-            &lane.predecessors,
-            MakeLaneId(static_cast<int>(lane.road_id),
-                       lane.section_idx + (forward ? -1 : 1), behind_link));
+      if (const auto prev = FollowInRoad(road, lane.section_idx,
+                                         lane.lane_id_odr, !forward)) {
+        PushUnique(&lane.predecessors,
+                   MakeLaneId(static_cast<int>(lane.road_id), prev->first,
+                              prev->second));
       }
     } else {
       const RoadLink& link = forward ? road.predecessor : road.successor;
@@ -495,6 +561,9 @@ LaneGraph LaneGraph::Build(const OpenDriveMap& map,
     std::optional<double> stop_width;
     for (const SignalSite& site : sites[signal_id]) {
       const OdrRoad& road = map.roads.at(site.road_id);
+      if (road.sections.empty()) {
+        continue;  // a road with signals but no lanes: nothing to govern
+      }
       const OdrLaneSection& section =
           road.sections[static_cast<std::size_t>(road.SectionIndex(site.s))];
       for (const OdrValidity& validity : site.validity) {
@@ -694,8 +763,12 @@ std::optional<std::uint32_t> LaneGraph::LaneIdAt(int road_id, int lane_id_odr,
     if (candidate == nullptr) {
       continue;
     }
-    if (best == nullptr || road_s >= candidate->section_s_begin) {
+    // Only the section that contains road_s: falling back to another
+    // section's lane would attach a <signalReference> to the wrong lane.
+    if (road_s >= candidate->section_s_begin &&
+        road_s < candidate->section_s_end) {
       best = candidate;
+      break;
     }
   }
   if (best == nullptr) {
@@ -756,6 +829,14 @@ std::vector<LaneQuery> LaneGraph::LanesNear(double x, double y,
     candidates.insert(index_->cloud.lane_of_point[match.first]);
   }
   for (const std::uint32_t lane_id : candidates) {
+    // Drivable lanes only: a 0.5 m shoulder beside the driving lane would
+    // otherwise be "nearest" to any ego 1.2 m off the centre (83 % of such
+    // points on Town01), and shoulder chains never link to driving lanes,
+    // so the plan failed with "waypoint 0 is unreachable".
+    const Lane* candidate = lane(lane_id);
+    if (candidate == nullptr || !IsDrivable(candidate->type)) {
+      continue;
+    }
     const nuway_common::ReferenceLine* line = reference_line(lane_id);
     if (line == nullptr) {
       continue;

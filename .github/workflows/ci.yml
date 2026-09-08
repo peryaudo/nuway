@@ -79,10 +79,11 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           version: ${{ env.UV_VERSION }}
-      - name: ruff and mypy
+      - name: ruff and mypy (train + viz groups: mypy sees matplotlib and torch)
         shell: bash
         run: |
           source setup_env.sh
+          uv sync --frozen --group train --group viz
           uv run --frozen ruff format --check .
           uv run --frozen ruff check .
           uv run --frozen mypy
@@ -90,8 +91,7 @@ jobs:
         shell: bash
         run: |
           source setup_env.sh
-          uv sync --frozen --group train --group viz
-          uv run --frozen pytest -m "not slow and not carla and not gpu"
+          uv run --frozen pytest -v -rA -m "not slow and not carla and not gpu"
 
   import-light:
     runs-on: ubuntu-24.04
@@ -111,4 +111,6 @@ jobs:
         shell: bash
         run: |
           source setup_env.sh
-          uv run --frozen pytest -m import_light
+          set -x
+          uv run --frozen python -c "import sys, pytest; print(sys.version, pytest.__version__)"
+          uv run --frozen pytest -v -rA -m import_light

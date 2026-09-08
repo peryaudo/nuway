@@ -6,10 +6,36 @@
 // reroute_heading_rad heading-off for reroute_ticks consecutive poses,
 // replanned from the current lane through the remaining waypoints.
 //
-// Cross-cycle state (route, reference line, off-line tick counter) is dropped
-// on /nuway/sim/reset_event; waypoints and poses stamped before the reset are
-// ignored (docs/02_interfaces.md §7). Not part of the tick barrier: its outputs
-// are latest-value inputs for the consumers.
+// Lockstep contract (docs/02_interfaces.md §2). The stack advances one tick
+// at a time and every node keys off message stamps, never wall-clock timers.
+// This node is *not* part of the per-tick barrier: the route and reference
+// line are latest-value inputs of the consumers (latched QoS, so a late
+// subscriber still gets the current one), and it publishes them only when
+// they change. It still acts on every pose: each /nuway/loc/pose triggers
+// one planning attempt or one reroute check and one diag message stamped
+// with that pose, so the tick spacing is what paces it. The no-input
+// convention is what keeps the gate alive while this node has nothing yet:
+// the controller answers a tick without a reference line with an
+// emergency_stop stamped for that tick, so the first ticks of an episode
+// (before the waypoints arrive and the plan is made) are not timeouts.
+//
+// Episodes and reset. Cross-cycle state (route, reference line, off-line
+// tick counter) is dropped on /nuway/sim/reset_event; waypoints and poses
+// stamped before the reset are ignored (docs/02_interfaces.md §7). "Before"
+// is decided on tick indices (TickIndex(stamp), round(stamp / 0.05 s)), not
+// raw stamps: the reset event and the first pose of an episode are stamped
+// by different publishers whose floating-point stamps of one tick differ by
+// nanoseconds. The reset topic is transient_local, so an old event can be
+// replayed to a late subscriber; only an event with a newer episode id
+// clears anything (Decisions log, task 8 review fixes).
+//
+// Reroute detection. Every pose is projected onto the current line
+// (Frenet s, d); it is "off" when the projection fails, |d| exceeds
+// reroute_lateral_m or the heading error exceeds reroute_heading_rad. A
+// counter of consecutive off poses must reach reroute_ticks (2 s at 20 Hz)
+// before a replan, so a single bad tick does not swap the line under the
+// controller. The replan starts from the first waypoint not yet passed,
+// judged by the s each waypoint was projected to when the line was built.
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -48,6 +74,9 @@ using nuway_common::DiagStatus;
 
 class RoutePlannerNode final : public rclcpp::Node {
  public:
+  // Declares the parameters and wires the topics. Subscriptions are created
+  // in the order the executor serves them within one wake (see
+  // OnResetEvent for why waypoints come before the reset event).
   RoutePlannerNode() : rclcpp::Node(kNodeName), diag_(this) {
     planner_options_.lane_change_penalty_m = nuway_common::DeclareParam<double>(
         this, "lane_change_penalty_m", 20.0, "A* cost of a lateral edge");
@@ -90,6 +119,7 @@ class RoutePlannerNode final : public rclcpp::Node {
   }
 
  private:
+  // Rebuilds the lane graph from the latched message (once per map load).
   void OnLaneGraph(const nuway_msgs::msg::LaneGraph& msg) {
     graph_ = std::make_unique<nuway_map::LaneGraph>(
         nuway_map::LaneGraph::FromMsg(msg));
@@ -98,13 +128,16 @@ class RoutePlannerNode final : public rclcpp::Node {
 
   // Stamped before the current episode's first tick (docs/02 §7), as tick
   // indices (raw stamps of one tick can differ by nanoseconds between
-  // publishers). A zero stamp is "unknown", not "before".
+  // publishers). A zero stamp is "unknown", not "before": the harness may
+  // publish unstamped waypoints, which are accepted.
   bool BeforeEpisode(const builtin_interfaces::msg::Time& stamp) const {
     return episode_tick_.has_value() &&
            nuway_common::TickIndex(stamp) < *episode_tick_ &&
            rclcpp::Time(stamp).nanoseconds() != 0;
   }
 
+  // Starts a new episode: records its id and first tick, drops the route
+  // state and any waypoints that belong to an earlier episode.
   void OnResetEvent(const nuway_msgs::msg::ResetEvent& msg) {
     // The event topic is transient_local: replays of earlier episodes arrive
     // in no guaranteed order and must not clear anything.
@@ -124,6 +157,8 @@ class RoutePlannerNode final : public rclcpp::Node {
     RCLCPP_INFO(get_logger(), "reset: episode %u", msg.episode_id);
   }
 
+  // Takes the episode's route (map frame positions; headings unused) and
+  // drops the current plan so the next pose plans afresh.
   void OnWaypoints(const nav_msgs::msg::Path& msg) {
     if (BeforeEpisode(msg.header.stamp)) {
       RCLCPP_WARN(get_logger(),
@@ -140,6 +175,10 @@ class RoutePlannerNode final : public rclcpp::Node {
     RCLCPP_INFO(get_logger(), "route: %zu waypoints", waypoints_.size());
   }
 
+  // The per-tick entry point: plans when there is no line yet, otherwise
+  // checks for a reroute, and publishes one diag message stamped with the
+  // pose either way (a missing input is reported, not silently skipped).
+  // An invalid pose is the upstream no-input output and yields nothing.
   void OnPose(const nuway_msgs::msg::EgoState& msg) {
     double cycle_ms = 0.0;
     std::string message;
@@ -165,6 +204,7 @@ class RoutePlannerNode final : public rclcpp::Node {
     diag_.Publish(msg.header.stamp, cycle_ms, 0.0, status, message);
   }
 
+  // Drops everything derived from the waypoints (the waypoints stay).
   void ClearRoute() {
     line_.reset();
     route_.reset();
@@ -173,7 +213,11 @@ class RoutePlannerNode final : public rclcpp::Node {
     off_line_ticks_ = 0;
   }
 
-  // Plans from the pose through waypoints [first_waypoint, end).
+  // Plans from the pose through waypoints [first_waypoint, end), builds the
+  // reference line and publishes both; on failure reports through
+  // `message`/`status` and leaves the previous line (if any) in place.
+  // Also records where each remaining waypoint projects onto the new line
+  // (waypoint_s_) so a later reroute knows which ones are already passed.
   void Plan(const nuway_msgs::msg::EgoState& msg, std::size_t first_waypoint,
             std::string* message, DiagStatus* status) {
     const nuway_common::SE2 ego = nuway_common::SE2FromMsg(msg.pose);
@@ -231,6 +275,8 @@ class RoutePlannerNode final : public rclcpp::Node {
                 first_waypoint);
   }
 
+  // Route.goal: the last waypoint (map frame) with the heading of the last
+  // planned lane at the waypoint's projection, since waypoints carry none.
   geometry_msgs::msg::Pose GoalPose(const RoutePlan& plan) const {
     geometry_msgs::msg::Pose goal;
     const Eigen::Vector2d& wp = waypoints_.back();
@@ -250,6 +296,12 @@ class RoutePlannerNode final : public rclcpp::Node {
     return goal;
   }
 
+  // Counts consecutive off-line poses (see the file header) and, once
+  // reroute_ticks are reached, replans from the pose through the waypoints
+  // not yet passed. The projection search radius is generous
+  // (4 * reroute_lateral_m) so a failed projection means "far off", not
+  // "just outside the threshold". A reroute is reported as a warning even
+  // when the replan succeeds.
   void CheckReroute(const nuway_msgs::msg::EgoState& msg, std::string* message,
                     DiagStatus* status) {
     const nuway_common::SE2 ego = nuway_common::SE2FromMsg(msg.pose);
@@ -268,7 +320,9 @@ class RoutePlannerNode final : public rclcpp::Node {
           off ? "off line (" + std::to_string(off_line_ticks_) + ")" : "";
       return;
     }
-    // Replan through the waypoints not yet passed.
+    // Replan through the waypoints not yet passed: scan forward from the
+    // current plan's first waypoint while the waypoint's s on the line is
+    // known and behind the ego's, keeping at least the last one.
     const double ego_s = f.has_value() ? f->s : 0.0;
     std::size_t first = planned_from_;
     while (first + 1 < waypoints_.size() && waypoint_s_[first] >= 0.0 &&
@@ -292,14 +346,14 @@ class RoutePlannerNode final : public rclcpp::Node {
   std::unique_ptr<nuway_map::LaneGraph> graph_;
   std::optional<std::uint32_t> episode_id_;
   std::optional<std::int64_t> episode_tick_;  // first tick of the episode
-  nuway_common::Vector2dList waypoints_;
+  nuway_common::Vector2dList waypoints_;      // map frame, whole route
   builtin_interfaces::msg::Time waypoints_stamp_;
-  std::optional<nuway_msgs::msg::ReferenceLine> line_;
+  std::optional<nuway_msgs::msg::ReferenceLine> line_;  // current line
   std::optional<nuway_msgs::msg::Route> route_;
-  nuway_common::ReferenceLine frenet_;
-  std::vector<double> waypoint_s_;
-  std::size_t planned_from_ = 0;  // first waypoint of the current plan
-  int off_line_ticks_ = 0;
+  nuway_common::ReferenceLine frenet_;  // line_ as a Frenet frame
+  std::vector<double> waypoint_s_;      // s of each waypoint on line_, -1 n/a
+  std::size_t planned_from_ = 0;        // first waypoint of the current plan
+  int off_line_ticks_ = 0;              // consecutive off-line poses
 
   nuway_common::DiagPublisher diag_;
   rclcpp::Publisher<nuway_msgs::msg::Route>::SharedPtr pub_route_;

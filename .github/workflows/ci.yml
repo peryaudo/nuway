@@ -1,6 +1,8 @@
 # CI (docs/03_style_and_conventions.md §7.4): one definition of the environment
 # (setup_env.sh inside ros:jazzy), then format, tidy, sanitizer, ruff, mypy and
-# two pytest jobs (full and import-light, i.e. without torch).
+# two pytest jobs (full and import-light, i.e. without torch). Every job needs
+# rmw_cyclonedds_cpp: setup_env.sh selects it and `import rclpy` exits the
+# interpreter (code 1, no message) when the selected RMW is missing.
 name: ci
 
 on:
@@ -75,7 +77,7 @@ jobs:
           apt-get update
           DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
             build-essential gcc-13 g++-13 cmake ninja-build ccache mold git curl \
-            python3.12 python3.12-venv
+            python3.12 python3.12-venv ros-jazzy-rmw-cyclonedds-cpp
       - uses: astral-sh/setup-uv@v5
         with:
           version: ${{ env.UV_VERSION }}
@@ -103,7 +105,7 @@ jobs:
           apt-get update
           DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
             build-essential gcc-13 g++-13 cmake ninja-build ccache mold git curl \
-            python3.12 python3.12-venv
+            python3.12 python3.12-venv ros-jazzy-rmw-cyclonedds-cpp
       - uses: astral-sh/setup-uv@v5
         with:
           version: ${{ env.UV_VERSION }}

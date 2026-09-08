@@ -1,3 +1,8 @@
+// LaneGraph implementation: lane centerlines from the OpenDRIVE lane stack,
+// topology in the driving direction, signal and crosswalk association, the
+// nanoflann KD-tree index behind the nearest-lane queries, and the message
+// round trip. Build() runs four numbered passes; the header explains the
+// model they produce.
 #include "nuway_map/lane_graph.h"
 
 #include <algorithm>
@@ -18,15 +23,29 @@ namespace {
 
 using Vector2dList = nuway_common::Vector2dList;
 
+// Lane id packing (MakeLaneId): OpenDRIVE lane ids in [-32, 31] shift by
+// kLaneIdOffset into 64 slots per section, 64 sections per road, so a road
+// owns 4096 consecutive ids. CARLA towns use |lane id| <= 10 and a handful of
+// sections per road.
 constexpr int kLaneIdOffset = 32;
 constexpr int kLanesPerSection = 64;
 constexpr int kSectionsPerRoad = 64;
+// Reserved in signal ids: the GT publisher sets it on unmapped lights.
 constexpr std::uint32_t kTrafficLightHighBit = 0x80000000U;
 // Longitudinal slack past a lane end that still counts as "on the lane".
 constexpr double kEndTolerance = 0.2;
 
 // Cumulative lateral position of the centre of `lane` in `section` at road
-// arc length s; positive to the left of the reference line.
+// arc length s; positive to the left of the reference line. This is how
+// OpenDRIVE lane geometry is defined: starting from the reference line
+// shifted by laneOffset(s), lanes on one side are stacked outward in id
+// order, each as wide as its <width> polynomial says at ds = s - section.s,
+// so
+//   t_centre = laneOffset(s) + sign * (sum of widths of the lanes between
+//              the reference line and this one + width / 2),
+// with sign +1 on the left (id > 0) and -1 on the right. The side vectors
+// are sorted by distance from the reference line, which makes the running
+// sum correct.
 double LaneCenterT(const OdrRoad& road, const OdrLaneSection& section,
                    const OdrLane& lane, double s) {
   const double ds = s - section.s;
@@ -44,11 +63,15 @@ double LaneCenterT(const OdrRoad& road, const OdrLaneSection& section,
   return t;
 }
 
+// Width of `lane` at road arc length s (the width polynomial's sOffset
+// counts from the section start).
 double LaneWidthAt(const OdrLaneSection& section, const OdrLane& lane,
                    double s) {
   return EvalPiecewise(lane.widths, s - section.s);
 }
 
+// OpenDRIVE lane type string to the kept subset; nullopt drops the lane
+// (sidewalk, border, median, ... are not part of the graph).
 std::optional<LaneType> ParseLaneType(const std::string& type) {
   if (type == "driving") {
     return LaneType::kDriving;
@@ -65,6 +88,7 @@ std::optional<LaneType> ParseLaneType(const std::string& type) {
   return std::nullopt;
 }
 
+// Lanes the ego may be "on": the queries and neighbour links use only these.
 bool IsDrivable(LaneType type) {
   return type == LaneType::kDriving || type == LaneType::kBidirectional;
 }
@@ -149,14 +173,19 @@ std::pair<int, int> LaneSectionRange(const OdrRoad& road) {
   return {first, last};
 }
 
+// Whether a mark permits crossing towards a higher OpenDRIVE lane id.
 bool AllowsIncrease(LaneChange change) {
   return change == LaneChange::kBoth || change == LaneChange::kIncrease;
 }
 
+// Whether a mark permits crossing towards a lower OpenDRIVE lane id.
 bool AllowsDecrease(LaneChange change) {
   return change == LaneChange::kBoth || change == LaneChange::kDecrease;
 }
 
+// One round of 32-bit FNV-1a over the four bytes of `value` (low byte
+// first): xor the byte in, multiply by the FNV prime. Chained through `seed`
+// to hash a tuple.
 std::uint32_t Fnv1a(std::uint32_t seed, std::uint32_t value) {
   std::uint32_t hash = seed;
   for (int i = 0; i < 4; ++i) {
@@ -166,6 +195,7 @@ std::uint32_t Fnv1a(std::uint32_t seed, std::uint32_t value) {
   return hash;
 }
 
+// Number of lane sections of road_id, 0 when the road is unknown.
 int LaneCount(int road_id, const OpenDriveMap& map) {
   const auto it = map.roads.find(road_id);
   return it == map.roads.end() ? 0
@@ -189,7 +219,10 @@ std::optional<std::uint32_t> LinkedLaneId(const OpenDriveMap& map,
 }
 
 // Lanes reached through the junction at `link` from lane `lane_id_odr` of
-// road `road_id`.
+// road `road_id`: for every connection whose incomingRoad is ours, the `to`
+// lane of each laneLink with `from` == ours, in the connecting road's first
+// (contact start) or last section. A lane entering a junction typically
+// gets several successors, one per turn.
 std::vector<std::uint32_t> JunctionLaneIds(const OpenDriveMap& map,
                                            const RoadLink& link, int road_id,
                                            int lane_id_odr) {
@@ -220,12 +253,15 @@ std::vector<std::uint32_t> JunctionLaneIds(const OpenDriveMap& map,
   return out;
 }
 
+// Appends value unless present (link lists are short; no set needed).
 void PushUnique(std::vector<std::uint32_t>* vec, std::uint32_t value) {
   if (std::find(vec->begin(), vec->end(), value) == vec->end()) {
     vec->push_back(value);
   }
 }
 
+// One place a signal applies: its own <signal> record or a
+// <signalReference>, both reduced to (road, s, t, orientation, validity).
 struct SignalSite {
   int road_id = -1;
   double s = 0.0;
@@ -234,6 +270,10 @@ struct SignalSite {
   std::vector<OdrValidity> validity;
 };
 
+// Even-odd rule: cast a ray from p towards +x and count the polygon edges
+// it crosses (an edge counts when it straddles p.y and its intersection
+// with the ray lies right of p); odd means inside. Works for concave and
+// self-intersecting polygons; the boundary itself is ambiguous.
 bool PointInPolygon(const Eigen::Vector2d& p, const Vector2dList& poly) {
   bool inside = false;
   const std::size_t n = poly.size();
@@ -251,6 +291,7 @@ bool PointInPolygon(const Eigen::Vector2d& p, const Vector2dList& poly) {
   return inside;
 }
 
+// Eigen <-> ROS message copies (Polygon points are float32 on the wire).
 geometry_msgs::msg::Point ToPointMsg(const Eigen::Vector3d& p) {
   geometry_msgs::msg::Point out;
   out.x = p.x();
@@ -283,8 +324,15 @@ Vector2dList FromPolygonMsg(const geometry_msgs::msg::Polygon& poly) {
 
 }  // namespace
 
-// KD-tree over every centerline sample of every lane.
+// KD-tree over every centerline sample of every lane. A KD-tree splits the
+// plane recursively along alternating axes so a radius search visits only
+// the leaves whose box intersects the query circle: O(log n + k) per query
+// instead of scanning all ~10^5 samples of a town. The tree indexes the
+// flat point cloud; the two parallel vectors map a point back to its lane
+// and its position in that lane's centerline.
 struct LaneGraph::Index {
+  // nanoflann's dataset adaptor: it reads points through these three
+  // methods (count, coordinate, bounding box) instead of owning them.
   struct Cloud {
     Vector2dList pts;
     std::vector<std::uint32_t> lane_of_point;
@@ -300,6 +348,8 @@ struct LaneGraph::Index {
     }
     // NOLINTEND(readability-identifier-naming)
   };
+  // Static 2-D tree with squared-Euclidean distances (nanoflann reports and
+  // takes squared radii).
   using Tree = nanoflann::KDTreeSingleIndexAdaptor<
       nanoflann::L2_Simple_Adaptor<double, Cloud>, Cloud, 2, std::size_t>;
 
@@ -308,6 +358,10 @@ struct LaneGraph::Index {
   std::vector<nuway_common::ReferenceLine> reference_lines;  // by lane index
 };
 
+// id = road * 4096 + section * 64 + (lane_odr + 32) + 1. The +1 keeps 0
+// free as "none"; the clamps keep an out-of-range section or lane id inside
+// its block (aliasing rather than corrupting a neighbouring road's block).
+// FromMsg inverts the section part.
 std::uint32_t MakeLaneId(int road_id, int section_idx, int lane_id_odr) {
   const int lane_slot =
       std::max(0, std::min(kLanesPerSection - 1, lane_id_odr + kLaneIdOffset));
@@ -319,6 +373,7 @@ std::uint32_t MakeLaneId(int road_id, int section_idx, int lane_id_odr) {
          static_cast<std::uint32_t>(lane_slot) + 1U;
 }
 
+// FNV-1a of (road_id, signal_id); Build linear-probes on the rare collision.
 std::uint32_t MakeSignalId(int road_id, int signal_id) {
   std::uint32_t hash = Fnv1a(2166136261U, static_cast<std::uint32_t>(road_id));
   hash = Fnv1a(hash, static_cast<std::uint32_t>(signal_id));
@@ -337,7 +392,10 @@ LaneGraph LaneGraph::Build(const OpenDriveMap& map,
   graph.options_ = options;
   graph.geo_reference_ = map.geo_reference;
 
-  // 1. Lanes with centerlines.
+  // 1. Lanes with centerlines. Every lane of every section becomes a node
+  // with n samples evenly spaced in s over the section (n chosen so the
+  // spacing is <= centerline_spacing_m, at least 2 points), each sample the
+  // reference line offset laterally to the lane centre (LaneCenterT).
   for (const auto& [road_id, road] : map.roads) {
     for (std::size_t section_idx = 0; section_idx < road.sections.size();
          ++section_idx) {
@@ -391,6 +449,9 @@ LaneGraph LaneGraph::Build(const OpenDriveMap& map,
           std::reverse(lane.centerline.begin(), lane.centerline.end());
           std::reverse(lane.width.begin(), lane.width.end());
         }
+        // Length as the polyline length of the samples (slightly under the
+        // true arc length on curves; consistent with the reference line the
+        // queries and the route builder use).
         for (std::size_t i = 1; i < lane.centerline.size(); ++i) {
           lane.length_m += (lane.centerline[i] - lane.centerline[i - 1]).norm();
         }
@@ -400,7 +461,15 @@ LaneGraph LaneGraph::Build(const OpenDriveMap& map,
     }
   }
 
-  // 2. Topology (in the driving direction) and lateral relations.
+  // 2. Topology (in the driving direction) and lateral relations. The
+  // OpenDRIVE links are written in +s terms, so for a lane driven towards
+  // -s (`forward` false) "ahead" is its predecessor link and the road's
+  // predecessor end, and "behind" its successor. Inside the road a link
+  // names the lane in the next section (FollowInRoad); at the road's end it
+  // names the lane in the linked road (LinkedLaneId) or is replaced by the
+  // junction connections (JunctionLaneIds). Junction connections are only
+  // written from the incoming road's side, so predecessors of connecting
+  // lanes are filled in by the symmetrisation below.
   for (Lane& lane : graph.lanes_) {
     const OdrRoad& road = map.roads.at(static_cast<int>(lane.road_id));
     const OdrLaneSection& section =
@@ -454,13 +523,19 @@ LaneGraph LaneGraph::Build(const OpenDriveMap& map,
       }
     }
 
-    // Neighbors: adjacent same-direction drivable lanes; never across lane 0.
+    // Neighbors: adjacent same-direction drivable lanes; never across lane 0
+    // (inner == 0 yields no neighbour, so id -1 and +1 never pair up).
     const int k = std::abs(lane.lane_id_odr);
     const int sign = lane.lane_id_odr > 0 ? 1 : -1;
     // In the driving frame the reference line is on the left of right lanes
     // (-k) and on the right of left lanes (+k).
     const int inner = (k - 1) * sign;  // towards the reference line
     const int outer = (k + 1) * sign;  // away from it
+    // The mark between two lanes belongs to the inner one (marks sit on a
+    // lane's outer edge): crossing to `inner` is governed by inner's mark,
+    // crossing to `outer` by our own. Which crossing "increases" the id
+    // depends on the side: on the right (-k) the inner lane has the higher
+    // id, on the left (+k) the outer one does.
     const auto neighbor_id = [&](int lane_id_odr) -> std::uint32_t {
       if (lane_id_odr == 0) {
         return 0;
@@ -488,7 +563,11 @@ LaneGraph LaneGraph::Build(const OpenDriveMap& map,
       lane.right_change_allowed = inner_id != 0 && AllowsDecrease(inner_mark);
     }
   }
-  // Symmetrize links and drop dangling ones.
+  // Symmetrize links and drop dangling ones: a link may name a lane that
+  // was not kept (a sidewalk, lane 0, a section that was skipped), and
+  // OpenDRIVE only guarantees one direction of each link (junction
+  // connections in particular are listed from the incoming road only), so
+  // every surviving successor gets the matching predecessor and vice versa.
   for (Lane& lane : graph.lanes_) {
     const auto exists = [&](std::uint32_t id) {
       return graph.lane(id) != nullptr;
@@ -515,7 +594,12 @@ LaneGraph LaneGraph::Build(const OpenDriveMap& map,
   }
 
   // 3. Signals: definitions keyed by OpenDRIVE signal id, sites from the
-  // definition's own validity and every signalReference.
+  // definition's own validity and every signalReference. For each traffic
+  // light ("1000001") and stop sign ("206") the governed lanes are the
+  // validity ranges of every site resolved to graph lanes at the site's s,
+  // and the stop line is the first governed lane's centre at that s (which
+  // is where CARLA's get_affected_lane_waypoints() lie; M0 Decisions log,
+  // task 7 (f)). Signal ids are hashed and linear-probed on collision.
   std::map<int, const OdrSignal*> signal_defs;
   std::map<int, int> signal_road;
   std::map<int, std::vector<SignalSite>> sites;
@@ -630,7 +714,10 @@ LaneGraph LaneGraph::Build(const OpenDriveMap& map,
     }
   }
 
-  // 4. Crosswalks from objects with an outline (or length x width box).
+  // 4. Crosswalks from objects with an outline (or length x width box). The
+  // object frame sits at road point (s, t) rotated by the road heading plus
+  // the object's hdg; corners (u, v) are mapped through it, and a lane
+  // crosses the crosswalk if any of its centerline samples falls inside.
   for (const auto& [road_id, road] : map.roads) {
     for (const OdrObject& object : road.objects) {
       if (object.type != "crosswalk") {
@@ -671,6 +758,9 @@ LaneGraph LaneGraph::Build(const OpenDriveMap& map,
   return graph;
 }
 
+// Flattens every centerline into one point cloud (remembering lane and
+// sample index per point), builds the KD-tree over it (leaf size 16), and
+// turns each centerline into a ReferenceLine for Frenet projection.
 void LaneGraph::Finalize() {
   index_by_id_.clear();
   for (std::size_t i = 0; i < lanes_.size(); ++i) {
@@ -754,6 +844,9 @@ std::optional<Eigen::Vector3d> LaneGraph::StopLineForLane(
   return std::nullopt;
 }
 
+// Probes MakeLaneId for every section slot of the road and keeps the one
+// whose [section_s_begin, section_s_end) contains road_s. Graphs from FromMsg
+// have open ranges, so there the first existing section wins.
 std::optional<std::uint32_t> LaneGraph::LaneIdAt(int road_id, int lane_id_odr,
                                                  double road_s) const {
   // Roads have few sections, so scanning the section slots is cheap.
@@ -777,6 +870,9 @@ std::optional<std::uint32_t> LaneGraph::LaneIdAt(int road_id, int lane_id_odr,
   return best->id;
 }
 
+// Same probing, but picks the section whose centerline has the sample
+// closest to (x, y); needs no section ranges, so it works after FromMsg
+// (the GT publisher resolves CARLA waypoints this way).
 std::optional<std::uint32_t> LaneGraph::LaneIdNear(int road_id, int lane_id_odr,
                                                    double x, double y) const {
   const Eigen::Vector2d query{x, y};
@@ -810,6 +906,12 @@ const nuway_common::ReferenceLine* LaneGraph::reference_line(
   return &index_->reference_lines[it->second];
 }
 
+// Three stages: (1) a KD-tree radius search collects every lane with a
+// sample near the point; (2) each candidate's centerline is treated as a
+// reference line and the point is projected onto it, giving (s, d) and
+// rejecting lanes farther than max_dist from every segment; (3) results are
+// sorted by |d|. Stage 1 is only a filter, so its radius carries one sample
+// spacing of slack; stage 2 gives the exact distance.
 std::vector<LaneQuery> LaneGraph::LanesNear(double x, double y,
                                             double max_dist) const {
   std::vector<LaneQuery> out;
@@ -847,7 +949,9 @@ std::vector<LaneQuery> LaneGraph::LanesNear(double x, double y,
       continue;
     }
     // ToFrenet clamps s to the line, so a point past either end projects
-    // onto the end point with a longitudinal residual: reject those.
+    // onto the end point with a longitudinal residual: reject those. The
+    // residual is the query's offset from the foot point along the line's
+    // tangent there; on the interior of the line it is ~0 by construction.
     const nuway_common::CartesianPoint foot = line->PointAt(frenet->s);
     const double along = ((x - foot.x) * std::cos(foot.heading)) +
                          ((y - foot.y) * std::sin(foot.heading));
@@ -862,6 +966,11 @@ std::vector<LaneQuery> LaneGraph::LanesNear(double x, double y,
   return out;
 }
 
+// LanesNear, then the heading check: the lane's heading at the foot point
+// (its driving direction) must be within heading_tolerance_rad of the query
+// yaw (wrapped to [-pi, pi], so the two lanes of a two-way road differ by
+// pi and only the one going the ego's way survives). Of the survivors the
+// smallest |d| wins.
 std::optional<LaneQuery> LaneGraph::NearestLane(double x, double y, double yaw,
                                                 double max_dist) const {
   std::optional<LaneQuery> best;
@@ -882,6 +991,9 @@ std::optional<LaneQuery> LaneGraph::NearestLane(double x, double y, double yaw,
   return best;
 }
 
+// Field-by-field copy into the wire message (docs/02_interfaces.md §4).
+// Widths and speed limits narrow to float32; section ranges and length_m
+// are derived, not sent.
 nuway_msgs::msg::LaneGraph LaneGraph::ToMsg() const {
   nuway_msgs::msg::LaneGraph msg;
   msg.header.frame_id = nuway_common::kFrameMap;
@@ -941,6 +1053,9 @@ nuway_msgs::msg::LaneGraph LaneGraph::ToMsg() const {
   return msg;
 }
 
+// Inverse of ToMsg. section_idx is recovered by inverting MakeLaneId
+// ((id - 1) / 64 mod 64); length_m is recomputed; the section arc-length
+// range is not on the wire and stays open (see LaneIdAt).
 LaneGraph LaneGraph::FromMsg(const nuway_msgs::msg::LaneGraph& msg,
                              const LaneGraphOptions& options) {
   LaneGraph graph;

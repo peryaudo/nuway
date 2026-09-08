@@ -1,3 +1,7 @@
+// OpenDRIVE parser implementation: pugixml attribute readers, one Parse*
+// function per XML element (mirroring the document tree), and the
+// reference-line geometry (line / arc / spiral / poly3 / paramPoly3
+// evaluation). The header explains the OpenDRIVE model these map onto.
 #include "nuway_map/opendrive_parser.h"
 
 #include <algorithm>
@@ -14,20 +18,27 @@
 namespace nuway_map {
 namespace {
 
+// Attribute `name` of `node` as a double, or `fallback` when absent (and,
+// through pugixml's as_double, when it does not parse).
 double Attr(const pugi::xml_node& node, const char* name, double fallback) {
   const pugi::xml_attribute attr = node.attribute(name);
   return attr.empty() ? fallback : attr.as_double(fallback);
 }
 
+// Attribute as int, or `fallback` when absent or unparsable.
 int AttrInt(const pugi::xml_node& node, const char* name, int fallback) {
   const pugi::xml_attribute attr = node.attribute(name);
   return attr.empty() ? fallback : attr.as_int(fallback);
 }
 
+// Attribute as a string, "" when absent.
 std::string AttrStr(const pugi::xml_node& node, const char* name) {
   return {node.attribute(name).as_string("")};
 }
 
+// <... a b c d> record; s_name is the name of its offset attribute:
+// "sOffset" for <width> (from the section start), "s" for <laneOffset> and
+// <elevation> (from the road start).
 Poly3 ParsePoly3(const pugi::xml_node& node, const char* s_name) {
   Poly3 poly;
   poly.s_offset = Attr(node, s_name, 0.0);
@@ -38,6 +49,10 @@ Poly3 ParsePoly3(const pugi::xml_node& node, const char* s_name) {
   return poly;
 }
 
+// laneChange attribute of a <roadMark>. CARLA's export usually omits it, in
+// which case the mark's type decides: a broken line may be crossed either
+// way, anything else (solid, none, ...) may not (M0 Decisions log, task 7
+// (d)).
 LaneChange ParseLaneChange(const std::string& value, const std::string& type) {
   if (value == "both") {
     return LaneChange::kBoth;
@@ -55,6 +70,8 @@ LaneChange ParseLaneChange(const std::string& value, const std::string& type) {
   return type == "broken" ? LaneChange::kBoth : LaneChange::kNone;
 }
 
+// <lane>: id, type, width polynomials, road marks and the lane-level
+// <link>. Absent links stay kNoLink.
 OdrLane ParseLane(const pugi::xml_node& node) {
   OdrLane lane;
   lane.id = AttrInt(node, "id", 0);
@@ -82,6 +99,9 @@ OdrLane ParseLane(const pugi::xml_node& node) {
   return lane;
 }
 
+// <predecessor> / <successor> of a road <link>; an empty node (no link)
+// yields LinkElement::kNone. Any contactPoint other than "end" counts as
+// "start" (junction links carry none).
 RoadLink ParseRoadLink(const pugi::xml_node& node) {
   RoadLink link;
   if (!node) {
@@ -98,6 +118,8 @@ RoadLink ParseRoadLink(const pugi::xml_node& node) {
   return link;
 }
 
+// All <validity> children of a signal or signal reference, each normalised
+// to from_lane <= to_lane so callers can iterate the range.
 std::vector<OdrValidity> ParseValidity(const pugi::xml_node& node) {
   std::vector<OdrValidity> out;
   for (const pugi::xml_node& validity : node.children("validity")) {
@@ -112,6 +134,8 @@ std::vector<OdrValidity> ParseValidity(const pugi::xml_node& node) {
   return out;
 }
 
+// <speed max unit> to m/s; an unknown or absent unit is taken as m/s (the
+// OpenDRIVE default).
 double SpeedToMps(double value, const std::string& unit) {
   if (unit == "mph") {
     return value * 0.44704;
@@ -122,6 +146,8 @@ double SpeedToMps(double value, const std::string& unit) {
   return value;
 }
 
+// <geometry>: the common start pose and length, then the type from whichever
+// child element is present (none means a straight line).
 OdrGeometry ParseGeometry(const pugi::xml_node& node) {
   OdrGeometry geom;
   geom.s = Attr(node, "s", 0.0);
@@ -159,6 +185,8 @@ OdrGeometry ParseGeometry(const pugi::xml_node& node) {
   return geom;
 }
 
+// <object> with its optional <outline>/<cornerLocal> polygon in the object
+// frame (u along the object's heading, v to its left).
 OdrObject ParseObject(const pugi::xml_node& node) {
   OdrObject object;
   object.id = AttrInt(node, "id", -1);
@@ -175,6 +203,12 @@ OdrObject ParseObject(const pugi::xml_node& node) {
   return object;
 }
 
+// <road>: links, speed limit (the last <type>/<speed> wins), plan view,
+// elevation, lane offsets, lane sections, signals and objects. Lanes of each
+// section are sorted by distance from the reference line (left ascending,
+// right descending) and every section's s_end is set to the next section's s
+// (the road length for the last), so sections cover [0, length) without
+// gaps.
 OdrRoad ParseRoad(const pugi::xml_node& node) {
   OdrRoad road;
   road.id = AttrInt(node, "id", -1);
@@ -250,6 +284,7 @@ OdrRoad ParseRoad(const pugi::xml_node& node) {
   return road;
 }
 
+// <junction> with its <connection>s and their <laneLink>s.
 OdrJunction ParseJunction(const pugi::xml_node& node) {
   OdrJunction junction;
   junction.id = AttrInt(node, "id", -1);
@@ -270,7 +305,9 @@ OdrJunction ParseJunction(const pugi::xml_node& node) {
   return junction;
 }
 
-// Extracts "+key=value" from a proj string.
+// Extracts "+key=value" from a proj string (e.g. "+proj=tmerc +lat_0=0
+// +lon_0=0 ..."); nullopt when the key is absent or its value is not a
+// number.
 std::optional<double> ProjValue(const std::string& proj,
                                 const std::string& key) {
   const std::string needle = "+" + key + "=";
@@ -287,6 +324,8 @@ std::optional<double> ProjValue(const std::string& proj,
   return value;
 }
 
+// <header>/<geoReference>: valid only when both +lat_0 and +lon_0 are
+// present. alt0 is never in the proj string and stays 0.
 GeoReference ParseGeoReference(const pugi::xml_node& header) {
   GeoReference geo;
   const pugi::xml_node node = header.child("geoReference");
@@ -304,8 +343,17 @@ GeoReference ParseGeoReference(const pugi::xml_node& header) {
   return geo;
 }
 
-// Fresnel-type integrals for the clothoid, by Simpson integration over the
-// heading polynomial (accurate to ~1e-9 over the lengths CARLA uses).
+// Position reached after arc length s along a clothoid (Euler spiral) that
+// starts at the origin heading along +x with curvature curv_start and
+// curvature rate curv_rate (1/m^2). Since curvature is d(heading)/ds, the
+// heading is the integral theta(u) = curv_start u + curv_rate u^2 / 2, and
+// the position is the integral of the unit tangent:
+//   x(s) = int_0^s cos(theta(u)) du,   y(s) = int_0^s sin(theta(u)) du.
+// These are Fresnel-type integrals with no closed form. They are evaluated
+// by composite Simpson's rule over kSteps subintervals (error O(h^4);
+// accurate to ~1e-9 over the lengths CARLA uses) rather than a Fresnel
+// series: CARLA towns contain no spirals and the test pins this against an
+// arc (M0 Decisions log, task 7 (e)).
 Eigen::Vector2d SpiralOffset(double curv_start, double curv_rate, double s) {
   constexpr int kSteps = 64;
   const double h = s / kSteps;
@@ -341,6 +389,7 @@ double EvalPiecewise(const std::vector<Poly3>& polys, double s) {
   return active->Eval(s);
 }
 
+// Linear search over both sides; sections have a handful of lanes.
 const OdrLane* OdrLaneSection::Find(int lane_id) const {
   for (const OdrLane& lane : left) {
     if (lane.id == lane_id) {
@@ -355,6 +404,26 @@ const OdrLane* OdrLaneSection::Find(int lane_id) const {
   return nullptr;
 }
 
+// Every geometry type is evaluated the same way: compute the point
+// (local_x, local_y) and heading local_hdg in the record's own frame (origin
+// at the record's start point, x axis along its start heading), then rotate
+// by hdg and translate by (x, y) into the map frame. ds is the arc length
+// into the record, clamped to [0, length].
+//   line:   (ds, 0), heading 0.
+//   arc:    a circle of radius 1/kappa centred at (0, 1/kappa); after ds the
+//           heading is kappa ds and the point is
+//           (sin(kappa ds) / kappa, (1 - cos(kappa ds)) / kappa). The sign
+//           of kappa puts the centre left (+) or right (-). A near-zero
+//           kappa degenerates to the line, avoiding the division.
+//   spiral: curvature rate (curv_end - curv_start) / length; position from
+//           SpiralOffset, heading curv_start ds + rate ds^2 / 2.
+//   poly3:  v(u) = a + b u + c u^2 + d u^3 with u along the start heading;
+//           OpenDRIVE deprecates it and CARLA never emits it, so u is
+//           approximated by ds (exact only where the curve is flat) and the
+//           heading is atan(dv/du).
+//   paramPoly3: (u(p), v(p)) cubics in p, with p in [0, 1] or in metres
+//           depending on pRange; the heading is the direction of
+//           (du/dp, dv/dp).
 ReferencePoint EvalGeometry(const OdrGeometry& geom, double s) {
   const double ds = std::max(0.0, std::min(geom.length, s - geom.s));
   const double cos_h = std::cos(geom.hdg);
@@ -416,6 +485,9 @@ ReferencePoint EvalGeometry(const OdrGeometry& geom, double s) {
   return out;
 }
 
+// The active record is the last one whose start s is <= the query (records
+// are in ascending s); the 1e-9 slack keeps a query exactly on a record
+// boundary on the record that starts there.
 ReferencePoint OdrRoad::At(double s) const {
   const double s_clamped = std::max(0.0, std::min(length, s));
   if (geometry.empty()) {
@@ -432,12 +504,15 @@ ReferencePoint OdrRoad::At(double s) const {
   return point;
 }
 
+// Offset along the left normal of the reference heading: for heading hdg
+// the unit tangent is (cos, sin) and the left normal (-sin, cos).
 Eigen::Vector3d OdrRoad::AtLateral(double s, double t) const {
   const ReferencePoint ref = At(s);
   return Eigen::Vector3d{ref.x - (t * std::sin(ref.hdg)),
                          ref.y + (t * std::cos(ref.hdg)), ref.z};
 }
 
+// Last section whose start is <= s (with the same boundary slack as At).
 int OdrRoad::SectionIndex(double s) const {
   int idx = 0;
   for (std::size_t i = 0; i < sections.size(); ++i) {

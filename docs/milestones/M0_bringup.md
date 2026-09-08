@@ -135,7 +135,7 @@ bbox_center_z: 0.75
 max_steer_angle: 1.22             # rad, from physics_control
 tau_steer: 0.12
 tau_throttle: 0.20
-limits: {a_max: 3.0, a_min: -6.0, jerk_max: 5.0, steer_rate_max: 0.8, kappa_max: 0.18}
+limits: {a_max: 3.0, a_min: -6.0, jerk_max: 5.0, steer_rate_max: 1.2, kappa_max: 0.18}
 longitudinal_map:
   v_bins: [...]
   throttle_bins: [...]
@@ -147,8 +147,8 @@ longitudinal_map:
 
 ### 2.7 `nuway_control/pure_pursuit_pid_node` (C++)
 
-- Lateral: pure pursuit on the reference line. Lookahead `L_d = clamp(k_v · v + L_0, 3, 20)` with `k_v=0.6, L_0=2.0`. Target point = reference line point at arc length `s_ego + L_d`. `δ = atan(2 L sin(α) / L_d)`. Clamp to `max_steer_angle`. Rate-limit by `steer_rate_max`.
-- Longitudinal: target speed = `min(speed_limit(s), v_curvature(s..s+30))` where `v_curvature = sqrt(a_lat_max / |κ|)`, `a_lat_max = 2.0`. PID on speed error → `accel`, gains in config, anti-windup, output clamped to limits. Feed-forward drag from `coast_accel(v)`.
+- Lateral: pure pursuit on the reference line. Lookahead `L_d = clamp(k_v · v + L_0, 2.5, 20)` with `k_v=0.45, L_0=1.0` (task 13 tuning; the design values `0.6, 2.0, 3` cut curve entries by up to 0.4 m at 16 m/s). Target point = reference line point at arc length `s_ego + L_d`. `δ = atan(2 L sin(α) / L_d)`. Clamp to `max_steer_angle`. Rate-limit by `steer_rate_max`.
+- Longitudinal: target speed = `min(speed_limit(s), v_bound(s..s+60))` where each sample ahead bounds the speed now by `sqrt(v_there² + 2 · plan_decel · Δs)`, `v_there = min(speed_limit, sqrt(a_lat_max / |κ|))`, `a_lat_max = 1.5`, `plan_decel = 2.0` (task 13 tuning; the design was `a_lat_max = 2.0` over a 30 m horizon with no braking distance). PID on speed error plus the profile's own `v dv/ds` as feed-forward → `accel`, gains in config, anti-windup, output clamped to limits. Feed-forward drag from `coast_accel(v)`.
 - Runs once per tick, triggered by `/nuway/loc/pose`; publishes `ControlCommand` stamped with that tick (the lockstep gate depends on this) and `ControlDebug`. **No-input convention** (`02_interfaces.md` §2): when the pose is `valid: false` or no reference line has been published for this episode yet, it still publishes, with `emergency_stop: true`, so the first ticks after a reset never starve the gate.
 
 This controller stays in the repo permanently as the simplest possible fallback and as a sanity-check tool.

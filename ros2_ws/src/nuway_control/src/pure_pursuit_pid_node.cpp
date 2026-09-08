@@ -63,6 +63,9 @@ class PurePursuitPidNode final : public rclcpp::Node {
     options.curvature_horizon_m = nuway_common::DeclareParam<double>(
         this, "curvature_horizon_m", options.curvature_horizon_m,
         "curvature lookahead for the speed bound");
+    options.plan_decel_mps2 = nuway_common::DeclareParam<double>(
+        this, "plan_decel_mps2", options.plan_decel_mps2,
+        "braking assumed when approaching a bend");
     options.kp = nuway_common::DeclareParam<double>(this, "kp", options.kp,
                                                     "speed PID P gain");
     options.ki = nuway_common::DeclareParam<double>(this, "ki", options.ki,

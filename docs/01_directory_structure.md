@@ -292,7 +292,8 @@ nuway/
 │   │   └── verify_tl_association.py       # M4
 │   ├── eval/
 │   │   ├── nuway_eval/                    # THE harness package (rclpy; imported by the scripts below, never by ml/ or ros2_ws)
-│   │   │   ├── route_runner.py            # one stack per town, second non-ticking CARLA client, resume
+│   │   │   ├── route_runner.py            # one stack per town, second non-ticking CARLA client, resume. M0 v0: reset +
+│   │   │   │                              #   waypoints per route, lateral error from ControlDebug, odom/debug CSVs per route
 │   │   │   ├── infractions.py
 │   │   │   ├── driving_score.py
 │   │   │   ├── report.py                  # results.csv (schema in M1 §3.10), report.md, incident renders

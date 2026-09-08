@@ -128,6 +128,8 @@ nuway/
 │       │   │   └── map_server_node.cpp    # publishes nuway_msgs/LaneGraph (latched), query srv
 │       │   └── include/nuway_map/
 │       ├── nuway_route/                   # C++: A* on lane graph, reference line builder
+│       │   └── tools/route_gen.cpp        # `ros2 run nuway_route route_gen`: seeded successor walks -> tools/eval/routes/*.xml,
+│       │                                  #   every route validated with the stack's RoutePlanner (M0 task 13)
 │       ├── nuway_localization/            # C++
 │       │   ├── config/defaults.yaml
 │       │   ├── include/nuway_localization/
@@ -295,7 +297,8 @@ nuway/
 │   │   │   ├── driving_score.py
 │   │   │   ├── report.py                  # results.csv (schema in M1 §3.10), report.md, incident renders
 │   │   │   └── chase_writer.py            # M1; /nuway/viz/chase_cam -> chase/*.jpg (docs/02 §8.3)
-│   │   ├── routes/                        # route XMLs (leaderboard format): dev_*, mapping_*, collect_long_*
+│   │   ├── routes/                        # route XMLs (leaderboard format): dev_* (M0: dev_town01/03/05, 10 routes >= 1.5 km
+│   │   │                                  #   from route_gen), mapping_*, collect_long_*
 │   │   ├── run_routes.py                  # entry point for evaluation harness (also --replay, M6)
 │   │   ├── setup_leaderboard.sh           # M1: clones leaderboard + scenario_runner into external/ at the pinned commits
 │   │   ├── run_leaderboard.sh             # M1: one stack + one evaluator invocation per route (M1 §3.12)

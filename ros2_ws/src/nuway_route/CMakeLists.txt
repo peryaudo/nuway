@@ -43,9 +43,14 @@ target_link_libraries(
 )
 nuway_target_defaults(route_planner_node)
 
+# Route-set generator for tools/eval/routes/ (task 13); no rclcpp.
+add_executable(route_gen tools/route_gen.cpp)
+target_link_libraries(route_gen PRIVATE nuway_route_lib)
+nuway_target_defaults(route_gen)
+
 install(DIRECTORY include/ DESTINATION include)
 install(TARGETS nuway_route_lib EXPORT export_${PROJECT_NAME})
-install(TARGETS route_planner_node DESTINATION lib/${PROJECT_NAME})
+install(TARGETS route_planner_node route_gen DESTINATION lib/${PROJECT_NAME})
 install(DIRECTORY config DESTINATION share/${PROJECT_NAME})
 
 if(BUILD_TESTING)

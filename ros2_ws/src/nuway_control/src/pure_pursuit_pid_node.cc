@@ -8,7 +8,10 @@
 // with emergency_stop: true, so the lockstep gate never starves.
 // Cross-tick state (PID integral, steer rate limiter, the line) is dropped on
 // /nuway/sim/reset_event; poses and lines stamped before the reset are ignored
-// (docs/02 §7). Single per-tick input, so no barrier.
+// (docs/02 §7). Single per-tick input, so no barrier; a TickTimeout for a
+// tick whose pose never came is answered with an emergency stop stamped with
+// that tick (the no-input output), so one lost pose does not time out every
+// following tick.
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -31,6 +34,7 @@
 #include <nuway_msgs/msg/ego_state.hpp>
 #include <nuway_msgs/msg/reference_line.hpp>
 #include <nuway_msgs/msg/reset_event.hpp>
+#include <nuway_msgs/msg/tick_timeout.hpp>
 
 #include "nuway_control/names.h"
 #include "nuway_control/pure_pursuit_pid.h"
@@ -66,6 +70,12 @@ class PurePursuitPidNode final : public rclcpp::Node {
     options.plan_decel_mps2 = nuway_common::DeclareParam<double>(
         this, "plan_decel_mps2", options.plan_decel_mps2,
         "braking assumed when approaching a bend");
+    options.projection_back_m = nuway_common::DeclareParam<double>(
+        this, "projection_back_m", options.projection_back_m,
+        "Frenet projection window behind the previous s");
+    options.projection_ahead_m = nuway_common::DeclareParam<double>(
+        this, "projection_ahead_m", options.projection_ahead_m,
+        "Frenet projection window ahead of the previous s");
     options.kp = nuway_common::DeclareParam<double>(this, "kp", options.kp,
                                                     "speed PID P gain");
     options.ki = nuway_common::DeclareParam<double>(this, "ki", options.ki,
@@ -114,17 +124,34 @@ class PurePursuitPidNode final : public rclcpp::Node {
     sub_reset_ = create_subscription<nuway_msgs::msg::ResetEvent>(
         nuway_common::kTopicResetEvent, nuway_common::qos::Event(),
         [this](const nuway_msgs::msg::ResetEvent& msg) { OnResetEvent(msg); });
+    sub_tick_timeout_ = create_subscription<nuway_msgs::msg::TickTimeout>(
+        nuway_common::kTopicTickTimeout, nuway_common::qos::Event(),
+        [this](const nuway_msgs::msg::TickTimeout& msg) {
+          OnTickTimeout(msg);
+        });
   }
 
  private:
+  // Stamped before the current episode's first tick (docs/02 §7). Compared
+  // as tick indices, never as raw stamps: the ResetEvent and the first pose
+  // of an episode are stamped by different float paths and may differ by a
+  // few nanoseconds.
   bool BeforeEpisode(const builtin_interfaces::msg::Time& stamp) const {
-    return episode_start_.has_value() &&
-           rclcpp::Time(stamp) < *episode_start_ &&
+    return episode_tick_.has_value() &&
+           nuway_common::TickIndex(stamp) < *episode_tick_ &&
            rclcpp::Time(stamp).nanoseconds() != 0;
   }
 
   void OnResetEvent(const nuway_msgs::msg::ResetEvent& msg) {
-    episode_start_ = rclcpp::Time(msg.header.stamp);
+    // The event topic is transient_local: a (re)started controller receives
+    // earlier episodes' events too, in no guaranteed order relative to the
+    // latched line. Episode ids only grow, so anything not newer is a replay
+    // and must not wipe the line of the episode we are already in.
+    if (episode_id_.has_value() && msg.episode_id <= *episode_id_) {
+      return;
+    }
+    episode_id_ = msg.episode_id;
+    episode_tick_ = nuway_common::TickIndex(msg.header.stamp);
     controller_->Reset();
     last_tick_.reset();
     RCLCPP_INFO(get_logger(), "reset: episode %u", msg.episode_id);
@@ -136,8 +163,19 @@ class PurePursuitPidNode final : public rclcpp::Node {
                   "reference line stamped before the current episode; ignored");
       return;
     }
+    const std::size_t n = msg.points.size();
+    if (n < 2 || msg.s.size() != n || msg.heading.size() != n ||
+        msg.curvature.size() != n) {
+      // FromSamples trusts the sizes; a malformed message would index out
+      // of bounds on every tick.
+      RCLCPP_ERROR(get_logger(),
+                   "reference line with %zu points but %zu s / %zu heading / "
+                   "%zu curvature samples; ignored",
+                   n, msg.s.size(), msg.heading.size(), msg.curvature.size());
+      return;
+    }
     nuway_common::Vector2dList points;
-    points.reserve(msg.points.size());
+    points.reserve(n);
     for (const geometry_msgs::msg::Point& p : msg.points) {
       points.emplace_back(p.x, p.y);
     }
@@ -150,19 +188,22 @@ class PurePursuitPidNode final : public rclcpp::Node {
     controller_->SetReferenceLine(
         nuway_common::ReferenceLine::FromSamples(points, s, heading, curvature),
         std::move(speed_limit));
-    RCLCPP_INFO(get_logger(), "reference line: %zu points, %.0f m",
-                points.size(), s.empty() ? 0.0 : s.back());
+    RCLCPP_INFO(get_logger(), "reference line: %zu points, %.0f m", n,
+                s.back());
   }
 
   void OnPose(const nuway_msgs::msg::EgoState& msg) {
     if (BeforeEpisode(msg.header.stamp)) {
       return;  // previous episode; world_manager is not waiting on it
     }
+    const std::int64_t tick = nuway_common::TickIndex(msg.header.stamp);
+    if (last_tick_.has_value() && tick <= *last_tick_) {
+      return;  // already answered (a late pose after a TickTimeout e-stop)
+    }
     double cycle_ms = 0.0;
     ControlOutput out;
     {
       const nuway_common::ScopedTimer timer(&cycle_ms);
-      const std::int64_t tick = nuway_common::TickIndex(msg.header.stamp);
       const double dt_s = last_tick_.has_value()
                               ? static_cast<double>(std::max<std::int64_t>(
                                     1, tick - *last_tick_)) *
@@ -174,23 +215,6 @@ class PurePursuitPidNode final : public rclcpp::Node {
             controller_->Step(nuway_common::SE2FromMsg(msg.pose), msg.vx, dt_s);
       }
     }
-    nuway_msgs::msg::ControlCommand command;
-    command.header = msg.header;
-    command.accel = static_cast<float>(out.accel_mps2);
-    command.steering_angle = static_cast<float>(out.steering_angle_rad);
-    command.emergency_stop = out.emergency_stop;
-    pub_command_->publish(command);
-
-    nuway_msgs::msg::ControlDebug debug;
-    debug.header = msg.header;
-    debug.lateral_error = static_cast<float>(out.lateral_error_m);
-    debug.heading_error = static_cast<float>(out.heading_error_rad);
-    debug.speed_error = static_cast<float>(out.speed_error_mps);
-    debug.lookahead = static_cast<float>(out.lookahead_m);
-    debug.solve_time_ms = static_cast<float>(cycle_ms);
-    debug.solver_ok = !out.emergency_stop;
-    pub_debug_->publish(debug);
-
     std::string message;
     DiagStatus status = DiagStatus::kOk;
     if (!msg.valid) {
@@ -201,12 +225,54 @@ class PurePursuitPidNode final : public rclcpp::Node {
       message = "off the line or past its end";
       status = DiagStatus::kWarn;
     }
-    diag_.Publish(msg.header.stamp, cycle_ms, 0.0, status, message);
+    Publish(msg.header.stamp, out, cycle_ms, status, message);
+  }
+
+  // The no-input convention for the controller's one per-tick input
+  // (docs/02 §2): when the pose of tick k never came, the gate's timeout is
+  // answered with an emergency stop stamped k instead of leaving every later
+  // tick to time out as well.
+  void OnTickTimeout(const nuway_msgs::msg::TickTimeout& msg) {
+    if (BeforeEpisode(msg.header.stamp)) {
+      return;
+    }
+    const std::int64_t tick = nuway_common::TickIndex(msg.header.stamp);
+    if (last_tick_.has_value() && tick <= *last_tick_) {
+      return;  // the pose did arrive and was answered
+    }
+    last_tick_ = tick;
+    RCLCPP_WARN(get_logger(), "tick %ld timed out without a pose; e-stop",
+                static_cast<long>(tick));
+    Publish(nuway_common::TickStamp(tick), ControlOutput{}, 0.0,
+            DiagStatus::kWarn, "no pose for the tick (timeout)");
+  }
+
+  void Publish(const builtin_interfaces::msg::Time& stamp,
+               const ControlOutput& out, double cycle_ms, DiagStatus status,
+               const std::string& message) {
+    nuway_msgs::msg::ControlCommand command;
+    command.header.stamp = stamp;
+    command.accel = static_cast<float>(out.accel_mps2);
+    command.steering_angle = static_cast<float>(out.steering_angle_rad);
+    command.emergency_stop = out.emergency_stop;
+    pub_command_->publish(command);
+
+    nuway_msgs::msg::ControlDebug debug;
+    debug.header.stamp = stamp;
+    debug.lateral_error = static_cast<float>(out.lateral_error_m);
+    debug.heading_error = static_cast<float>(out.heading_error_rad);
+    debug.speed_error = static_cast<float>(out.speed_error_mps);
+    debug.lookahead = static_cast<float>(out.lookahead_m);
+    debug.solve_time_ms = static_cast<float>(cycle_ms);
+    debug.solver_ok = !out.emergency_stop;
+    pub_debug_->publish(debug);
+    diag_.Publish(stamp, cycle_ms, 0.0, status, message);
   }
 
   std::unique_ptr<PurePursuitPid> controller_;
-  std::optional<rclcpp::Time> episode_start_;
-  std::optional<std::int64_t> last_tick_;
+  std::optional<std::uint32_t> episode_id_;
+  std::optional<std::int64_t> episode_tick_;  // first tick of the episode
+  std::optional<std::int64_t> last_tick_;     // last tick answered
 
   nuway_common::DiagPublisher diag_;
   rclcpp::Publisher<nuway_msgs::msg::ControlCommand>::SharedPtr pub_command_;
@@ -215,6 +281,8 @@ class PurePursuitPidNode final : public rclcpp::Node {
       sub_reference_line_;
   rclcpp::Subscription<nuway_msgs::msg::EgoState>::SharedPtr sub_pose_;
   rclcpp::Subscription<nuway_msgs::msg::ResetEvent>::SharedPtr sub_reset_;
+  rclcpp::Subscription<nuway_msgs::msg::TickTimeout>::SharedPtr
+      sub_tick_timeout_;
 };
 
 }  // namespace

@@ -7,7 +7,9 @@ pure_pursuit_pid_node:
     lookahead_min_m: 2.5
     lookahead_max_m: 20.0
     a_lat_max_mps2: 1.5             # curvature speed bound sqrt(a_lat_max / |kappa|)
-    curvature_horizon_m: 60.0       # look this far ahead for the curvature bound
+    curvature_horizon_m: 60.0       # floor of the speed-profile horizon (at least v_limit^2 / (2 plan_decel))
+    projection_back_m: 10.0         # Frenet projection window around the previous s
+    projection_ahead_m: 50.0
     plan_decel_mps2: 2.0            # braking assumed when approaching a bend (speed profile)
     kp: 0.8                         # speed PID -> accel
     ki: 0.2

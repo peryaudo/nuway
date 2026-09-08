@@ -12,9 +12,9 @@ find_package(nuway_control REQUIRED)
 
 pybind11_add_module(
     _core
-    src/bindings.cpp
-    src/bind_common.cpp
-    src/bind_control.cpp
+    src/bindings.cc
+    src/bind_common.cc
+    src/bind_control.cc
 )
 target_link_libraries(
     _core

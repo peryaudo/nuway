@@ -42,7 +42,7 @@ pred ─────┘            │
 
 ### 3.1 `nuway_prediction/const_vel_node` (C++)
 
-For each agent in `/nuway/perception/agents`: S = 1 sample, T = 16 (8 s @ 0.5 s), position = `p + v·t`, yaw constant, `sample_weight = [1.0]`. Pedestrians: same but velocity clamped to 2 m/s. Static obstacles: constant. Publishes `PredictionSamples` in `map` frame (transform from `base_link` via TF at the agents' stamp). Library `const_vel.cpp` (bound by `nuway_py` for the M6 expert) + thin node.
+For each agent in `/nuway/perception/agents`: S = 1 sample, T = 16 (8 s @ 0.5 s), position = `p + v·t`, yaw constant, `sample_weight = [1.0]`. Pedestrians: same but velocity clamped to 2 m/s. Static obstacles: constant. Publishes `PredictionSamples` in `map` frame (transform from `base_link` via TF at the agents' stamp). Library `const_vel.cc` (bound by `nuway_py` for the M6 expert) + thin node.
 
 Option flag `lane_follow: true`: for vehicles, project velocity onto the lane direction and follow the lane centerline (via `LaneGraph::NearestLane` + `Successors`) instead of a straight line. Default on; it materially reduces false collision predictions at curves.
 
@@ -73,7 +73,7 @@ IDM parameters (config): `s0=2.0, T=1.5, a=1.5, b=2.5`.
 
 ### 3.3 `nuway_planning/lattice_sampler` (C++)
 
-Frenet frame from the reference line (`nuway_common/frenet.hpp`). Ego Frenet state `(s, ṡ, s̈, d, d', d'')` from `EgoState` (use `frenet.hpp::ToFrenet` with velocity/accel projection).
+Frenet frame from the reference line (`nuway_common/frenet.h`). Ego Frenet state `(s, ṡ, s̈, d, d', d'')` from `EgoState` (use `frenet.h::ToFrenet` with velocity/accel projection).
 
 **Path candidates** (lateral, over `s`): quintic polynomials `d(s)` from current `(d, d', d'')` to `(d_f, 0, 0)` at `s_f = s + Δs`.
 - `d_f` set: for KEEP: `{−1.0, −0.5, 0, 0.5, 1.0}` relative to lane center of the *target lane* (for CHANGE_*: target lane center is the neighbor lane; the `d` offset of the neighbor centerline is read from the reference line's lane geometry).
@@ -84,7 +84,7 @@ Frenet frame from the reference line (`nuway_common/frenet.hpp`). Ego Frenet sta
 - STOP: quintic to `(stop_s, 0, 0)` with horizon `{3, 5, 7}` s, plus a "hard stop" at max decel.
 - YIELD: quintic to `(s_conflict − 3, 0, 0)` plus a "go" candidate.
 
-Combine path × speed → Cartesian trajectories via `frenet.hpp::ToCartesian`, resampled at 0.1 s, 8 s horizon (81 points), with `yaw`, `v`, `a`, `kappa`. A speed profile whose horizon is shorter than 8 s (the STOP and YIELD quintics, and the 4 s / 6 s keeping profiles) is **extended at its terminal state to 8 s**: at rest for stops, at constant speed along the path otherwise, so every candidate has 81 points regardless of the polynomial's own horizon. Total candidates ≈ 5·3·4·3 = 180 max; prune before QP.
+Combine path × speed → Cartesian trajectories via `frenet.h::ToCartesian`, resampled at 0.1 s, 8 s horizon (81 points), with `yaw`, `v`, `a`, `kappa`. A speed profile whose horizon is shorter than 8 s (the STOP and YIELD quintics, and the 4 s / 6 s keeping profiles) is **extended at its terminal state to 8 s**: at rest for stops, at constant speed along the path otherwise, so every candidate has 81 points regardless of the polynomial's own horizon. Total candidates ≈ 5·3·4·3 = 180 max; prune before QP.
 
 **Feasibility filter**: `|kappa| ≤ kappa_max`, `a ∈ [a_min, a_max]`, `|a_lat| ≤ 4`, path stays within `[−right_bound + w/2, left_bound − w/2]`, no collision with predictions (see 3.4).
 
@@ -222,7 +222,7 @@ Two back-ends over one set of layers (`02_interfaces.md` §3.9 and §8). Live, f
 
 **Live.** Foxglove layout `bev_planning.json`: the `occupancy` raster, agents (boxes by class), predictions (polylines faded by time), lattice candidates (thin, colored by cost quantile), refined selected (thick), `safe_trajectory` (if different), MPC predicted horizon, reference line & bounds, behavior state text, cost-breakdown table (from `TrajectoryCandidates`), diag table. Every one of these that is a drawing is a `/nuway/viz/<layer>` of `02_interfaces.md` §3.9 and has a `draw_<layer>()` twin.
 
-`nuway_viz/marker_node.cpp` converts each of the above topics to the `/nuway/viz/<layer>` `MarkerArray` topics. One node, many subscriptions.
+`nuway_viz/marker_node.cc` converts each of the above topics to the `/nuway/viz/<layer>` `MarkerArray` topics. One node, many subscriptions.
 
 **Headless.** `ml/nuway_ml/viz/` draws the same layers with matplotlib (`Agg`), and `tools/viz/render_bag.py` replays a route's MCAP into PNGs without CARLA, without a display and without `rclpy` — MCAP carries the schemas, `rosbags` decodes them. This is the only way an eval result can be inspected after the fact, on CI, or by a coding agent; the contract, the output layout and the frame composition are `02_interfaces.md` §8.
 
@@ -247,14 +247,14 @@ The official Leaderboard runner owns the CARLA client, the tick, the sensors and
 ## 4. Task list
 
 1. [ ] `const_vel_node` (+ lane-follow option, unit test on a curved lane).
-2. [ ] `frenet.hpp` extensions: velocity/accel projection, `ToCartesian` with `d(s)` polynomials; tests; mirror in `nuway_ml/common/frenet.py` + parity test.
+2. [ ] `frenet.h` extensions: velocity/accel projection, `ToCartesian` with `d(s)` polynomials; tests; mirror in `nuway_ml/common/frenet.py` + parity test.
 3. [ ] `behavior_fsm` library + node + tests (scripted scenarios: lead vehicle, red light, yield at junction, route lane change).
 4. [ ] `lattice_sampler` + feasibility filter + tests (candidate count, limits respected).
 5. [ ] `collision_checker` + tests (SAT correctness vs brute force on random boxes).
 6. [ ] `piecewise_jerk_qp` path + speed + tests (feasibility on synthetic bounds; warm start speeds up second solve).
 7. [ ] `rule_selector` + `planner_node` orchestrator; publish candidates/breakdown.
 8. [ ] `safety_layer_node` + tests (stale input, collision injection).
-9. [ ] `mpc_node` + `bicycle_model.hpp` jacobians (tests: finite-difference check) + delay compensation + fallback.
+9. [ ] `mpc_node` + `bicycle_model.h` jacobians (tests: finite-difference check) + delay compensation + fallback.
 10. [ ] Traffic spawning in world_manager; seed determinism test (two runs → identical agent trajectories for 30 s); traffic respawn on reset.
 11. [ ] `tools/eval/nuway_eval/`: `infractions.py` (incl. the ported min-speed criterion), `driving_score.py`, `route_runner.py` (one stack per town, second non-ticking client, waypoint publishing, reset event, non-deterministic flag, `--resume`, crash recovery), `report.py` (the `results.csv` schema of §3.10), `compare_runs.py`; route XMLs with the `protocol="m1"` marks; `configs/eval/scoring_lb20.yaml`.
 12. [ ] Foxglove layout + marker node.

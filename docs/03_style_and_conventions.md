@@ -36,9 +36,9 @@ This is not a restatement of the guide. It is the subset that a contributor comi
 | Class data members | `lower_snake_case_` with trailing underscore | `lookahead_m_`, `pub_cmd_` |
 | Constants (`constexpr`, `const` at namespace/class scope) | `kCamelCase` | `constexpr double kMaxSteerRad = 1.22;` |
 | Enumerators | `kCamelCase` (never `UPPER_CASE`) | `enum class LaneType { kDriving, kShoulder };` |
-| Macros | `UPPER_SNAKE_CASE`; avoid macros entirely | `NUWAY_COMMON_GEOMETRY_HPP_` (include guards only) |
-| Files | `lower_snake_case`; `.hpp` headers, `.cpp` sources | `pure_pursuit_pid_node.cpp`, `frenet.hpp` |
-| Test files | `<unit>_test.cpp` next to the unit under `test/` | `test/frenet_test.cpp` |
+| Macros | `UPPER_SNAKE_CASE`; avoid macros entirely | `NUWAY_COMMON_GEOMETRY_H_` (include guards only) |
+| Files | `lower_snake_case`; `.h` headers, `.cc` sources (Google; ROS-generated headers stay `.hpp`) | `pure_pursuit_pid_node.cc`, `frenet.h` |
+| Test files | `<unit>_test.cc` next to the unit under `test/` | `test/frenet_test.cc` |
 
 Extra project rules:
 
@@ -50,19 +50,19 @@ Extra project rules:
 
 ### 2.2 Headers
 
-- Every header has a `#define` guard of the form `NUWAY_<PACKAGE>_<PATH>_<FILE>_HPP_`, e.g. `NUWAY_COMMON_FRENET_HPP_`. `#pragma once` is not used (Google guide). The pattern is checked by `tools/lint/check_header_guards.py`, not by clang-tidy: `llvm-header-guard` derives the expected macro from the file path and would reject every correctly named guard under `WarningsAsErrors: '*'` (§7.2).
+- Every header has a `#define` guard of the form `NUWAY_<PACKAGE>_<PATH>_<FILE>_H_`, e.g. `NUWAY_COMMON_FRENET_H_`. `#pragma once` is not used (Google guide). The pattern is checked by `tools/lint/check_header_guards.py`, not by clang-tidy: `llvm-header-guard` derives the expected macro from the file path and would reject every correctly named guard under `WarningsAsErrors: '*'` (§7.2).
 - Headers are self-contained: include what you use, nothing more. No transitive-include reliance.
 - Include order (enforced by `clang-format`):
-  1. the header matching this `.cpp` file,
+  1. the header matching this `.cc` file,
   2. C system headers (`<sys/...>`, `<cmath>` is C++),
   3. C++ standard library,
   4. third-party libraries (`<Eigen/...>`, `<gtsam/...>`, `<rclcpp/...>`, `<carla_msgs/...>`),
   5. headers from other `nuway_*` packages, including the generated `<nuway_msgs/...>` headers,
   6. headers from the same package.
   Each group separated by a blank line, alphabetically sorted within the group.
-- Include style: `"nuway_common/frenet.hpp"` with quotes for headers in the same package; angle brackets for everything installed by another package (ROS, Eigen, other `nuway_*` packages, generated `nuway_msgs`).
+- Include style: `"nuway_common/frenet.h"` with quotes for headers in the same package; angle brackets for everything installed by another package (ROS, Eigen, other `nuway_*` packages, generated `nuway_msgs`).
 - Forward-declare instead of including when the header only needs a pointer or reference to the type.
-- No `using namespace` anywhere, not even in `.cpp` files. `using std::chrono_literals::operator""ms;`-style targeted using-declarations are fine inside function scope. Namespace aliases (`namespace nm = nuway_msgs::msg;`) are allowed at file scope in `.cpp` files.
+- No `using namespace` anywhere, not even in `.cc` files. `using std::chrono_literals::operator""ms;`-style targeted using-declarations are fine inside function scope. Namespace aliases (`namespace nm = nuway_msgs::msg;`) are allowed at file scope in `.cc` files.
 
 ### 2.3 Classes and structs
 
@@ -86,7 +86,7 @@ Extra project rules:
 - `std::unique_ptr` for owned polymorphic objects. `std::shared_ptr` only where `rclcpp` forces it (nodes, publishers, subscriptions, received messages). Never `new`/`delete` in project code; `std::make_unique` / `std::make_shared`.
 - Raw pointers are non-owning and may be null unless documented otherwise. Prefer references when null is impossible.
 - Pass `const std::shared_ptr<const Msg>&` (or `Msg::ConstSharedPtr`) in subscription callbacks; do not copy messages containing point clouds or grids.
-- Eigen fixed-size vectorizable types (`Vector2d`, `Matrix4d`, …) inside `std::vector` need `Eigen::aligned_allocator`; use the aliases in `nuway_common/geometry.hpp` instead of spelling it out.
+- Eigen fixed-size vectorizable types (`Vector2d`, `Matrix4d`, …) inside `std::vector` need `Eigen::aligned_allocator`; use the aliases in `nuway_common/geometry.h` instead of spelling it out.
 
 ### 2.6 Language features
 
@@ -95,7 +95,7 @@ Extra project rules:
 - No RTTI-dependent logic (`dynamic_cast`, `typeid`). Use virtual functions or `std::variant`.
 - `auto` only when the type is obvious from the right-hand side (`auto pub = create_publisher<...>()`, iterators, `make_unique`). Spell out numeric and Eigen types.
 - Use `constexpr` for compile-time constants, `const` for everything that does not change, including local variables and member functions.
-- Casts: `static_cast<>` only. No C-style casts. `reinterpret_cast` only in `carla_conv.hpp` or shared-memory code, with a comment.
+- Casts: `static_cast<>` only. No C-style casts. `reinterpret_cast` only in `carla_conv.h` or shared-memory code, with a comment.
 - Integer types: `int` for counts and indices unless interop requires otherwise; `size_t` only where the standard library hands it to you; `int64_t`/`uint32_t` fixed widths for wire formats and message fields. Never unsigned for "non-negative" semantics.
 - `enum class` always. Plain `enum` never.
 - Lambdas: capture explicitly (`[this]`, `[&x]`), never `[=]` or `[&]` in callbacks stored past the current scope.
@@ -131,8 +131,7 @@ Kept intentionally short. Anything not listed here follows Google.
 
 | Topic | Google | nuway | Why |
 |-------|--------|-------|-----|
-| File extensions | `.h` / `.cc` | `.hpp` / `.cpp` | ROS 2 / `ament_cmake` ecosystem convention; `02_interfaces.md` and the directory structure already use it. |
-| Include guard macro | project-path based | `NUWAY_<PKG>_<FILE>_HPP_` | Package name instead of full repo path so guards do not change when `ros2_ws/src/` moves. |
+| Include guard macro | project-path based | `NUWAY_<PKG>_<FILE>_H_` | Package name instead of full repo path so guards do not change when `ros2_ws/src/` moves. |
 | Braces on single-statement bodies | optional | mandatory | Avoids a class of merge and diff bugs; enforced by clang-tidy. |
 | `std::shared_ptr` | discouraged | allowed where `rclcpp` requires it | No alternative in ROS 2. |
 | Abseil | recommended in places | not used | Keep the dependency set to what `00_overview.md` §4 lists. Use `std::optional`, `std::string_view`, `std::variant`. |
@@ -142,14 +141,14 @@ Kept intentionally short. Anything not listed here follows Google.
 
 ## 4. ROS 2-specific conventions
 
-- **Nodes are thin.** A node file (`*_node.cpp`) contains one class deriving from `rclcpp::Node`, its `main()`, and nothing else. It declares parameters, creates publishers/subscriptions/timers, converts messages to plain structs, and calls a library class that has **no `rclcpp` dependency** and is unit-tested with gtest.
-- Parameters are declared in the constructor via `nuway_common/params.hpp` helpers with an explicit default and a one-line description. Read once at startup; dynamic reconfigure only where a milestone doc asks for it.
+- **Nodes are thin.** A node file (`*_node.cc`) contains one class deriving from `rclcpp::Node`, its `main()`, and nothing else. It declares parameters, creates publishers/subscriptions/timers, converts messages to plain structs, and calls a library class that has **no `rclcpp` dependency** and is unit-tested with gtest.
+- Parameters are declared in the constructor via `nuway_common/params.h` helpers with an explicit default and a one-line description. Read once at startup; dynamic reconfigure only where a milestone doc asks for it.
 - One publisher/subscription member per topic, named `pub_<what>_` / `sub_<what>_`, e.g. `pub_cmd_`, `sub_ego_odom_`. Timers `timer_<what>_`.
-- Callbacks are private methods named `On<Message>()` (`OnEgoOdom(...)`) or `OnTimer()`. They must not block; anything above a few milliseconds goes into the library class and is timed with `nuway_common/diag.hpp`'s scoped timer.
-- QoS is set explicitly at every publisher/subscription using one of the named profiles in `02_interfaces.md` §3.11 through `nuway_common/qos.hpp` (`nuway_common::qos::kStream`, …). No implicit defaults, no inline `rclcpp::QoS` construction.
+- Callbacks are private methods named `On<Message>()` (`OnEgoOdom(...)`) or `OnTimer()`. They must not block; anything above a few milliseconds goes into the library class and is timed with `nuway_common/diag.h`'s scoped timer.
+- QoS is set explicitly at every publisher/subscription using one of the named profiles in `02_interfaces.md` §3.11 through `nuway_common/qos.h` (`nuway_common::qos::kStream`, …). No implicit defaults, no inline `rclcpp::QoS` construction.
 - Every node with cross-cycle state subscribes to `/nuway/sim/reset_event` and clears it (`02_interfaces.md` §7). The header comment of every node states either what it clears on reset or that it is stateless.
 - Logging: `RCLCPP_INFO` once at startup with the resolved parameters; `RCLCPP_WARN_THROTTLE` for recurring conditions; `RCLCPP_ERROR` for conditions that also flip the `NodeDiag` status. No `std::cout` / `printf` in nodes or libraries.
-- Frame handling: every function that takes or returns a pose documents the frame in its comment (§2.7). Conversions between CARLA and ROS conventions are implemented only in `carla_conv.hpp` / `carla_conv.py`; `nuway_carla_bridge` and the collectors call them and hold no conversion arithmetic (see `01_directory_structure.md` rules).
+- Frame handling: every function that takes or returns a pose documents the frame in its comment (§2.7). Conversions between CARLA and ROS conventions are implemented only in `carla_conv.h` / `carla_conv.py`; `nuway_carla_bridge` and the collectors call them and hold no conversion arithmetic (see `01_directory_structure.md` rules).
 - No environment variable reads in nodes. Everything comes from parameters.
 
 ---
@@ -157,7 +156,7 @@ Kept intentionally short. Anything not listed here follows Google.
 ## 5. Tests
 
 - Framework: gtest via `ament_cmake_gtest`. Pure library tests must link only the library, never `rclcpp`.
-- Location: `<package>/test/<unit>_test.cpp`, one test file per header under test.
+- Location: `<package>/test/<unit>_test.cc`, one test file per header under test.
 - Test names: `TEST(FrenetTest, RoundTripOnArcWithinTolerance)`; fixture classes end in `Test`. The test name reads as a sentence describing the expected behavior.
 - Numerical tests state tolerances explicitly (`EXPECT_NEAR(x, y, 1e-6)`) and the tolerance is justified in a comment when it is not obvious.
 - Tests are subject to the same `clang-format` and `clang-tidy` rules as production code, with the naming exceptions gtest requires (configured in `.clang-tidy`).
@@ -294,7 +293,7 @@ IncludeIsMainRegex: '(_test)?$'
 SortIncludes: CaseSensitive
 ```
 
-Everything not listed inherits from the Google base style (2-space indent, attached braces, 80 columns, etc.). Formatting checks apply to `*.hpp`, `*.cpp` under `ros2_ws/src/nuway_*` and `tests/`. Vendored packages (`carla_msgs`) are excluded.
+Everything not listed inherits from the Google base style (2-space indent, attached braces, 80 columns, etc.). Formatting checks apply to `*.h`, `*.cc` under `ros2_ws/src/nuway_*` and `tests/`. Vendored packages (`carla_msgs`) are excluded.
 
 ### 7.2 `.clang-tidy`
 
@@ -355,7 +354,7 @@ CheckOptions:
   readability-identifier-naming.EnumConstantPrefix: 'k'
   readability-identifier-naming.MacroDefinitionCase: UPPER_CASE
   # Include guards end in '_' (§2.2), which UPPER_CASE rejects.
-  readability-identifier-naming.MacroDefinitionIgnoredRegexp: '^NUWAY_[A-Z0-9_]+_HPP_$'
+  readability-identifier-naming.MacroDefinitionIgnoredRegexp: '^NUWAY_[A-Z0-9_]+_H_$'
   # Cheap accessors/mutators are allowed to be snake_case (Google "Function
   # Names"): a bare member name `foo()` or a setter `set_foo()`. The regexp
   # must not admit arbitrary snake_case methods, so it requires the accessor
@@ -372,7 +371,7 @@ CheckOptions:
 
 Notes:
 
-- `llvm-header-guard` is deliberately **not** enabled: it derives the expected guard from the file path and, with `WarningsAsErrors: '*'`, would fail every correctly named `NUWAY_<PKG>_<FILE>_HPP_` guard. Missing and misnamed guards are caught by `tools/lint/check_header_guards.py`, which pre-commit and CI run next to clang-tidy.
+- `llvm-header-guard` is deliberately **not** enabled: it derives the expected guard from the file path and, with `WarningsAsErrors: '*'`, would fail every correctly named `NUWAY_<PKG>_<FILE>_H_` guard. Missing and misnamed guards are caught by `tools/lint/check_header_guards.py`, which pre-commit and CI run next to clang-tidy.
 - `readability-magic-numbers` is off because planning and control code is full of justified tunables; those must still be named constants when reused (§2.1).
 - `modernize-use-nodiscard` is off (2026-09-07): it demands `[[nodiscard]]` on every const member function that returns a value, i.e. on every accessor, which the Google guide does not ask for and which buries the signatures. `[[nodiscard]]` is still used deliberately on functions whose ignored result is a bug (a `bool` success flag, an `std::optional` lookup).
 - `readability-identifier-length` is off (2026-09-07): geometry, Frenet and control code names coordinates `x`, `y`, `s`, `d`, `k`, `dt` by long-standing convention, and the check has no notion of that. Names longer than one or two characters are still expected everywhere the quantity is not a coordinate, angle or index; review enforces that.
@@ -543,7 +542,7 @@ All tools are the `uv`-managed binaries from §6 (`uv run clang-format`, `uv run
 | Layer | What | When |
 |-------|------|------|
 | Editor | C++: clang-format on save, clangd using `compile_commands.json` from `ros2_ws/build/`. Python: ruff format on save, ruff and mypy language servers | continuously |
-| Pre-commit | `pre-commit` (`repo: local` hooks via `uv run`): `clang-format --dry-run --Werror` on staged C++ files; `clang-tidy` on staged `.cpp` files using the merged `compile_commands.json`; `gersemi --check` on staged `CMakeLists.txt`/`*.cmake`; `ruff format --check` and `ruff check` on staged `.py` files; `mypy` on the packages containing staged `.py` files | every commit |
+| Pre-commit | `pre-commit` (`repo: local` hooks via `uv run`): `clang-format --dry-run --Werror` on staged C++ files; `clang-tidy` on staged `.cc` files using the merged `compile_commands.json`; `gersemi --check` on staged `CMakeLists.txt`/`*.cmake`; `ruff format --check` and `ruff check` on staged `.py` files; `mypy` on the packages containing staged `.py` files | every commit |
 | Local full run | C++: `tools/lint/format_cpp.sh [--fix]` and `tools/lint/tidy_cpp.sh [--fix]` (wraps `run-clang-tidy -p ros2_ws/build`). Python: `tools/lint/lint_py.sh [--fix]` (runs `ruff format`, `ruff check`, `mypy` from the repo root) | before pushing; Claude Code after every change |
 | Build / test | C++: every `nuway_*` `ament_cmake` package sets `CMAKE_EXPORT_COMPILE_COMMANDS ON` and honors `-DNUWAY_CLANG_TIDY=ON` which sets `CMAKE_CXX_CLANG_TIDY` so `colcon build` fails on tidy errors. Python: `pytest` runs with `--strict-markers`; ruff and mypy are separate CI jobs, not pytest plugins | opt-in locally, on in CI |
 | CI | `ros:jazzy` container, `setup_env.sh`, uv cache keyed on `uv.lock`. C++: format + gersemi check + `check_header_guards.py` on the full tree; `colcon build --cmake-args -DNUWAY_CLANG_TIDY=ON`; a second build + `colcon test` with `-DNUWAY_SANITIZE=address,undefined`. Python: `uv run ruff format --check .`, `uv run ruff check .`, `uv run mypy`, then two pytest jobs: `uv sync --group train --group viz && uv run pytest -m "not slow and not carla and not gpu"`, and the **import-light job**, a plain `uv sync` (no torch) running `uv run pytest -m import_light` — the tests that assert `nuway_ml.common` and `gt_occupancy` import without torch (§6.1) | every push / PR |
@@ -576,7 +575,7 @@ Before declaring a C++ task done:
 
 1. `clang-format` reports no diff.
 2. `clang-tidy` reports no warnings for the changed package (with `-DNUWAY_CLANG_TIDY=ON` or `tools/lint/tidy_cpp.sh`).
-3. Every new header has the `NUWAY_<PKG>_<FILE>_HPP_` guard (`tools/lint/check_header_guards.py` clean) and a file-level comment.
+3. Every new header has the `NUWAY_<PKG>_<FILE>_H_` guard (`tools/lint/check_header_guards.py` clean) and a file-level comment.
 4. Every new class/function follows the naming table in §2.1; every parameter member matches its YAML key plus `_`.
 5. No `throw` in library code; exceptions from third-party code caught at the node boundary.
 6. Frames and units are stated in comments at every interface.
@@ -621,7 +620,7 @@ Applies to `ml/`, `tools/`, `tests/`, and the rclpy packages and launch files in
 Extra project rules:
 
 - Units in names when not obvious from the type: `speed_mps`, `dt_s`, `yaw_rad`. Same suffix set as C++ (§2.1).
-- Parity modules mirror their C++ twin: `nuway_common/frenet.hpp::ToFrenet` ↔ `nuway_ml/common/frenet.py::to_frenet`, same argument order, same return structure. The cross-language parity test reads one-to-one.
+- Parity modules mirror their C++ twin: `nuway_common/frenet.h::ToFrenet` ↔ `nuway_ml/common/frenet.py::to_frenet`, same argument order, same return structure. The cross-language parity test reads one-to-one.
 - rclpy node classes end in `Node`; publisher/subscription/timer attributes are `self._pub_<what>`, `self._sub_<what>`, `self._timer_<what>`; callbacks are `_on_<message>()` / `_on_timer()`. This is the snake_case image of the C++ node conventions (§4).
 - ROS parameter names are identical to the YAML keys in `configs/`, stored as `self._<key>`.
 

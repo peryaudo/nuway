@@ -1,6 +1,6 @@
 """CARLA (left-handed, degrees) <-> ROS REP-103 conversion (M0).
 
-Mirrors ``nuway_common/carla_conv.hpp``. This module and that header are the
+Mirrors ``nuway_common/carla_conv.h``. This module and that header are the
 only code allowed to know CARLA's convention (``docs/01_directory_structure.md``
 Rules, ``docs/02_interfaces.md`` §1)::
 

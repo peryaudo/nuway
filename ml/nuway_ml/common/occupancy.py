@@ -1,6 +1,6 @@
 """Occupancy grid conventions of ``docs/02_interfaces.md`` §1/§4 (M0).
 
-Mirrors ``nuway_common/occupancy.hpp``: ``GridSpec``, world <-> grid index
+Mirrors ``nuway_common/occupancy.h``: ``GridSpec``, world <-> grid index
 conversion (numpy, no torch: ``gt_perception_node`` imports this) and
 :func:`bilinear_sample`, the one torch function here, which imports torch lazily
 inside its body (``docs/03_style_and_conventions.md`` §6.1). Grids are in

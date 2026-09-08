@@ -48,7 +48,7 @@ ros2 launch nuway_bringup stack.launch.py profile:=m0_gt_all
 - **Never pass `-quality-level=Low`**: the server segfaults on the first `load_world()`. Run at default Epic quality and accept ~3× slower rendering.
 - Sensor blueprints need the `ros_name` attribute (not `role_name`); otherwise topics come out as `/carla/actorNNN/...`.
 - CARLA's native `camera_info` is broken (`fx ≈ -22973`). No node subscribes to it; `sensor_rig.py` publishes ours from the rig JSON.
-- Native `/carla/**` topics are already ROS-convention. `carla_conv` applies only to data read through the CARLA Python API, and only `nuway_common/carla_conv.hpp` + `nuway_ml/common/carla_conv.py` may contain conversion arithmetic.
+- Native `/carla/**` topics are already ROS-convention. `carla_conv` applies only to data read through the CARLA Python API, and only `nuway_common/carla_conv.h` + `nuway_ml/common/carla_conv.py` may contain conversion arithmetic.
 - `enable_for_ros()` exists on sensors only, not vehicles.
 
 ## Architecture reminders (full statements in the docs)
@@ -60,7 +60,7 @@ ros2 launch nuway_bringup stack.launch.py profile:=m0_gt_all
 
 ## Style deltas from Google C++ / PEP 8 (full tables: `docs/03_style_and_conventions.md` §2–§3, §9)
 
-C++: `.hpp`/`.cpp`; include guards `NUWAY_<PKG>_<FILE>_HPP_`, `#pragma once` forbidden; braces on every single-statement `if`/`for`/`while`; no exceptions in project code (return `std::optional`/`bool`/result struct, catch third-party throws at the node boundary); functions `CamelCase`, cheap accessors `lower_snake_case`, constants `kCamelCase`, members trailing `_`; units in names (`speed_mps`, `dt_s`, `yaw_rad`); no `using namespace`, no RTTI, no `std::bind`, `enum class` always; gtest files `<unit>_test.cpp` under `test/` must not link `rclcpp`.
+C++: `.h`/`.cc` as in Google (ROS-generated and third-party headers keep their `.hpp`); include guards `NUWAY_<PKG>_<FILE>_H_`, `#pragma once` forbidden; braces on every single-statement `if`/`for`/`while`; no exceptions in project code (return `std::optional`/`bool`/result struct, catch third-party throws at the node boundary); functions `CamelCase`, cheap accessors `lower_snake_case`, constants `kCamelCase`, members trailing `_`; units in names (`speed_mps`, `dt_s`, `yaw_rad`); no `using namespace`, no RTTI, no `std::bind`, `enum class` always; gtest files `<unit>_test.cc` under `test/` must not link `rclcpp`.
 
 Python: full annotations, `mypy --strict` for `ml/`, `tools/`, `tests/`; 3.12 syntax only (`X | None`, `dict[str, int]`); every `# noqa` / `# type: ignore` carries a code and a justification; `frozen=True, slots=True` dataclasses or `TypedDict` at module boundaries; rclpy nodes end in `Node` with `self._pub_<what>`, `self._sub_<what>`, `_on_<message>()`; training entry points are Hydra apps (`argparse` forbidden there; `tools/` and `ml/scripts/` keep `argparse`); `wandb` imported only in `run_logger.py` and entry points.
 

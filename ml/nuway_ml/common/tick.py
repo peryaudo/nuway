@@ -1,6 +1,6 @@
 """Tick index and phase of ``docs/02_interfaces.md`` §2 (M0).
 
-Mirrors ``nuway_common/tick.hpp``: every stamp is nominally ``k * 0.05`` s,
+Mirrors ``nuway_common/tick.h``: every stamp is nominally ``k * 0.05`` s,
 comparisons go through :func:`tick_index`, 10 Hz nodes act on even ticks, and
 :class:`TickBarrier` is the current-tick barrier. No ``rclpy`` import: stamps
 are duck typed (``sec`` / ``nanosec`` attributes) or plain seconds.

@@ -11,11 +11,7 @@ find_package(nuway_map REQUIRED)
 find_package(nuway_msgs REQUIRED)
 
 # Library: no rclcpp.
-add_library(
-    nuway_route_lib
-    src/route_planner.cpp
-    src/reference_line_builder.cpp
-)
+add_library(nuway_route_lib src/route_planner.cc src/reference_line_builder.cc)
 target_include_directories(
     nuway_route_lib
     PUBLIC
@@ -32,7 +28,7 @@ target_link_libraries(
 )
 nuway_target_defaults(nuway_route_lib)
 
-add_executable(route_planner_node src/route_planner_node.cpp)
+add_executable(route_planner_node src/route_planner_node.cc)
 target_link_libraries(
     route_planner_node
     PRIVATE
@@ -44,7 +40,7 @@ target_link_libraries(
 nuway_target_defaults(route_planner_node)
 
 # Route-set generator for tools/eval/routes/ (task 13); no rclcpp.
-add_executable(route_gen tools/route_gen.cpp)
+add_executable(route_gen tools/route_gen.cc)
 target_link_libraries(route_gen PRIVATE nuway_route_lib)
 nuway_target_defaults(route_gen)
 
@@ -56,7 +52,7 @@ install(DIRECTORY config DESTINATION share/${PROJECT_NAME})
 if(BUILD_TESTING)
     find_package(ament_cmake_gtest REQUIRED)
     foreach(unit route_planner reference_line_builder)
-        ament_add_gtest(${unit}_test test/${unit}_test.cpp)
+        ament_add_gtest(${unit}_test test/${unit}_test.cc)
         target_link_libraries(${unit}_test nuway_route_lib)
         target_compile_definitions(
             ${unit}_test

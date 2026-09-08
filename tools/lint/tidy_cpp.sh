@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # tools/lint/tidy_cpp.sh [--fix] [--packages pkg ...] [files...]
 # Merges colcon's compile databases, then runs the uv-pinned clang-tidy over the
-# .cpp files of the selected nuway_* packages (default: all that have been built)
+# .cc files of the selected nuway_* packages (default: all that have been built)
 # (docs/03_style_and_conventions.md §7.4). Warnings are errors (.clang-tidy).
 set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -32,7 +32,7 @@ if [ "${#files[@]}" -eq 0 ]; then
   fi
   for pkg in "${packages[@]}"; do
     while IFS= read -r f; do files+=("$f"); done < <(
-      find "ros2_ws/src/$pkg" -name '*.cpp' | sort
+      find "ros2_ws/src/$pkg" -name '*.cc' | sort
     )
   done
 fi

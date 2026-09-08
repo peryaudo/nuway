@@ -33,7 +33,7 @@ Two modes: **mapping** (offline tool, builds the prior map) and **localization**
 
 ## 2. Components
 
-### 2.1 LiDAR odometry (`nuway_localization/src/lidar_odometry.cpp`, node wrapper)
+### 2.1 LiDAR odometry (`nuway_localization/src/lidar_odometry.cc`, node wrapper)
 
 KISS-ICP recipe, implemented in-repo (no external KISS-ICP dependency; ~600 lines). Runs on every 2nd sweep, i.e. at the 10 Hz keyframe rate that the smoother and scan-to-map use; the skipped sweep is not registered (at 15 m/s the 0.1 s spacing is 1.5 m, well inside the convergence basin), which keeps the whole chain inside the 20 ms budget.
 1. Preprocess: transform sweep to `base_link`; drop points with range < 2 m or > 75 m; voxel downsample at 0.5 m (keep one point per voxel); further subsample to ≤ 8k points for registration ("source"), keep the 0.5 m cloud for map insertion.
@@ -53,14 +53,14 @@ Tests: synthetic cube-room point clouds with known motion → recovered transfor
 
 Loop closure for the validation run: Scan Context descriptor (20 rings × 60 sectors, max height per bin), candidate search over descriptor distance < 0.2, verify with ICP inlier ratio > 0.6; robust `BetweenFactor` with Huber (k = 1.0).
 
-### 2.3 Scan-to-map (`scan_to_map.cpp`, node)
+### 2.3 Scan-to-map (`scan_to_map.cc`, node)
 
 - Loads the prior map; builds a voxel hash (1.0 m) with normals.
 - Input: the odometry step's downsampled scan of the same tick (shared in-process, §1) + initial guess (from the smoother's latest pose propagated by the odometry delta).
 - Point-to-plane ICP (normals from map), 20 iterations, robust kernel, ≤ 6k points. Outputs `T_map_base` and covariance from the Hessian; rejects the result if inlier ratio < 0.4 or if the pose moved > 2 m / 10° from the initial guess (publishes a diag warn).
 - Runs at 10 Hz (every 2nd sweep) to leave CPU for odometry.
 
-### 2.4 Fixed-lag smoother (`smoother.cpp`, node, GTSAM 4.2)
+### 2.4 Fixed-lag smoother (`smoother.cc`, node, GTSAM 4.2)
 
 Variables: at each LiDAR keyframe `k` (10 Hz): pose `X_k` (Pose3), velocity `V_k`, IMU bias `B_k` (constant-bias factor between consecutive nodes with small noise).
 
@@ -68,12 +68,12 @@ Factors:
 - `BetweenFactor<Pose3>(X_{k-1}, X_k, T_odom, Σ_odom)` from 2.1.
 - `PriorFactor<Pose3>(X_k, T_scan2map, Σ_s2m)` from 2.3 (when accepted). Robust (Huber) to survive bad registrations.
 - `ImuFactor(X_{k-1}, V_{k-1}, X_k, V_k, B_{k-1})` from `PreintegratedImuMeasurements` over the IMU samples between keyframes. There are only **two** of them (the IMU is one sample per tick, `02_interfaces.md` §2), so the factor is thin; see the open question on replacing it. CARLA IMU noise params from the sensor attributes (set explicit `noise_accel_stddev_*`, `noise_gyro_stddev_*` in the rig so the model matches).
-- `GPSFactor(X_k, p_gnss, σ=2 m)` from GNSS (converted from lat/lon via CARLA's `map.transform_to_geolocation` inverse — implement the equirectangular inverse in `carla_conv.hpp` *and* `carla_conv.py`, parity-tested like the rest of that pair; the reference lat/lon/alt come from the `<geoReference>` header of the town's `map.xodr`, parsed by the map server and carried in the latched `LaneGraph` message as `geo_lat0`/`geo_lon0`/`geo_alt0` (`02_interfaces.md` §4), so no node needs a second parser; CARLA's GNSS is exact + configured noise).
+- `GPSFactor(X_k, p_gnss, σ=2 m)` from GNSS (converted from lat/lon via CARLA's `map.transform_to_geolocation` inverse — implement the equirectangular inverse in `carla_conv.h` *and* `carla_conv.py`, parity-tested like the rest of that pair; the reference lat/lon/alt come from the `<geoReference>` header of the town's `map.xodr`, parsed by the map server and carried in the latched `LaneGraph` message as `geo_lat0`/`geo_lon0`/`geo_alt0` (`02_interfaces.md` §4), so no node needs a second parser; CARLA's GNSS is exact + configured noise).
 - Wheel-speed factor: a unary factor on `V_k` body-x component from `/nuway/sim/vehicle_state.speed` (σ = 0.2 m/s), body-y ≈ 0 (σ = 0.3, non-holonomic soft constraint).
 
 `IncrementalFixedLagSmoother` with lag 2.0 s, iSAM2 params relinearize threshold 0.01. Output the latest `X_k` with marginal covariance as `/nuway/loc/pose_lowrate`, and publish `map→odom = X_k · (odom_pose_k)^{-1}` where `odom_pose_k` is the odometry-integrated pose of keyframe `k` (so `odom` is continuous and `map→odom` absorbs corrections).
 
-### 2.5 Pose extrapolator (`pose_extrapolator.cpp`, node, every tick)
+### 2.5 Pose extrapolator (`pose_extrapolator.cc`, node, every tick)
 
 Maintains `odom→base_link` by integrating one tick at a time: yaw rate from IMU gyro z, longitudinal speed from `vehicle_state.speed` (or the smoother's velocity estimate when available), with a planar non-holonomic model. Resets its integration origin to the latest odometry keyframe pose when a new `odometry_delta` arrives (so drift between keyframes is bounded to one tick of integration). Publishes `/nuway/loc/pose` on the tick that has no keyframe (and republishes the keyframe pose on the tick that has one) = `map→odom (latest) · odom→base_link (now)`, with velocities/yaw rate/accel from IMU + wheel speed and `valid: true`. Output rate and message layout are identical to `gt_pose_node` (M0). **While the smoother has no accepted initialization (§2.6) it still publishes every tick, with `valid: false`**, which is what keeps the controller answering the lockstep gate with `emergency_stop` instead of the gate timing out.
 
@@ -89,13 +89,13 @@ On start or on `ResetEvent`: discard the smoother graph, local map and extrapola
 
 ## 4. Task list
 
-1. [ ] `voxel_hash_map.hpp` (+ tests), `icp.hpp` (point-to-point & point-to-plane, robust, SE3 GN; tests vs synthetic).
-2. [ ] `lidar_odometry.cpp` + node; test on a recorded MCAP; plot drift vs GT.
+1. [ ] `voxel_hash_map.h` (+ tests), `icp.h` (point-to-point & point-to-plane, robust, SE3 GN; tests vs synthetic).
+2. [ ] `lidar_odometry.cc` + node; test on a recorded MCAP; plot drift vs GT.
 3. [ ] Scan Context descriptor + loop detection (+ tests on repeated synthetic scenes).
 4. [ ] `map_builder`, `build_map.py` (incl. `--plan-route` lane-cover route generation), maps for all eight collection towns; `pose_graph_refine` validation on Town03/05/10HD; REPORT per town.
-5. [ ] `scan_to_map.cpp` + node; rejection logic; timing.
-6. [ ] `smoother.cpp` + node (GTSAM); IMU preintegration wiring; GNSS conversion in `carla_conv.hpp` + `carla_conv.py` (parity) with test against CARLA API on 100 points; component container for the three 10 Hz nodes.
-7. [ ] `pose_extrapolator.cpp` + node; TF publishing; `valid: false` during init; parity with `gt_pose_node` output rate/format.
+5. [ ] `scan_to_map.cc` + node; rejection logic; timing.
+6. [ ] `smoother.cc` + node (GTSAM); IMU preintegration wiring; GNSS conversion in `carla_conv.h` + `carla_conv.py` (parity) with test against CARLA API on 100 points; component container for the three 10 Hz nodes.
+7. [ ] `pose_extrapolator.cc` + node; TF publishing; `valid: false` during init; parity with `gt_pose_node` output rate/format.
 7b. [ ] `localization` marker layer in `nuway_viz` (estimated vs GT trail, `map→odom` correction arrow) + `draw_localization()` in `nuway_ml/viz/bev_draw.py` (`02_interfaces.md` §3.9).
 8. [ ] Initialization and `ResetEvent` handling; test from 20 random spawn points and across 5 consecutive resets.
 9. [ ] `eval_localization.py`; achieve ATE criteria; tune noise models; record in Decisions log.

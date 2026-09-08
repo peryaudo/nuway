@@ -9,7 +9,7 @@ f="$(jq -r '.tool_response.filePath // .tool_input.file_path // empty')"
 cd "$root" || exit 0
 case "$f" in
   *.py)  uv run --frozen ruff format "$f" ;;
-  *.cpp|*.hpp)
+  *.cc|*.h)
     [ -f "$root/.clang-format" ] || exit 0
     uv run --frozen clang-format -i "$f" ;;
 esac

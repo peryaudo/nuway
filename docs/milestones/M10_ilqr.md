@@ -10,9 +10,9 @@
 
 ---
 
-## 1. Formulation (`nuway_planning/src/ilqr.cpp`, header `ilqr.hpp`)
+## 1. Formulation (`nuway_planning/src/ilqr.cc`, header `ilqr.h`)
 
-State `x = [X, Y, ψ, v, δ]`, input `u = [a, δ̇]`, `dt = 0.1`, `N = 80` (the full 8 s horizon, so the refined output is an 81-point `Trajectory` like every other candidate and the selector's horizon-normalised terms stay comparable; `02_interfaces.md` §4). Prediction uncertainty in the far tail is handled by the time-decayed tracking weight and by the sample weighting, not by truncating the horizon. Dynamics from `bicycle_model.hpp` (RK2), analytic Jacobians `A_t, B_t` (tests vs finite differences).
+State `x = [X, Y, ψ, v, δ]`, input `u = [a, δ̇]`, `dt = 0.1`, `N = 80` (the full 8 s horizon, so the refined output is an 81-point `Trajectory` like every other candidate and the selector's horizon-normalised terms stay comparable; `02_interfaces.md` §4). Prediction uncertainty in the far tail is handled by the time-decayed tracking weight and by the sample weighting, not by truncating the horizon. Dynamics from `bicycle_model.h` (RK2), analytic Jacobians `A_t, B_t` (tests vs finite differences).
 
 Cost:
 ```
@@ -58,15 +58,15 @@ Implemented in the runtime node behind `prediction.guidance.enabled`; `s_0` tune
 
 ## 5. Tests
 
-- `test_ilqr_jacobians.cpp`: analytic vs finite-difference `A_t, B_t`, and cost gradients/Hessians for each term.
-- `test_ilqr_convergence.cpp`: straight road, one static obstacle in lane, warm start from a straight line → converged solution deviates laterally and returns; cost monotone non-increasing across accepted iterations.
-- `test_ilqr_warmstart.cpp`: second solve from shifted solution converges in ≤ 3 iterations.
+- `test_ilqr_jacobians.cc`: analytic vs finite-difference `A_t, B_t`, and cost gradients/Hessians for each term.
+- `test_ilqr_convergence.cc`: straight road, one static obstacle in lane, warm start from a straight line → converged solution deviates laterally and returns; cost monotone non-increasing across accepted iterations.
+- `test_ilqr_warmstart.cc`: second solve from shifted solution converges in ≤ 3 iterations.
 - `test_ilqr_vs_qp.py` (integration, offline on recorded scenes): distribution of curvature/jerk of refined outputs; iLQR ≤ QP on both.
 - `test_guidance.py`: on 200 validation scenes, collision rate with vs without guidance; minADE change.
 
 ## 6. Task list
 
-1. [ ] `ilqr.hpp/cpp` core (backward/forward passes, regularization, line search), Jacobian tests.
+1. [ ] `ilqr.h/cpp` core (backward/forward passes, regularization, line search), Jacobian tests.
 2. [ ] Cost terms (tracking, comfort, agent samples, occupancy, bounds, limits) with analytic derivatives; tests.
 3. [ ] Warm-start inversion from trajectories; tests.
 4. [ ] `planner_node` integration (per-source refiner), config, profile `m10_ilqr.yaml`, diag; timing.

@@ -4,6 +4,13 @@
 // for tools and tests. The 1 s wall-clock poll is the one timer in the stack:
 // it runs at start-up only, before any tick exists, so it cannot affect results
 // (docs/02_interfaces.md §2).
+//
+// "Latched" is the transient_local + reliable QoS profile
+// (docs/02_interfaces.md §3.11): the publisher keeps its last message and
+// hands it to every subscriber that joins later, so the graph is published
+// exactly once and nodes starting in any order still receive it. Stateless
+// across episodes: the graph depends only on the town, so the node has
+// nothing to clear on /nuway/sim/reset_event and does not subscribe to it.
 #include <chrono>
 #include <filesystem>
 #include <memory>
@@ -26,6 +33,8 @@
 namespace nuway_map {
 namespace {
 
+// Declares the parameters, creates the latched publisher and the service,
+// and starts polling for the map file.
 class MapServerNode final : public rclcpp::Node {
  public:
   MapServerNode() : rclcpp::Node(kNodeName), diag_(this) {
@@ -55,10 +64,14 @@ class MapServerNode final : public rclcpp::Node {
   }
 
  private:
+  // <map_dir>/<town>/map.xodr.
   std::string MapPath() const {
     return (std::filesystem::path(map_dir_) / town_ / "map.xodr").string();
   }
 
+  // One poll: if the file exists and parses, build the graph, publish it
+  // once, report the build time on diag and cancel the timer; otherwise
+  // (absent, empty, or half-written) return and try again next period.
   void Poll() {
     if (graph_ != nullptr) {
       poll_timer_->cancel();
@@ -104,6 +117,9 @@ class MapServerNode final : public rclcpp::Node {
     poll_timer_->cancel();
   }
 
+  // Service callback: LaneGraph::NearestLane on the built graph. found is
+  // false before the graph exists or when no drivable lane is within
+  // max_dist with a consistent heading.
   void OnNearestLane(const nuway_msgs::srv::NearestLane::Request& req,
                      nuway_msgs::srv::NearestLane::Response* res) {
     res->found = false;

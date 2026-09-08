@@ -391,6 +391,15 @@ class RouteRunnerNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (0
             result.driven_m = float(np.sum(np.linalg.norm(np.diff(xy, axis=0), axis=1)))
             result.sim_s = odom[-1][1] - odom[0][1]
             result.speed_mean_mps = float(np.mean([o[6] for o in odom]))
+            expected_ticks = odom[-1][0] - odom[0][0] + 1
+            if len(odom) < expected_ticks:
+                # One ego_odom per tick is the lockstep contract; fewer means
+                # the server advanced on its own (world_manager logs it) and
+                # the lateral numbers are not the stack's.
+                self.get_logger().error(
+                    f"lockstep broken: {len(odom)} poses over {expected_ticks} "
+                    "ticks; restart the CARLA server"
+                )
         if debug:
             ok = np.array([d[6] for d in debug], dtype=bool)
             lat = np.array([d[1] for d in debug])[ok]

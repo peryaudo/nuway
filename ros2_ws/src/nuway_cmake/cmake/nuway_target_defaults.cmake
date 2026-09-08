@@ -4,7 +4,13 @@
 # (docs/03_style_and_conventions.md §6.2). Packages call this on every library
 # and executable instead of setting flags themselves. PYBIND marks a pybind11
 # extension module: GCC's -Wnull-dereference is emitted by the optimiser and
-# ignores the SYSTEM status of CPython's headers, so that one flag is dropped.
+# ignores the SYSTEM status of CPython's headers, so that one flag is dropped;
+# likewise GCC 13's -Warray-bounds and -Wstringop-overflow / -overread (on
+# by default at -O2) misfire inside pybind11's generic_type::initialize (a
+# one-element std::vector assigned from an initializer_list, reported as a
+# memmove past the end) once sanitizers are on, so those are switched off
+# for the module. Our own code never sees the difference: the flags only
+# cover the pybind11 headers the module instantiates.
 #
 # Cache options (pass with -DNAME=VALUE through `colcon build --cmake-args`):
 #   NUWAY_WERROR      ON|OFF   warnings are errors (default ON)
@@ -54,6 +60,14 @@ function(nuway_target_defaults target)
     set(_flags ${_nuway_warning_flags})
     if(NUWAY_PYBIND)
         list(REMOVE_ITEM _flags -Wnull-dereference)
+        if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+            list(
+                APPEND _flags
+                -Wno-array-bounds
+                -Wno-stringop-overflow
+                -Wno-stringop-overread
+            )
+        endif()
     endif()
     set_target_properties(
         ${target}

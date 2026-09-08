@@ -50,6 +50,31 @@ CARLA_CONTROL_QOS = QoSProfile(
 )
 
 
+def carla_control_from_command(
+    msg: ControlCommand,
+    lon_map: LongitudinalMap,
+    max_steer_rad: float,
+    speed_mps: float,
+) -> CarlaEgoVehicleControl:
+    """Map ``accel`` to pedals at ``speed_mps``, flip the steer sign; e-stop is brake 1."""
+    out = CarlaEgoVehicleControl()
+    out.header.stamp = msg.header.stamp
+    if msg.emergency_stop:
+        out.throttle = 0.0
+        out.brake = 1.0
+        out.steer = 0.0
+    else:
+        throttle, brake = lon_map.inverse(speed_mps, float(msg.accel))
+        out.throttle = float(throttle)
+        out.brake = float(brake)
+        out.steer = float(steer_from_ros(float(msg.steering_angle), max_steer_rad))
+    out.hand_brake = False
+    out.reverse = False
+    out.manual_gear_shift = False
+    out.gear = 0
+    return out
+
+
 class ControlAdapterNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (03 §7.3)
     """Thin conversion node; the logic is LongitudinalMap and carla_conv."""
 
@@ -86,23 +111,9 @@ class ControlAdapterNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs
         self._speed = float(msg.speed)
 
     def _on_control_command(self, msg: ControlCommand) -> None:
-        out = CarlaEgoVehicleControl()
-        out.header.stamp = msg.header.stamp
-        if msg.emergency_stop:
-            out.throttle = 0.0
-            out.brake = 1.0
-            out.steer = 0.0
-        else:
-            throttle, brake = self._map.inverse(self._speed, float(msg.accel))
-            out.throttle = float(throttle)
-            out.brake = float(brake)
-            out.steer = float(
-                steer_from_ros(float(msg.steering_angle), self._max_steer_rad)
-            )
-        out.hand_brake = False
-        out.reverse = False
-        out.manual_gear_shift = False
-        out.gear = 0
+        out = carla_control_from_command(
+            msg, self._map, self._max_steer_rad, self._speed
+        )
         self._pub_carla.publish(out)
         diag = NodeDiag()
         diag.header.stamp = msg.header.stamp

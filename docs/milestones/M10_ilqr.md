@@ -66,7 +66,7 @@ Implemented in the runtime node behind `prediction.guidance.enabled`; `s_0` tune
 
 ## 6. Task list
 
-1. [ ] `ilqr.h/cpp` core (backward/forward passes, regularization, line search), Jacobian tests.
+1. [ ] `ilqr.h` / `ilqr.cc` core (backward/forward passes, regularization, line search), Jacobian tests.
 2. [ ] Cost terms (tracking, comfort, agent samples, occupancy, bounds, limits) with analytic derivatives; tests.
 3. [ ] Warm-start inversion from trajectories; tests.
 4. [ ] `planner_node` integration (per-source refiner), config, profile `m10_ilqr.yaml`, diag; timing.

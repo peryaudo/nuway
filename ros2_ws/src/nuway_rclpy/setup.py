@@ -12,6 +12,10 @@ setup(
         (f"share/{PACKAGE}", ["package.xml"]),
     ],
     install_requires=["setuptools"],
+    # colcon runs `python -m pytest` only for packages that declare it
+    # (otherwise it falls back to unittest discovery and exits 5 on an
+    # empty package).
+    extras_require={"test": ["pytest"]},
     zip_safe=True,
     maintainer="Tetsui Ohkubo",
     maintainer_email="peryaudo@gmail.com",

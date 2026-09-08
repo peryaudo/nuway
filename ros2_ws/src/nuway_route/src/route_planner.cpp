@@ -116,16 +116,26 @@ std::optional<RoutePlan> PlanRoute(const nuway_map::LaneGraph& graph,
     const std::uint32_t current = plan.lane_ids.back();
     std::vector<std::uint32_t> goals;
     bool current_behind = false;
+    bool already_reached = false;
     for (const nuway_map::LaneQuery& q : near) {
       if (std::abs(q.d) > std::abs(near.front().d) + options.goal_slack_m) {
         break;  // sorted by |d|
       }
-      // The current lane counts only if the waypoint is still ahead.
+      // The current lane counts only if the waypoint is still ahead; just
+      // behind (within passed_tolerance_m) it is where the ego already is.
       if (q.lane_id == current && q.s + 1e-6 < start_s) {
-        current_behind = true;
+        if (start_s - q.s <= options.passed_tolerance_m) {
+          already_reached = true;
+        } else {
+          current_behind = true;
+        }
         continue;
       }
       goals.push_back(q.lane_id);
+    }
+    if (already_reached) {
+      plan.waypoint_lane_index.push_back(plan.lane_ids.size() - 1);
+      continue;
     }
     std::optional<std::vector<std::uint32_t>> segment;
     if (!goals.empty()) {

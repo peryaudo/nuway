@@ -116,6 +116,15 @@ TEST(RoutePlanner, WaypointBehindOnTheCurrentLaneIsNotReached) {
                          {{5.0, -1.75}}, options, &error)
                    .has_value());
   EXPECT_EQ(error, "waypoint 0 lies behind on the current lane");
+  // Just behind (within passed_tolerance_m): the ego is already there, so
+  // the plan continues from the current lane without a loop.
+  const RoutePlan near_plan =
+      Unwrap(PlanRoute(graph, nuway_common::SE2{20.0, -1.75, 0.0},
+                       {{18.0, -1.75}, {48.0, -1.75}}, options, &error),
+             error);
+  EXPECT_EQ(near_plan.lane_ids,
+            (Ids{Id(1, 0, -1), Id(5, 0, -1), Id(2, 0, -1), Id(2, 1, -1)}));
+  EXPECT_EQ(near_plan.waypoint_lane_index, (std::vector<std::size_t>{0, 3}));
   // On the ring the lane loops onto itself, so a waypoint behind is reached
   // by going around: ego a quarter turn in on lane -1 (radius 31.75), the
   // waypoint at the lane's start.

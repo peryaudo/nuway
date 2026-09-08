@@ -109,6 +109,8 @@ def bilinear_sample(
     grid = torch.as_tensor(channel, dtype=torch.float64)
     xs = torch.as_tensor(x, dtype=torch.float64)
     ys = torch.as_tensor(y, dtype=torch.float64)
+    if spec.height < 2 or spec.width < 2:
+        return torch.full_like(xs, outside)  # no cell to interpolate in
     row = (xs - spec.x_min) / spec.resolution - 0.5
     col = (ys - spec.y_min) / spec.resolution - 0.5
     inside = (

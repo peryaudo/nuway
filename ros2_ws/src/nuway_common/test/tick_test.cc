@@ -22,6 +22,20 @@ TEST(TickTest, TickStampRoundTrips) {
   EXPECT_EQ(stamp.nanosec, 50000000U);
 }
 
+TEST(TickTest, NegativeTickStampsKeepNanosecInRange) {
+  const builtin_interfaces::msg::Time stamp = TickStamp(-1);
+  EXPECT_EQ(stamp.sec, -1);
+  EXPECT_EQ(stamp.nanosec, 950000000U);
+  EXPECT_EQ(TickIndex(stamp), -1);
+}
+
+TEST(TickTest, ArrivalIsForTheExactTick) {
+  TickBarrier barrier({"pose"});
+  barrier.Arrive("pose", 5);
+  EXPECT_FALSE(barrier.IsComplete(4));  // k + 1 does not stand in for k
+  EXPECT_TRUE(barrier.IsComplete(5));
+}
+
 TEST(TickTest, PlanningTicksAreEven) {
   EXPECT_TRUE(IsPlanningTick(0));
   EXPECT_FALSE(IsPlanningTick(1));

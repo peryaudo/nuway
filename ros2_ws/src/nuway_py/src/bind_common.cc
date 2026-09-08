@@ -250,7 +250,10 @@ void BindFrenet(py::module_& module) {
       .def("curvature_at", &ReferenceLine::CurvatureAt, py::arg("s"))
       .def("to_cartesian", &ReferenceLine::ToCartesian, py::arg("frenet"))
       .def("to_frenet", &ReferenceLine::ToFrenet, py::arg("x"), py::arg("y"),
-           py::arg("max_dist") = 1e9);
+           py::arg("max_dist") = 1e9)
+      .def("to_frenet_near", &ReferenceLine::ToFrenetNear, py::arg("x"),
+           py::arg("y"), py::arg("max_dist"), py::arg("s_hint"),
+           py::arg("back_m"), py::arg("ahead_m"));
 }
 
 void BindOccupancy(py::module_& module) {

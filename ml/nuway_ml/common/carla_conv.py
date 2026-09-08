@@ -135,6 +135,8 @@ def steer_from_ros(steering_angle_rad: float, max_steer_rad: float) -> float:
     The native ``vehicle_control_cmd`` topic keeps CARLA's convention, positive =
     right (``docs/02_interfaces.md`` §3.1), hence the sign flip.
     """
+    if not max_steer_rad > 0.0:
+        return 0.0  # a bad vehicle file, not a division by zero
     return max(-1.0, min(1.0, -steering_angle_rad / max_steer_rad))
 
 

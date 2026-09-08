@@ -196,11 +196,18 @@ class ReferenceLine:
         out = base + frenet.d * np.array([-math.sin(heading), math.cos(heading)])
         return CartesianPoint(float(out[0]), float(out[1]), heading)
 
-    def _nearest_segment_s(self, query: Array, max_dist: float) -> float | None:
+    def _nearest_segment_s(
+        self, query: Array, max_dist: float, first: int = 0, last: int | None = None
+    ) -> float | None:
+        """Arc length of the closest point on segments ``[first, last)``, or None beyond ``max_dist``."""
         best_dist2 = max_dist * max_dist
         best: float | None = None
-        p0 = self._points[:-1]
-        seg = self._points[1:] - p0
+        first = max(0, first)
+        last = self.size - 1 if last is None else min(last, self.size - 1)
+        if last <= first:
+            return None
+        p0 = self._points[first:last]
+        seg = self._points[first + 1 : last + 1] - p0
         seg_len2 = np.sum(seg * seg, axis=1)
         alpha = np.zeros_like(seg_len2)
         nonzero = seg_len2 > 0.0
@@ -212,7 +219,7 @@ class ReferenceLine:
         dist2 = np.sum((query - proj) ** 2, axis=1)
         i = int(np.argmin(dist2))
         if dist2[i] < best_dist2:
-            best = float(self._s[i] + alpha[i] * math.sqrt(seg_len2[i]))
+            best = float(self._s[first + i] + alpha[i] * math.sqrt(seg_len2[i]))
         return best
 
     def to_frenet(
@@ -225,8 +232,37 @@ class ReferenceLine:
         """
         if self.size < 2:
             return None
-        query = np.array([x, y], dtype=np.float64)
-        coarse = self._nearest_segment_s(query, max_dist)
+        return self._project(np.array([x, y], dtype=np.float64), max_dist, 0, None)
+
+    def to_frenet_near(
+        self,
+        x: float,
+        y: float,
+        max_dist: float,
+        s_hint: float,
+        *,
+        back_m: float,
+        ahead_m: float,
+    ) -> FrenetPoint | None:
+        """``to_frenet`` restricted to ``s`` within ``[s_hint - back_m, s_hint + ahead_m]``.
+
+        Where a route crosses or loops back near itself the global nearest
+        segment can lie on another leg; a follower that knows roughly where it
+        is (its last ``s``) searches only around there. Returns None when
+        nothing in the window is within ``max_dist``; callers then fall back
+        to ``to_frenet`` (after a reset or teleport).
+        """
+        if self.size < 2:
+            return None
+        first = self.segment_index(s_hint - back_m)
+        last = self.segment_index(s_hint + ahead_m) + 1
+        return self._project(np.array([x, y], dtype=np.float64), max_dist, first, last)
+
+    def _project(
+        self, query: Array, max_dist: float, first: int, last: int | None
+    ) -> FrenetPoint | None:
+        """Nearest-segment start on ``[first, last)``, refined with Newton steps."""
+        coarse = self._nearest_segment_s(query, max_dist, first, last)
         if coarse is None:
             return None
         s = coarse

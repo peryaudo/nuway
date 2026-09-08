@@ -164,8 +164,37 @@ class ReferenceLine {
     if (size() < 2) {
       return std::nullopt;
     }
-    const Eigen::Vector2d query(x, y);
-    const std::optional<double> coarse = NearestSegmentS(query, max_dist);
+    return Project(Eigen::Vector2d(x, y), max_dist, 0, size() - 1);
+  }
+
+  // ToFrenet restricted to the part of the line with s within
+  // [s_hint - back_m, s_hint + ahead_m]. Where a route crosses or loops back
+  // near itself the global nearest segment can lie on another leg; a
+  // follower that knows roughly where it is (its last s) searches only around
+  // there. Returns nullopt when nothing in the window is within max_dist;
+  // callers then fall back to ToFrenet() (after a reset or teleport).
+  std::optional<FrenetPoint> ToFrenetNear(double x, double y, double max_dist,
+                                          double s_hint, double back_m,
+                                          double ahead_m) const {
+    if (size() < 2) {
+      return std::nullopt;
+    }
+    const int first = SegmentIndex(s_hint - back_m);
+    const int last = SegmentIndex(s_hint + ahead_m) + 1;
+    return Project(Eigen::Vector2d(x, y), max_dist, first, last);
+  }
+
+ private:
+  static constexpr int kNewtonIterations = 12;
+  static constexpr double kNewtonTolerance = 1e-10;
+
+  // The projection itself over the segments [first, last): the nearest
+  // segment gives the start, Newton steps on the tangent condition refine it.
+  std::optional<FrenetPoint> Project(const Eigen::Vector2d& query,
+                                     double max_dist, int first,
+                                     int last) const {
+    const std::optional<double> coarse =
+        NearestSegmentS(query, max_dist, first, last);
     if (!coarse.has_value()) {
       return std::nullopt;
     }
@@ -192,10 +221,6 @@ class ReferenceLine {
     return FrenetPoint{s, diff.dot(normal)};
   }
 
- private:
-  static constexpr int kNewtonIterations = 12;
-  static constexpr double kNewtonTolerance = 1e-10;
-
   double SegmentFraction(int idx, double s) const {
     const double seg_len = s_[idx + 1] - s_[idx];
     if (seg_len <= 0.0) {
@@ -210,13 +235,14 @@ class ReferenceLine {
     return points_[idx] + (alpha * (points_[idx + 1] - points_[idx]));
   }
 
-  // Arc length of the closest point on the polyline, or nullopt beyond
-  // max_dist.
+  // Arc length of the closest point on the segments [first, last) of the
+  // polyline, or nullopt beyond max_dist.
   std::optional<double> NearestSegmentS(const Eigen::Vector2d& query,
-                                        double max_dist) const {
+                                        double max_dist, int first,
+                                        int last) const {
     double best_dist2 = max_dist * max_dist;
     std::optional<double> best;
-    for (int i = 0; i + 1 < size(); ++i) {
+    for (int i = std::max(0, first); i < std::min(last, size() - 1); ++i) {
       const Eigen::Vector2d& p0 = points_[i];
       const Eigen::Vector2d seg = points_[i + 1] - p0;
       const double seg_len2 = seg.squaredNorm();

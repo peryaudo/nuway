@@ -5,6 +5,7 @@
 #ifndef NUWAY_COMMON_GEOMETRY_H_
 #define NUWAY_COMMON_GEOMETRY_H_
 
+#include <algorithm>
 #include <cmath>
 #include <vector>
 

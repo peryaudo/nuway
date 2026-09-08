@@ -6,6 +6,7 @@
 #ifndef NUWAY_COMMON_OCCUPANCY_H_
 #define NUWAY_COMMON_OCCUPANCY_H_
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -83,8 +84,8 @@ template <typename Scalar>
 double BilinearSample(const GridSpec& spec, const Scalar* channel, double x,
                       double y, double outside = 0.0) {
   const GridCoord coord = WorldToGridCoord(spec, x, y);
-  if (coord.row < 0.0 || coord.col < 0.0 || coord.row > spec.height - 1 ||
-      coord.col > spec.width - 1) {
+  if (spec.height < 2 || spec.width < 2 || coord.row < 0.0 || coord.col < 0.0 ||
+      coord.row > spec.height - 1 || coord.col > spec.width - 1) {
     return outside;
   }
   int r0 = static_cast<int>(std::floor(coord.row));

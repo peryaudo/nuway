@@ -79,6 +79,65 @@ constexpr const char* kCorridorXodr = R"(<?xml version="1.0"?>
   </junction>
 </OpenDRIVE>)";
 
+// A fork: road 1 (x 0..30) enters junction 9, which holds two connecting
+// roads that overlap for their first 5 m: road 5 (x 30..40, straight on to
+// road 2) and road 6 (x 30..35, on to road 3 which bends right by 0.5 rad).
+// Single eastbound lane -1 everywhere.
+constexpr const char* kForkXodr = R"(<?xml version="1.0"?>
+<OpenDRIVE>
+  <header revMajor="1" revMinor="4" name="f"/>
+  <road name="r1" length="30.0" id="1" junction="-1">
+    <link><successor elementType="junction" elementId="9"/></link>
+    <planView><geometry s="0" x="0" y="0" hdg="0" length="30"><line/></geometry></planView>
+    <lanes><laneSection s="0">
+      <center><lane id="0" type="none"/></center>
+      <right><lane id="-1" type="driving"><width sOffset="0" a="3.5" b="0" c="0" d="0"/></lane></right>
+    </laneSection></lanes>
+  </road>
+  <road name="c5" length="10.0" id="5" junction="9">
+    <link>
+      <predecessor elementType="road" elementId="1" contactPoint="end"/>
+      <successor elementType="road" elementId="2" contactPoint="start"/>
+    </link>
+    <planView><geometry s="0" x="30" y="0" hdg="0" length="10"><line/></geometry></planView>
+    <lanes><laneSection s="0">
+      <center><lane id="0" type="none"/></center>
+      <right><lane id="-1" type="driving"><link><predecessor id="-1"/><successor id="-1"/></link><width sOffset="0" a="3.5" b="0" c="0" d="0"/></lane></right>
+    </laneSection></lanes>
+  </road>
+  <road name="r2" length="10.0" id="2" junction="-1">
+    <link><predecessor elementType="junction" elementId="9"/></link>
+    <planView><geometry s="0" x="40" y="0" hdg="0" length="10"><line/></geometry></planView>
+    <lanes><laneSection s="0">
+      <center><lane id="0" type="none"/></center>
+      <right><lane id="-1" type="driving"><width sOffset="0" a="3.5" b="0" c="0" d="0"/></lane></right>
+    </laneSection></lanes>
+  </road>
+  <road name="c6" length="5.0" id="6" junction="9">
+    <link>
+      <predecessor elementType="road" elementId="1" contactPoint="end"/>
+      <successor elementType="road" elementId="3" contactPoint="start"/>
+    </link>
+    <planView><geometry s="0" x="30" y="0" hdg="0" length="5"><line/></geometry></planView>
+    <lanes><laneSection s="0">
+      <center><lane id="0" type="none"/></center>
+      <right><lane id="-1" type="driving"><link><predecessor id="-1"/><successor id="-1"/></link><width sOffset="0" a="3.5" b="0" c="0" d="0"/></lane></right>
+    </laneSection></lanes>
+  </road>
+  <road name="r3" length="15.0" id="3" junction="-1">
+    <link><predecessor elementType="junction" elementId="9"/></link>
+    <planView><geometry s="0" x="35" y="0" hdg="-0.5" length="15"><line/></geometry></planView>
+    <lanes><laneSection s="0">
+      <center><lane id="0" type="none"/></center>
+      <right><lane id="-1" type="driving"><width sOffset="0" a="3.5" b="0" c="0" d="0"/></lane></right>
+    </laneSection></lanes>
+  </road>
+  <junction id="9" name="j">
+    <connection id="0" incomingRoad="1" connectingRoad="5" contactPoint="start"><laneLink from="-1" to="-1"/></connection>
+    <connection id="1" incomingRoad="1" connectingRoad="6" contactPoint="start"><laneLink from="-1" to="-1"/></connection>
+  </junction>
+</OpenDRIVE>)";
+
 // A closed circle of radius 30 m (one counter-clockwise arc geometry): lane
 // -1 lies to the right, i.e. outside at radius 31.75 driving counter-clockwise;
 // lane 1 inside at 28.25 driving clockwise.

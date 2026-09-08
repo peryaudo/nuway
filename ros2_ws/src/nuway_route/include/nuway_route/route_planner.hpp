@@ -1,9 +1,11 @@
 // RoutePlanner (M0 §2.5): A* over the lane graph through every route waypoint
-// in order. Node = lane id; successor edges cost the lane's length, lateral
-// neighbor edges cost lane_change_penalty_m. A waypoint carries no heading, so
-// a segment's goal is the set of lanes about as near to it as the nearest one
-// (goal_slack_m) and the cheapest of them wins; a waypoint behind on the
-// current lane is reached by looping back to it. No rclcpp.
+// in order. Node = (lane id, waypoints reached so far); successor edges cost
+// the lane's length, lateral neighbor edges cost lane_change_penalty_m. A
+// waypoint carries no heading, so its goal is the set of lanes about as near
+// to it as the nearest one (goal_slack_m); searching all waypoints jointly
+// picks among overlapping junction lanes by where the route goes next. A
+// waypoint behind on the current lane is reached by looping back to it. No
+// rclcpp.
 #ifndef NUWAY_ROUTE_ROUTE_PLANNER_HPP_
 #define NUWAY_ROUTE_ROUTE_PLANNER_HPP_
 

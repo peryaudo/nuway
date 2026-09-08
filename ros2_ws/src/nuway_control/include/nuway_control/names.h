@@ -4,6 +4,8 @@
 
 namespace nuway_control {
 
+// The M0 controller node; the launch files and the profile's per-node
+// parameter block (docs/02 §5) address it by this name.
 constexpr const char* kNodeName = "pure_pursuit_pid_node";
 
 }  // namespace nuway_control

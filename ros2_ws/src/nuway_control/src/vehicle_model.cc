@@ -1,3 +1,5 @@
+// VehicleModel: the yaml-cpp reader for configs/vehicle/<vehicle>.yaml. The
+// field list and units are documented in the header.
 #include "nuway_control/vehicle_model.h"
 
 #include <fstream>
@@ -8,6 +10,8 @@
 namespace nuway_control {
 namespace {
 
+// node[key] as T, or `fallback` when the key is absent (a present key of the
+// wrong type still throws, which ParseVehicleModel turns into an error).
 template <typename T>
 T Get(const YAML::Node& node, const char* key, const T& fallback) {
   const YAML::Node value = node[key];
@@ -16,6 +20,11 @@ T Get(const YAML::Node& node, const char* key, const T& fallback) {
 
 }  // namespace
 
+// Reads the scalar fields and the `limits:` block with the struct defaults
+// as fallbacks, then the longitudinal map through its own reader. A YAML
+// without a sysid fit gets wheelbase_fitted = wheelbase and K = 0, i.e. the
+// plain kinematic bicycle; a missing or inconsistent longitudinal_map is an
+// error, because the controller cannot bound its output without it.
 std::optional<VehicleModel> ParseVehicleModel(const std::string& text,
                                               std::string* error) {
   VehicleModel model;
@@ -60,6 +69,7 @@ std::optional<VehicleModel> ParseVehicleModel(const std::string& text,
   return model;
 }
 
+// Slurps the file and delegates to ParseVehicleModel.
 std::optional<VehicleModel> LoadVehicleModel(const std::string& path,
                                              std::string* error) {
   const std::ifstream in(path);

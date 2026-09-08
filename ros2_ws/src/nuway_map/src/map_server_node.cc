@@ -77,8 +77,10 @@ class MapServerNode final : public rclcpp::Node {
     std::string error;
     const auto map = LoadOpenDrive(path, &error);
     if (!map.has_value()) {
-      // world_manager may still be writing; retry on the next poll.
-      RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000, "%s: %s",
+      // world_manager may still be writing; retry on the next poll. The
+      // throttle runs on a steady clock: the node clock is sim time, which
+      // stays at 0 until the first tick, so it would log once and go silent.
+      RCLCPP_WARN_THROTTLE(get_logger(), steady_clock_, 5000, "%s: %s",
                            path.c_str(), error.c_str());
       return;
     }
@@ -127,6 +129,7 @@ class MapServerNode final : public rclcpp::Node {
   nuway_common::DiagPublisher diag_;
   rclcpp::Publisher<nuway_msgs::msg::LaneGraph>::SharedPtr pub_lane_graph_;
   rclcpp::Service<nuway_msgs::srv::NearestLane>::SharedPtr srv_nearest_lane_;
+  rclcpp::Clock steady_clock_{RCL_STEADY_TIME};  // log throttling only
   rclcpp::TimerBase::SharedPtr poll_timer_;
 };
 

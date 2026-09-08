@@ -67,7 +67,11 @@ echo "start_carla.sh: pid $! log $log"
 if [ "$wait_ready" -eq 1 ]; then
   uv run --frozen python - "$port" <<'PY'
 import sys, time
-import carla
+try:
+    import carla
+except ImportError:
+    print("start_carla.sh: --wait needs the carla wheel (uv sync --group carla)", file=sys.stderr)
+    sys.exit(1)
 port = int(sys.argv[1])
 deadline = time.time() + 180.0
 while time.time() < deadline:

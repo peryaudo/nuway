@@ -13,8 +13,10 @@
 
 if [ -n "${ZSH_VERSION:-}" ]; then
   _nuway_root="$(cd "$(dirname "${(%):-%N}")" && pwd)"
+  _nuway_shell=zsh
 else
   _nuway_root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  _nuway_shell=bash
 fi
 export NUWAY_ROOT="${_nuway_root}"
 
@@ -56,7 +58,7 @@ _nuway_check_prereqs || return 1
 
 # 2. ROS + colcon defaults + middleware.
 # shellcheck disable=SC1091
-source /opt/ros/jazzy/setup.bash
+source "/opt/ros/jazzy/setup.${_nuway_shell}"
 export COLCON_DEFAULTS_FILE="${NUWAY_ROOT}/ros2_ws/colcon_defaults.yaml"
 export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 # Raise CycloneDDS's participant cap (10 per host by default; the stack alone has 9 nodes).
@@ -96,9 +98,9 @@ for _nuway_dir in "${NUWAY_ROOT}/ml" "${NUWAY_ROOT}/.venv/lib/python3.12/site-pa
   esac
 done
 unset _nuway_dir
-if [ -f "${NUWAY_ROOT}/ros2_ws/install/setup.bash" ]; then
+if [ -f "${NUWAY_ROOT}/ros2_ws/install/setup.${_nuway_shell}" ]; then
   # shellcheck disable=SC1091
-  source "${NUWAY_ROOT}/ros2_ws/install/setup.bash"
+  source "${NUWAY_ROOT}/ros2_ws/install/setup.${_nuway_shell}"
 fi
 if [ -d "${NUWAY_ROOT}/ros2_ws/build" ]; then
   (cd "${NUWAY_ROOT}" && uv run --frozen python tools/lint/merge_compile_commands.py --quiet) || true
@@ -109,5 +111,5 @@ if [ -d "${NUWAY_ROOT}/.git" ] && [ ! -f "${NUWAY_ROOT}/.git/hooks/pre-commit" ]
   (cd "${NUWAY_ROOT}" && uv run --frozen pre-commit install >/dev/null) || true
 fi
 
-unset _nuway_root
+unset _nuway_root _nuway_shell
 unset -f _nuway_fail _nuway_check_prereqs

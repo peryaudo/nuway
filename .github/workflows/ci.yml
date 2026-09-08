@@ -79,7 +79,7 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           version: ${{ env.UV_VERSION }}
-      - name: ruff and mypy (train + viz groups: mypy sees matplotlib and torch)
+      - name: ruff and mypy (train + viz groups so mypy sees matplotlib and torch)
         shell: bash
         run: |
           source setup_env.sh

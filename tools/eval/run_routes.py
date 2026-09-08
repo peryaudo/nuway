@@ -97,6 +97,17 @@ def _drive_town(
     try:
         for route in town_routes:
             print(f"route {route.route_id} ({town}, {len(route.waypoints)} waypoints)")
+            if stack is not None and not stack.alive():
+                # Otherwise every remaining route waits 200 s for the reset
+                # service before coming back as reset_failed.
+                print(
+                    f"  stack for {town} has exited; see {out_dir / f'stack_{town}.log'}"
+                )
+                result = RouteResult(route.route_id, route.town)
+                result.status = "stack_died"
+                results.append(result)
+                write_results(results, out_dir)
+                continue
             result = node.drive(route, limits, out_dir / "routes")
             results.append(result)
             print(
@@ -126,6 +137,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.limit is not None:
         routes = routes[: args.limit]
     out_dir = args.out or (REPO_ROOT / "data/eval_runs" / args.run_id)
+    if (out_dir / "results.csv").exists():
+        # Stale per-route directories of an earlier run would otherwise be
+        # mixed into this one (and picked up by compare_runs.py).
+        print(f"{out_dir} already holds a run; pick another --run-id or --out")
+        return 2
     out_dir.mkdir(parents=True, exist_ok=True)
     limits = RunLimits(
         goal_radius_m=args.goal_radius_m,

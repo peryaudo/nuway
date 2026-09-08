@@ -13,6 +13,7 @@ from __future__ import annotations
 import csv
 import math
 import shutil
+import socket
 import time
 from collections.abc import Iterator
 from pathlib import Path
@@ -20,7 +21,24 @@ from typing import Any
 
 import pytest
 
-pytestmark = [pytest.mark.slow, pytest.mark.carla]
+CARLA_PORT = 2000  # configs/profiles/m0_gt_all.yaml carla.port
+
+
+def _carla_server_listening(port: int = CARLA_PORT) -> bool:
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=1.0):
+            return True
+    except OSError:
+        return False
+
+
+pytestmark = [
+    pytest.mark.slow,
+    pytest.mark.carla,
+    pytest.mark.skipif(
+        not _carla_server_listening(), reason=f"no CARLA server on :{CARLA_PORT}"
+    ),
+]
 
 rclpy = pytest.importorskip("rclpy")
 route_runner = pytest.importorskip("nuway_eval.route_runner")

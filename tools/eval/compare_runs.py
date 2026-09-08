@@ -3,9 +3,13 @@
     uv run tools/eval/compare_runs.py data/eval_runs/<a> data/eval_runs/<b>
 
 Per route present in both runs, the per-tick ``ego_odom.csv`` must be
-bit-identical (same tick set, same numbers as written) and neither run may
-contain a TickTimeout; ``results.csv`` rows are compared field by field.
-Exit code 0 when every shared route matches, 1 otherwise.
+bit-identical tick by tick from the reset (same tick count, same numbers as
+written) and neither run may contain a TickTimeout; ``results.csv`` rows are
+compared field by field. Sim time restarts only on a map load, so the two
+episodes never share absolute tick indices: the ``k`` / ``t`` columns are
+alignment, not state, and the first difference is reported as the tick
+count since the reset. Exit code 0 when every shared route matches, 1
+otherwise.
 """
 
 from __future__ import annotations
@@ -25,10 +29,16 @@ class RouteComparison:
     identical: bool
     ticks_a: int
     ticks_b: int
-    first_diff_k: int | None
+    first_diff_tick: int | None  # ticks since the reset
     timeouts_a: int
     timeouts_b: int
     detail: str
+
+
+ALIGNMENT_COLUMNS = (
+    "k",
+    "t",
+)  # absolute tick index and sim time: differ by construction
 
 
 def _read_rows(path: Path) -> list[dict[str, str]]:
@@ -53,11 +63,11 @@ def compare_route(run_a: Path, run_b: Path, route_id: str) -> RouteComparison:
     timeouts_b = int(res_b.get("timeouts", 0) or 0)
     first_diff: int | None = None
     detail = ""
-    for ra, rb in zip(rows_a, rows_b, strict=False):
-        if ra != rb:
-            first_diff = int(ra["k"])
-            changed = [c for c in ra if ra[c] != rb.get(c)]
-            detail = f"first difference at tick {first_diff}: {changed}"
+    for i, (ra, rb) in enumerate(zip(rows_a, rows_b, strict=False)):
+        changed = [c for c in ra if c not in ALIGNMENT_COLUMNS and ra[c] != rb.get(c)]
+        if changed:
+            first_diff = i
+            detail = f"first difference {i} ticks after the reset: {changed}"
             break
     if first_diff is None and len(rows_a) != len(rows_b):
         detail = f"tick count differs: {len(rows_a)} vs {len(rows_b)}"

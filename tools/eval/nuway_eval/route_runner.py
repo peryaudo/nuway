@@ -197,14 +197,19 @@ class RouteRunnerNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (0
         )
         self._reset_client = self.create_client(Reset, "/nuway/sim/reset")
         self._episode_k = -1
-        self._episode_seen = False
+        self._episode_id = -1  # ResetEvent.episode_id of the current episode
         self._trace = _Trace()
         self._last_xy: np.ndarray | None = None
 
     # ------------------------------------------------------------ callbacks
     def _on_reset_event(self, msg: ResetEvent) -> None:
+        # The event topic is transient_local (depth 10): a fresh subscription
+        # replays earlier episodes' events, in no guaranteed order relative to
+        # the new one. Episode ids only grow, so anything not newer is a replay.
+        if int(msg.episode_id) <= self._episode_id:
+            return
+        self._episode_id = int(msg.episode_id)
         self._episode_k = tick_index(msg.header.stamp)
-        self._episode_seen = True
         self._trace = _Trace()
         self._last_xy = None
 
@@ -292,7 +297,6 @@ class RouteRunnerNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (0
         req.start_pose.orientation.y = float(q[1])
         req.start_pose.orientation.z = float(q[2])
         req.start_pose.orientation.w = float(q[3])
-        self._episode_seen = False
         future = self._reset_client.call_async(req)
         t0 = time.monotonic()
         while rclpy.ok() and not future.done() and time.monotonic() - t0 < wait_s:
@@ -303,9 +307,13 @@ class RouteRunnerNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (0
                 f"reset failed: {result.message if result else 'timeout'}"
             )
             return False
-        while rclpy.ok() and not self._episode_seen and time.monotonic() - t0 < wait_s:
+        # Wait for that episode's ResetEvent (it may already have arrived).
+        wanted = int(result.episode_id)
+        while (
+            rclpy.ok() and self._episode_id < wanted and time.monotonic() - t0 < wait_s
+        ):
             rclpy.spin_once(self, timeout_sec=0.05)
-        return self._episode_seen
+        return self._episode_id >= wanted
 
     def publish_waypoints(self, route: RouteSpec) -> None:
         """Publish the whole route, unstamped (accepted for any episode, docs/02 §3.3)."""
@@ -443,6 +451,10 @@ class StackProcess:
             stderr=subprocess.STDOUT,
             start_new_session=True,
         )
+
+    def alive(self) -> bool:
+        """Return False once `ros2 launch` has exited (e.g. world_manager died with CARLA)."""
+        return self._proc.poll() is None
 
     def stop(self, grace_s: float = 20.0) -> None:
         """SIGINT the process group (launch forwards it), then SIGKILL."""

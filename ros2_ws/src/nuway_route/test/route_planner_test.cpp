@@ -105,6 +105,40 @@ TEST(RoutePlanner, PlansThroughWaypointsInOrder) {
   EXPECT_EQ(error, "waypoint 0 is unreachable");
 }
 
+TEST(RoutePlanner, OverlappingGoalLanesAreChosenByTheNextWaypoint) {
+  const nuway_map::LaneGraph graph = BuildGraph(kForkXodr);
+  const RoutePlannerOptions options;
+  std::string error;
+  const nuway_common::SE2 ego{2.0, -1.75, 0.0};
+  // Waypoint 0 sits where the two connecting lanes overlap (both at d = 0,
+  // both 30 m away); waypoint 1 is near the end of road 3's lane, reachable
+  // only through road 6. Per-segment planning could commit to road 5 here
+  // and then find waypoint 1 unreachable.
+  const RoutePlan plan = Unwrap(
+      PlanRoute(graph, ego, {{33.0, -1.75}, {46.4, -8.2}}, options, &error),
+      error);
+  EXPECT_EQ(plan.lane_ids, (Ids{Id(1, 0, -1), Id(6, 0, -1), Id(3, 0, -1)}));
+  EXPECT_EQ(plan.waypoint_lane_index, (std::vector<std::size_t>{1, 2}));
+  // The same first waypoint followed by one on road 2 goes the other way.
+  const RoutePlan plan2 = Unwrap(
+      PlanRoute(graph, ego, {{33.0, -1.75}, {48.0, -1.75}}, options, &error),
+      error);
+  EXPECT_EQ(plan2.lane_ids, (Ids{Id(1, 0, -1), Id(5, 0, -1), Id(2, 0, -1)}));
+  EXPECT_EQ(plan2.waypoint_lane_index, (std::vector<std::size_t>{1, 2}));
+  // Two waypoints on one lane in driving order are both reached in place.
+  const RoutePlan plan3 = Unwrap(
+      PlanRoute(graph, ego, {{10.0, -1.75}, {20.0, -1.75}, {48.0, -1.75}},
+                options, &error),
+      error);
+  EXPECT_EQ(plan3.lane_ids, (Ids{Id(1, 0, -1), Id(5, 0, -1), Id(2, 0, -1)}));
+  EXPECT_EQ(plan3.waypoint_lane_index, (std::vector<std::size_t>{0, 0, 2}));
+  // Reversed on the same lane with no loop back: unreachable.
+  EXPECT_FALSE(
+      PlanRoute(graph, ego, {{20.0, -1.75}, {10.0, -1.75}}, options, &error)
+          .has_value());
+  EXPECT_EQ(error, "waypoint 1 lies behind on the current lane");
+}
+
 TEST(RoutePlanner, WaypointBehindOnTheCurrentLaneIsNotReached) {
   const nuway_map::LaneGraph graph = BuildGraph(kCorridorXodr);
   RoutePlannerOptions options;

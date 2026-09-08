@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <functional>
 #include <limits>
 #include <queue>
@@ -84,6 +85,73 @@ std::optional<std::vector<std::uint32_t>> ShortestLanePath(
   return std::nullopt;
 }
 
+namespace {
+
+// A goal lane for one waypoint and where along it the waypoint lies.
+struct Goal {
+  std::uint32_t lane_id = 0;
+  double s = 0.0;
+};
+
+using GoalSets = std::vector<std::vector<Goal>>;
+
+const Goal* FindGoal(const std::vector<Goal>& goals, std::uint32_t lane_id) {
+  for (const Goal& g : goals) {
+    if (g.lane_id == lane_id) {
+      return &g;
+    }
+  }
+  return nullptr;
+}
+
+// Search state: on `lane_id` at progress `pos_s` with `stage` waypoints
+// reached. The (lane, stage) pair identifies the state; pos_s rides along.
+struct JointOpen {
+  double f = 0.0;
+  double g = 0.0;
+  std::uint32_t lane_id = 0;
+  std::size_t stage = 0;
+  double pos_s = 0.0;
+  bool operator>(const JointOpen& other) const { return f > other.f; }
+};
+
+std::uint64_t StateKey(std::uint32_t lane_id, std::size_t stage) {
+  return (static_cast<std::uint64_t>(stage) << 32U) | lane_id;
+}
+
+std::uint32_t KeyLane(std::uint64_t key) {
+  return static_cast<std::uint32_t>(key & 0xffffffffU);
+}
+
+std::size_t KeyStage(std::uint64_t key) {
+  return static_cast<std::size_t>(key >> 32U);
+}
+
+// Counts off every waypoint that lies ahead (or within passed_tolerance_m
+// behind) on `lane_id` from `*pos_s`, in order, moving `*pos_s` to the last
+// one. `behind_seen` records the stage whose waypoint sits on this lane but
+// too far behind to count.
+std::size_t AdvanceInPlace(const GoalSets& goals, std::uint32_t lane_id,
+                           std::size_t stage, double* pos_s,
+                           const RoutePlannerOptions& options,
+                           std::vector<bool>* behind_seen) {
+  while (stage < goals.size()) {
+    const Goal* goal = FindGoal(goals[stage], lane_id);
+    if (goal == nullptr) {
+      break;
+    }
+    if (goal->s + options.passed_tolerance_m < *pos_s) {
+      (*behind_seen)[stage] = true;
+      break;
+    }
+    *pos_s = std::max(*pos_s, goal->s);
+    ++stage;
+  }
+  return stage;
+}
+
+}  // namespace
+
 std::optional<RoutePlan> PlanRoute(const nuway_map::LaneGraph& graph,
                                    const nuway_common::SE2& ego,
                                    const nuway_common::Vector2dList& waypoints,
@@ -103,74 +171,108 @@ std::optional<RoutePlan> PlanRoute(const nuway_map::LaneGraph& graph,
   if (!start.has_value()) {
     return fail("ego pose is on no lane");
   }
-  RoutePlan plan;
-  plan.lane_ids.push_back(start->lane_id);
-  double start_s = start->s;
+  // Goal set per waypoint: the lanes about as near to it as the nearest one.
+  GoalSets goals(waypoints.size());
   for (std::size_t i = 0; i < waypoints.size(); ++i) {
-    const Eigen::Vector2d& wp = waypoints[i];
-    const std::vector<nuway_map::LaneQuery> near =
-        graph.LanesNear(wp.x(), wp.y(), options.waypoint_max_dist_m);
+    const std::vector<nuway_map::LaneQuery> near = graph.LanesNear(
+        waypoints[i].x(), waypoints[i].y(), options.waypoint_max_dist_m);
     if (near.empty()) {
       return fail("waypoint " + std::to_string(i) + " is on no lane");
     }
-    const std::uint32_t current = plan.lane_ids.back();
-    std::vector<std::uint32_t> goals;
-    bool current_behind = false;
-    bool already_reached = false;
     for (const nuway_map::LaneQuery& q : near) {
       if (std::abs(q.d) > std::abs(near.front().d) + options.goal_slack_m) {
         break;  // sorted by |d|
       }
-      // The current lane counts only if the waypoint is still ahead; just
-      // behind (within passed_tolerance_m) it is where the ego already is.
-      if (q.lane_id == current && q.s + 1e-6 < start_s) {
-        if (start_s - q.s <= options.passed_tolerance_m) {
-          already_reached = true;
-        } else {
-          current_behind = true;
-        }
-        continue;
-      }
-      goals.push_back(q.lane_id);
+      goals[i].push_back(Goal{q.lane_id, q.s});
     }
-    if (already_reached) {
-      plan.waypoint_lane_index.push_back(plan.lane_ids.size() - 1);
+  }
+  // A* over (lane, waypoints reached) so that a waypoint's goal lane is
+  // chosen by the whole remaining route, not by that segment alone: at a
+  // junction several overlapping lanes sit on the waypoint and only some
+  // lead on towards the next one.
+  const std::size_t n = waypoints.size();
+  const auto heuristic = [&](const nuway_map::Lane& lane, std::size_t stage) {
+    return stage >= n ? 0.0 : Heuristic(lane, waypoints[stage]);
+  };
+  std::vector<bool> behind_seen(n, false);
+  std::priority_queue<JointOpen, std::vector<JointOpen>, std::greater<>> open;
+  std::unordered_map<std::uint64_t, double> best_g;
+  std::unordered_map<std::uint64_t, std::uint64_t> parent;
+  std::unordered_set<std::uint64_t> closed;
+  double start_pos = start->s;
+  const std::size_t start_stage = AdvanceInPlace(
+      goals, start->lane_id, 0, &start_pos, options, &behind_seen);
+  const std::uint64_t start_key = StateKey(start->lane_id, start_stage);
+  open.push(JointOpen{heuristic(*graph.lane(start->lane_id), start_stage), 0.0,
+                      start->lane_id, start_stage, start_pos});
+  best_g[start_key] = 0.0;
+  std::size_t deepest = start_stage;
+  std::optional<std::uint64_t> goal_key;
+  while (!open.empty()) {
+    const JointOpen current = open.top();
+    open.pop();
+    const std::uint64_t key = StateKey(current.lane_id, current.stage);
+    if (closed.count(key) != 0U) {
       continue;
     }
-    std::optional<std::vector<std::uint32_t>> segment;
-    if (!goals.empty()) {
-      segment = ShortestLanePath(graph, current, goals, wp, options);
+    closed.insert(key);
+    deepest = std::max(deepest, current.stage);
+    if (current.stage == n) {
+      goal_key = key;
+      break;
     }
-    if (!segment.has_value() && current_behind) {
-      // Loop back onto the current lane through its successors.
-      for (const std::uint32_t succ : graph.Successors(current)) {
-        std::optional<std::vector<std::uint32_t>> loop =
-            ShortestLanePath(graph, succ, {current}, wp, options);
-        if (loop.has_value() &&
-            (!segment.has_value() || loop->size() + 1 < segment->size())) {
-          loop->insert(loop->begin(), current);
-          segment = std::move(loop);
-        }
+    const nuway_map::Lane* lane = graph.lane(current.lane_id);
+    const auto relax = [&](std::uint32_t next_id, double edge_cost,
+                           double entry_s) {
+      const nuway_map::Lane* next = graph.lane(next_id);
+      if (next == nullptr) {
+        return;
       }
-      if (!segment.has_value()) {
-        return fail("waypoint " + std::to_string(i) +
-                    " lies behind on the current lane");
+      double pos = entry_s;
+      const std::size_t stage = AdvanceInPlace(goals, next_id, current.stage,
+                                               &pos, options, &behind_seen);
+      const std::uint64_t next_key = StateKey(next_id, stage);
+      if (closed.count(next_key) != 0U) {
+        return;
       }
-    }
-    if (!segment.has_value()) {
-      return fail("waypoint " + std::to_string(i) + " is unreachable");
-    }
-    for (std::size_t j = 1; j < segment->size(); ++j) {
-      plan.lane_ids.push_back((*segment)[j]);
-    }
-    plan.waypoint_lane_index.push_back(plan.lane_ids.size() - 1);
-    // Progress along the reached lane, for the "still ahead" test above.
-    start_s = 0.0;
-    for (const nuway_map::LaneQuery& q : near) {
-      if (q.lane_id == plan.lane_ids.back()) {
-        start_s = q.s;
-        break;
+      const double g = current.g + edge_cost;
+      const auto it = best_g.find(next_key);
+      if (it != best_g.end() && it->second <= g) {
+        return;
       }
+      best_g[next_key] = g;
+      parent[next_key] = key;
+      open.push(JointOpen{g + heuristic(*next, stage), g, next_id, stage, pos});
+    };
+    for (const std::uint32_t succ : lane->successors) {
+      relax(succ, lane->length_m, 0.0);
+    }
+    // A lane change keeps the progress along the road.
+    if (lane->left_neighbor != 0 && lane->left_change_allowed) {
+      relax(lane->left_neighbor, options.lane_change_penalty_m, current.pos_s);
+    }
+    if (lane->right_neighbor != 0 && lane->right_change_allowed) {
+      relax(lane->right_neighbor, options.lane_change_penalty_m, current.pos_s);
+    }
+  }
+  if (!goal_key.has_value()) {
+    if (goals[deepest].size() == 1 && behind_seen[deepest]) {
+      return fail("waypoint " + std::to_string(deepest) +
+                  " lies behind on the current lane");
+    }
+    return fail("waypoint " + std::to_string(deepest) + " is unreachable");
+  }
+  std::vector<std::uint64_t> chain{*goal_key};
+  while (chain.back() != start_key) {
+    chain.push_back(parent.at(chain.back()));
+  }
+  std::reverse(chain.begin(), chain.end());
+  RoutePlan plan;
+  std::size_t stage = 0;
+  for (const std::uint64_t k : chain) {
+    plan.lane_ids.push_back(KeyLane(k));
+    for (; stage < KeyStage(k); ++stage) {
+      plan.waypoint_lane_index.push_back(plan.lane_ids.size() - 1);
     }
   }
   return plan;

@@ -197,6 +197,7 @@ class WorldManagerNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (
         self._pending_lock = threading.Lock()
         self._last_tick_wall = time.monotonic()
         self._timeouts = 0
+        self._last_frame: int | None = None  # server frame of the last tick
         self.get_logger().info(
             f"ready: town {self._town}, dt {self._dt}, lockstep timeout {self._lockstep_timeout_s}s "
             f"(startup {self._startup_timeout_s}s), realtime_factor {self._realtime_factor}"
@@ -390,6 +391,19 @@ class WorldManagerNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (
         self._world.tick()
         snapshot = self._world.get_snapshot()
         elapsed_s = float(snapshot.timestamp.elapsed_seconds)
+        frame = int(snapshot.frame)
+        if self._last_frame is not None and frame != self._last_frame + 1:
+            # A server that advances frames on its own (seen after clients were
+            # SIGKILLed mid-episode) breaks lockstep silently: this node ticks,
+            # publishes and gates once per several frames and the stack drives
+            # on a 0.35 s control period. Only a server restart fixes it.
+            self.get_logger().error(
+                f"world advanced {frame - self._last_frame} frames during one "
+                "tick: the server is not in lockstep; restart it "
+                "(tools/carla/start_carla.sh)",
+                throttle_duration_sec=5.0,
+            )
+        self._last_frame = frame
         stamp = stamp_from_seconds(elapsed_s)
         k = tick_index(elapsed_s)
         clock = Clock()

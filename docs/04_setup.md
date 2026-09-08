@@ -269,3 +269,4 @@ their **`ros_name`** attribute — that is the attribute CARLA names topics from
 | `rclpy` not importable in `.venv` | Venv built from a uv-downloaded interpreter. Delete `.venv` and re-run `setup_env.sh`. |
 | `libiceoryx_binding_c.so => not found` in `ldd` | ROS not sourced. `source /opt/ros/jazzy/setup.bash`. |
 | CARLA server survives `pkill -f CarlaUE4` | The pattern matches your own shell. Match on `/proc/<pid>/exe` instead. |
+| `world advanced N frames during one tick` from `world_manager`, `lockstep broken` from `run_routes.py`, `ego_odom.csv` ticks stepping by ~7, every route `blocked` with lateral errors of metres | The server advances frames by itself in synchronous mode (seen on a long-lived server after clients were SIGKILLed mid-episode). Only a restart fixes it: kill the `CarlaUE4` pids, then `tools/carla/start_carla.sh --wait`. Stop a stack with SIGINT and let `world_manager` restore asynchronous mode. |

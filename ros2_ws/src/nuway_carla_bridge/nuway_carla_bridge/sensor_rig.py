@@ -6,6 +6,24 @@ attribute CARLA names topics from) and ``ros_publish_tf=false`` (CARLA would
 otherwise re-send the extrinsics on ``/tf`` every tick, parented to ``hero``);
 ``enable_for_ros()`` is called on every sensor except ``viz_only`` ones. All
 geometry comes from ``nuway_ml.common.rig``: this file holds none.
+
+How sensors work in CARLA. A sensor is an actor attached to the hero with a
+fixed relative transform (CARLA frame: x forward, y right, z up, degrees).
+It renders or samples once per simulated frame, so in synchronous mode
+every sensor output belongs to exactly one tick. With the server started
+``--ros2``, each sensor that had ``enable_for_ros()`` publishes its data
+natively over DDS on ``/carla/<ros_name>/<sensor ros_name>/...`` (images,
+point clouds, IMU, GNSS); no sensor data passes through this process, which
+is why the bridge stays a Python node without a throughput problem. What
+this module adds is the static side that CARLA's own output lacks or gets
+wrong: the extrinsics on ``/tf_static`` (latched, sent once; sensor frames
+are named by ``ros_name`` under ``base_link``) and a correct pinhole
+``CameraInfo`` per camera (CARLA's has broken intrinsics, ``docs/00`` §4).
+
+Rig selection: ``label_only`` sensors (the semantic lidar that labels
+training data) and ``viz_only`` sensors (the chase camera for Foxglove)
+are only spawned when the profile asks for them, so a plain driving run
+spawns the sensors the driving stack consumes and nothing more.
 """
 
 from __future__ import annotations
@@ -34,7 +52,14 @@ if TYPE_CHECKING:
 
 
 class SensorRig:
-    """Spawns the rig on the hero and publishes its static side (TF, camera_info)."""
+    """Spawns the rig on the hero and publishes its static side (TF, camera_info).
+
+    Lifecycle: constructed with the rig selection, :meth:`spawn` creates the
+    actors (all or nothing is the caller's job: ``world_manager`` destroys
+    what was spawned when a later step fails), :meth:`destroy` removes them;
+    CARLA keeps actors alive across client disconnects, so every spawn needs
+    its destroy.
+    """
 
     def __init__(
         self,
@@ -63,7 +88,15 @@ class SensorRig:
         return list(self._actors)
 
     def spawn(self) -> None:
-        """Spawn every selected sensor attached to the hero."""
+        """Spawn every selected sensor attached to the hero.
+
+        ``ros_name`` (the attribute CARLA names topics from) and
+        ``role_name`` (what generic CARLA tooling reads) are both set to the
+        rig id; ``ros_publish_tf`` is off because CARLA would otherwise
+        re-send the extrinsics on ``/tf`` every frame, parented to the hero
+        actor rather than ``base_link``. Attaching to the hero makes the
+        transform relative and moves the sensor with the car.
+        """
         lib = self._world.get_blueprint_library()
         for spec in self._specs:
             bp = lib.find(spec.type)
@@ -122,7 +155,14 @@ class SensorRig:
 
 
 def camera_info_msg(spec: SensorSpec) -> CameraInfo:
-    """Pinhole CameraInfo for a rig camera, frame_id = its ros_name."""
+    """Pinhole CameraInfo for a rig camera, frame_id = its ros_name.
+
+    ``K`` (3x3 intrinsics from the image size and horizontal field of view,
+    ``nuway_ml.common.rig.intrinsics``) maps a camera-frame point to pixels;
+    ``P`` is the same matrix as the 3x4 projection of a monocular camera
+    (zero translation), ``R`` the identity (no stereo rectification) and the
+    distortion zero: CARLA renders an ideal pinhole.
+    """
     width, height = spec.image_size
     k = intrinsics(spec)
     msg = CameraInfo()

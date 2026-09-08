@@ -20,6 +20,55 @@ Responsibilities (``M0_bringup.md`` §2.1, ``docs/02_interfaces.md`` §2):
 
 State across ticks: the episode id, the last command tick and the modules'
 own state; a reset clears ``gt_publisher``'s ring buffers.
+
+CARLA in one paragraph. The server (``CarlaUE4``) simulates; clients talk to
+it over RPC (port 2000) and see the world through snapshots. In
+*asynchronous* mode the server steps physics on its own clock and clients
+only observe. In *synchronous* mode (``synchronous_mode=True`` with
+``fixed_delta_seconds=0.05``) the server freezes between frames and advances
+exactly one 0.05 s frame per ``world.tick()`` from the client that owns the
+tick; every actor transform, velocity and sensor image is then the state
+after that frame. That is what makes a replayable stack possible: the
+simulation advances only when this node says so, and only after the
+controller has answered the previous frame.
+
+One tick, with k the tick index ``round(elapsed_seconds / 0.05)``
+(``nuway_ml.common.tick``; every stamp in the stack is compared by k)::
+
+    world.tick()                          frame k is simulated
+    /clock, /nuway/gt/**  stamped k       this node + gt_publisher
+      -> gt_pose_node        -> /nuway/loc/pose k
+      -> pure_pursuit_pid    -> /nuway/control/command k
+      -> control_adapter     -> /carla/hero/vehicle_control_cmd
+    block until a ControlCommand stamped k has arrived   (_wait_for_command)
+    world.tick()                          frame k + 1 ...
+
+The gate checks only that the ``ControlCommand`` was published; the
+adapter's CARLA control follows on the native topic and the server applies
+whatever it holds when the next frame is computed, so the stack has one
+tick of actuator latency by design (``docs/02_interfaces.md`` §2).
+
+Threads. The rclpy callbacks (command subscription, the two services) run
+on a ``MultiThreadedExecutor`` in a background thread; the tick loop runs in
+the main thread, because the CARLA client is not thread safe and every
+``world`` / actor call must come from one thread. The two meet through
+``_cmd_cond`` (a command arrived) and ``_pending_reset`` (a reset to apply
+between two ticks).
+
+Time. Sim time is CARLA's ``elapsed_seconds``, published on ``/clock``; every
+node runs with ``use_sim_time`` so its clock stands still between ticks and
+no node can time anything by the wall clock. The lockstep timeout is the
+one wall-clock decision, and it is reported (``TickTimeout``) rather than
+hidden.
+
+Frames. CARLA's world is left-handed (x forward, y right, z up, yaw
+clockwise, degrees); ROS is right-handed (REP-103), so y, pitch and yaw
+flip sign, and every quantity read from or written to the API goes through
+``nuway_ml.common.carla_conv`` (the only place with that arithmetic). A
+vehicle's CARLA origin is its mesh origin, under the middle of the car and
+``actor_origin_height`` above the road; the stack's ``base_link`` is the
+rear axle on the ground (``VehicleGeometry.base_link_in_actor``), hence the
+``_base_pose_of`` conversions.
 """
 
 from __future__ import annotations
@@ -67,11 +116,14 @@ from nuway_rclpy.ros_conv import (
 from nuway_rclpy.ros_qos import CLOCK_QOS, qos
 
 NODE_NAME = "world_manager"
-HERO_ROLE = "hero"
+HERO_ROLE = "hero"  # role_name / ros_name of the ego: topics are /carla/hero/**
 RESET_DROP_MARGIN_M = 0.15  # teleport slightly above the ground and let physics settle
 GENERATED_MAP_NAME = (
     "OpenDriveMap"  # CARLA's name for every generate_opendrive_world() map
 )
+# Mesh generation for a world built from a bare OpenDRIVE file (no town assets):
+# road triangles every 2 m, no side walls, 1 m of extra pavement so a car on
+# the outer lane edge does not fall off, and no walker navmesh (no walkers).
 OPENDRIVE_GENERATION_PARAMETERS = carla.OpendriveGenerationParameters(
     vertex_distance=2.0,
     max_road_length=500.0,
@@ -81,6 +133,8 @@ OPENDRIVE_GENERATION_PARAMETERS = carla.OpendriveGenerationParameters(
     enable_mesh_visibility=True,
     enable_pedestrian_navigation=False,
 )
+# The named presets of carla.WeatherParameters (ClearNoon, WetSunset, ...),
+# selectable through /nuway/sim/set_weather. Weather only changes rendering.
 WEATHER_PRESETS = {
     name: getattr(carla.WeatherParameters, name)
     for name in dir(carla.WeatherParameters)
@@ -91,7 +145,12 @@ WEATHER_PRESETS = {
 
 @dataclass
 class _PendingReset:
-    """A reset request handed from the service thread to the tick loop."""
+    """A reset request handed from the service thread to the tick loop.
+
+    The service callback fills ``request``, blocks on ``done`` and returns
+    ``response`` once the tick thread has applied the reset (CARLA calls must
+    stay on that thread).
+    """
 
     request: Reset.Request
     done: threading.Event
@@ -99,7 +158,12 @@ class _PendingReset:
 
 
 class WorldManagerNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (03 §7.3)
-    """Owns the CARLA client, the lockstep tick loop, /clock and the GT topics."""
+    """Owns the CARLA client, the lockstep tick loop, /clock and the GT topics.
+
+    Construction does the whole set-up in order (parameters, connect, world,
+    map export, sync mode, hero, rig, GT publishers, ROS endpoints);
+    :meth:`run` is the tick loop; :meth:`shutdown` undoes the set-up.
+    """
 
     def __init__(self) -> None:
         """Declare parameters, connect to CARLA, spawn the hero and the rig."""
@@ -205,6 +269,12 @@ class WorldManagerNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (
 
     # -------------------------------------------------------------- set-up
     def _declare_params(self) -> dict[str, Any]:
+        """Declare every parameter with its default and return the values.
+
+        The ``carla.*`` keys mirror the profile's ``carla:`` section
+        (``docs/02_interfaces.md`` §5); the launch file passes the profile
+        through as parameter overrides, so a bare ``ros2 run`` also works.
+        """
         defaults: dict[str, Any] = {
             "carla.host": "localhost",
             "carla.port": 2000,
@@ -233,6 +303,14 @@ class WorldManagerNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (
         return values
 
     def _load_world(self, town: str, no_rendering: bool) -> carla.World:
+        """Return the world for ``town``, (re)loading it only when it differs.
+
+        ``load_world`` restarts the level (seconds of wall time, and CARLA
+        0.9.16 crashes loading Town01 over another town, ``docs/00`` §4), so
+        the current world is reused whenever it already is the requested
+        one. ``no_rendering_mode`` skips the camera and lidar rendering
+        (physics only; sysid runs use it).
+        """
         world = self._client.get_world()
         if town.endswith(".xodr"):
             # A generated OpenDRIVE world (M0 sysid: configs/maps/sysid_straight.xodr).
@@ -260,6 +338,11 @@ class WorldManagerNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (
         return world
 
     def _export_opendrive(self) -> None:
+        """Write the town's OpenDRIVE to ``data/maps/<town>/map.xodr`` once.
+
+        ``map_server_node`` and ``route_gen`` parse that file, so every map
+        consumer works from exactly the geometry the server simulates.
+        """
         path = self._map_dir / self._town / "map.xodr"
         if path.is_file():
             return
@@ -268,6 +351,15 @@ class WorldManagerNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (
         self.get_logger().info(f"exported {path}")
 
     def _apply_sync_settings(self, sync: bool, tm_port: int, seed: int) -> None:
+        """Put the world and the Traffic Manager into synchronous mode.
+
+        With ``synchronous_mode`` the server advances one ``fixed_delta_seconds``
+        frame per ``world.tick()`` and freezes otherwise (module docstring).
+        The Traffic Manager, CARLA's autopilot for NPC vehicles, runs its own
+        thread inside this client process and must be told about sync mode
+        too, or it would step the NPC controls on wall time; its random
+        seed makes those decisions reproducible (M1 traffic).
+        """
         settings = self._world.get_settings()
         settings.synchronous_mode = sync
         settings.fixed_delta_seconds = self._dt
@@ -277,7 +369,14 @@ class WorldManagerNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (
         self._traffic_manager.set_random_device_seed(seed)
 
     def _spawn_hero(self, spawn_index: int) -> tuple[carla.Actor, SE3]:
-        """Spawn the hero; returns it with its actor pose (ROS) at the spawn point."""
+        """Spawn the hero; returns it with its actor pose (ROS) at the spawn point.
+
+        Blueprint attributes: ``role_name`` is how CARLA tooling finds the
+        ego, ``ros_name`` is what the native ROS 2 layer names topics from
+        (``/carla/hero/**``), and ``ros_publish_tf`` off keeps CARLA from
+        broadcasting its own ``/tf`` for the car (``gt_pose_node`` owns TF).
+        Spawn points are the map's predefined, collision-free poses.
+        """
         lib = self._world.get_blueprint_library()
         bp = lib.find(self._rig.vehicle)
         bp.set_attribute("role_name", HERO_ROLE)
@@ -293,6 +392,11 @@ class WorldManagerNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (
 
     # ------------------------------------------------------------ callbacks
     def _on_control_command(self, msg: ControlCommand) -> None:
+        """Record the newest command tick and wake the tick loop.
+
+        Executor thread. Only the tick index is kept: the command itself is
+        consumed by ``control_adapter``; this node gates on its existence.
+        """
         k = tick_index(msg.header.stamp)
         with self._cmd_cond:
             self._latest_cmd_tick = max(self._latest_cmd_tick, k)
@@ -301,6 +405,13 @@ class WorldManagerNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (
     def _on_reset(
         self, request: Reset.Request, response: Reset.Response
     ) -> Reset.Response:
+        """Queue the reset for the tick thread and block until it was applied.
+
+        Executor thread, hence the hand-off: CARLA calls belong to the tick
+        thread, and a teleport in the middle of a tick would put the episode
+        boundary inside a frame. The service sits in a reentrant callback
+        group so blocking here does not stall the command subscription.
+        """
         pending = _PendingReset(request, threading.Event(), response)
         with self._pending_lock:
             if self._pending_reset is not None:
@@ -323,6 +434,7 @@ class WorldManagerNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (
     def _on_set_weather(
         self, request: SetWeather.Request, response: SetWeather.Response
     ) -> SetWeather.Response:
+        """Apply a named ``carla.WeatherParameters`` preset (rendering only)."""
         preset = WEATHER_PRESETS.get(request.preset)
         if preset is None:
             response.ok = False
@@ -334,7 +446,13 @@ class WorldManagerNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (
 
     # ------------------------------------------------------------ tick loop
     def run(self) -> None:
-        """Tick until shutdown (main thread; the executor spins elsewhere)."""
+        """Tick until shutdown (main thread; the executor spins elsewhere).
+
+        Per iteration: apply a queued reset if any, pace to the requested
+        real-time factor, then one gated tick (:meth:`_tick_once`). Episode
+        0 starts with the ``ResetEvent`` every other node waits for before
+        it accepts data.
+        """
         self._wait_for_peers()
         # Before the first tick the client snapshot of a freshly spawned actor
         # is empty and get_transform() is the identity, so episode 0's start
@@ -378,6 +496,12 @@ class WorldManagerNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (
         )
 
     def _pace(self) -> None:
+        """Sleep so ticks come no faster than ``realtime_factor`` x real time.
+
+        0 means as fast as the gate allows (evaluation); 1 is real time, for
+        watching in Foxglove. Slower never changes results: nodes act on
+        ticks, not on the wall clock.
+        """
         if self._realtime_factor <= 0.0:
             return
         period = self._dt / self._realtime_factor
@@ -386,6 +510,20 @@ class WorldManagerNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (
             time.sleep(period - elapsed)
 
     def _tick_once(self) -> None:
+        """One lockstep tick: simulate, publish, gate, report.
+
+        1. ``world.tick()`` advances the server one frame; the snapshot gives
+           its sim time, from which the tick index k and the stamp every
+           message of this tick carries are derived.
+        2. Publish ``/clock`` first (so subscribers' clocks move before any
+           data of the tick), then the GT topics.
+        3. Block until a ``ControlCommand`` stamped k arrives, up to the
+           lockstep timeout (the startup timeout on an episode's first tick,
+           while the nodes plan). On a timeout publish ``TickTimeout`` so the
+           nodes can fall back (docs/02 §2), and tick anyway.
+        4. Publish this node's ``NodeDiag`` (``cycle_ms`` = the GT publish,
+           ``input_age_ms`` = how long the gate waited).
+        """
         wall_start = time.monotonic()
         self._last_tick_wall = wall_start
         self._world.tick()
@@ -450,7 +588,13 @@ class WorldManagerNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (
         self._pub_diag.publish(diag)
 
     def _wait_for_command(self, k: int, timeout_s: float) -> tuple[float, bool]:
-        """Block until a ControlCommand stamped tick k (or later) arrived."""
+        """Block until a ControlCommand stamped tick k (or later) arrived.
+
+        Returns ``(waited_s, timed_out)``. "Or later" because a command for
+        a newer tick can only exist after a timeout let the world move on,
+        and then it is the one to honour. The condition variable is notified
+        by :meth:`_on_control_command` on the executor thread.
+        """
         start = time.monotonic()
         deadline = start + timeout_s
         with self._cmd_cond:
@@ -463,7 +607,14 @@ class WorldManagerNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (
 
     # ---------------------------------------------------------------- reset
     def _base_pose_of(self, actor_pose: SE3) -> SE3:
-        """base_link pose (ROS) of an actor pose."""
+        """base_link pose (ROS) of an actor pose.
+
+        CARLA poses a vehicle at its mesh origin, slightly above the road
+        under the middle of the car; the stack's ``base_link`` is the rear
+        axle on the ground, ``base_link_in_actor`` away from it
+        (``VehicleGeometry``), so the two poses differ by that offset rotated
+        into the world.
+        """
         base = compose(
             actor_pose,
             SE3(self._vehicle.base_link_in_actor, np.array([0.0, 0.0, 0.0, 1.0])),
@@ -472,6 +623,7 @@ class WorldManagerNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (
         return base
 
     def _process_pending_reset(self) -> None:
+        """Apply a queued reset on the tick thread and release the service."""
         with self._pending_lock:
             pending = self._pending_reset
         if pending is None:
@@ -484,6 +636,18 @@ class WorldManagerNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (
             pending.done.set()
 
     def _apply_reset(self, request: Reset.Request, response: Reset.Response) -> None:
+        """Start a new episode: teleport the hero, then one tick through the gate.
+
+        The target is a spawn point (``spawn_index >= 0``) or a ``base_link``
+        pose, converted to the actor origin and lifted a little so the car
+        settles onto the road instead of intersecting it. The physics body is
+        recreated (see the comment below), the car is brought to rest with
+        the brake on, the episode id is incremented, the GT ring buffers and
+        the command gate are cleared, and ``ResetEvent`` goes out *before*
+        the first tick so every node has reset its state by the time that
+        tick's data arrives. The first tick then waits with the startup
+        timeout, since the planner has to build a route first.
+        """
         if request.spawn_index >= 0:
             spawn_points = self._world.get_map().get_spawn_points()
             transform = spawn_points[request.spawn_index % len(spawn_points)]
@@ -538,7 +702,12 @@ class WorldManagerNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (
         self.get_logger().info(response.message)
 
     def _publish_reset_event(self, start_pose: SE3) -> None:
-        """ResetEvent stamped with the first tick of the new episode."""
+        """ResetEvent stamped with the first tick of the new episode.
+
+        Published on the transient_local ``event`` QoS so a node that starts
+        late still receives it; consumers ignore stamps before it and
+        episode ids not newer than the one they know (docs/02 §7).
+        """
         # The exact tick stamp, not elapsed + dt in float: consumers compare
         # tick indices, and the first pose of the episode carries CARLA's own
         # float accumulation of the same tick.
@@ -579,7 +748,15 @@ class WorldManagerNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (
 
 
 def main(args: list[str] | None = None) -> int:
-    """Entry point: spin the executor in a thread, tick in the main thread."""
+    """Entry point: spin the executor in a thread, tick in the main thread.
+
+    The reverse arrangement (tick in a timer callback) would put CARLA calls
+    on executor threads and let a slow service callback delay a tick; with
+    the loop in the main thread the executor only ever touches the small
+    shared state under its locks. Shutdown always destroys the actors and
+    restores asynchronous mode, or the next launch finds a second hero and a
+    frozen world.
+    """
     rclpy.init(args=args)
     node: WorldManagerNode | None = None
     try:

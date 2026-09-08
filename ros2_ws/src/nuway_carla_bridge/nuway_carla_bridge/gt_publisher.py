@@ -16,6 +16,25 @@ Traffic lights are matched to ``TrafficLightMapping`` ids through their
 affected lanes (``M0_bringup.md`` §2.2): CARLA's affected waypoints and the
 OpenDRIVE ``<signalReference>`` records describe the same lanes, whereas the
 stop waypoints sit at the trigger-volume edge, which the map does not carry.
+
+Why ground truth. These topics are what the localization and perception
+*modules* will estimate from sensors later (M2 onward). In M0 the GT twins
+(``gt_pose_node``, ``gt_perception_node``, ``gt_traffic_light_node``)
+republish them in the estimated-topic format, optionally with noise and
+latency, so the planner and controller run end to end before any model
+exists, and so a learned module can later be swapped in and compared
+against the truth it was trained on.
+
+Frames and origins. CARLA reports an actor at its mesh origin (for a
+vehicle: under the middle of the car, just above the road) with its
+bounding box relative to that origin and velocities in the left-handed
+world frame. The
+ego is republished at ``base_link`` (the rear axle) as a ``nav_msgs/Odometry``
+with the twist in the body frame, as ROS expects; other agents are reported
+at their bounding-box centre so a planner can grow a footprint from
+``length`` / ``width`` symmetrically. Every conversion is a call into
+``carla_conv``; the rigid-body arithmetic (moving a velocity to another
+point of the same body) is the only geometry done here.
 """
 
 from __future__ import annotations
@@ -61,8 +80,12 @@ from nuway_rclpy.ros_qos import qos
 
 Array = NDArray[np.float64]
 
-HISTORY_LEN = int(Agent.HISTORY_LEN)
+HISTORY_LEN = int(Agent.HISTORY_LEN)  # past poses per agent, 0.1 s apart
+# Set in the id of a light that governs no lane of the LaneGraph: the id then
+# is the CARLA actor id, which never collides with the map's (high bit clear).
 TL_ID_UNMAPPED_FLAG = 0x80000000
+# CARLA has no bicycle class; two-wheelers whose blueprint name mentions one
+# of these are bicycles, the rest motorcycles.
 BICYCLE_HINTS = (
     "bike",
     "bicycle",
@@ -91,7 +114,12 @@ class GtParams:
 
 @dataclass
 class _LaneIndex:
-    """Lane-graph lookup: (road_id, lane_id_odr) -> [(lane_id, centerline (N, 2))]."""
+    """Lane-graph lookup: (road_id, lane_id_odr) -> [(lane_id, centerline (N, 2))].
+
+    CARLA waypoints name lanes by OpenDRIVE road and lane id; the LaneGraph
+    names them by section too, so one OpenDRIVE pair maps to several graph
+    lanes and the nearest centerline decides.
+    """
 
     by_odr: dict[tuple[int, int], list[tuple[int, Array]]] = field(default_factory=dict)
     tl_by_lane: dict[int, int] = field(default_factory=dict)
@@ -141,7 +169,13 @@ class _TlStatic:
 
 
 class GtPublisher:
-    """Publishes the GT topics from the CARLA API after every tick."""
+    """Publishes the GT topics from the CARLA API after every tick.
+
+    Everything is read from the client's snapshot of the frame just
+    simulated, so all four topics of a tick describe the same instant and
+    carry the same stamp; ``world_manager`` publishes them before it waits
+    for the tick's command.
+    """
 
     def __init__(
         self,
@@ -187,6 +221,7 @@ class GtPublisher:
 
     # ------------------------------------------------------------ lane graph
     def _on_lane_graph(self, msg: LaneGraph) -> None:
+        """Index the latched lane graph and drop the traffic-light cache built without it."""
         self._lanes = _LaneIndex.from_msg(msg)
         self._tl_static.clear()
         self._node.get_logger().info(
@@ -205,6 +240,16 @@ class GtPublisher:
         self._publish_traffic_lights(stamp)
 
     def _publish_ego(self, stamp: Time, actor_pose: SE3) -> None:
+        """Ego odometry at base_link: pose in map, twist in the body frame.
+
+        CARLA gives the velocity of the actor origin; the rear axle is a
+        different point of the same rigid body, so its velocity is
+        ``v_origin + omega x r`` with ``r`` the origin-to-axle vector in the
+        world frame. Both that velocity and the angular velocity are then
+        rotated into the body frame (``Odometry.twist`` is expressed in
+        ``child_frame_id``), where ``linear.x`` is the forward speed the
+        controller uses and ``angular.z`` the yaw rate.
+        """
         base_in_actor = SE3(
             self._vehicle.base_link_in_actor, np.array([0.0, 0.0, 0.0, 1.0])
         )
@@ -235,6 +280,12 @@ class GtPublisher:
         self._pub_ego_odom.publish(msg)
 
     def _publish_vehicle_state(self, stamp: Time) -> None:
+        """Actuator state: speed, the front wheel angle and the applied pedals.
+
+        The steering angle is the mean of the two front wheels' physical
+        angles (Ackermann geometry turns them by different amounts), not
+        the commanded steer, so the sysid sees what the car actually did.
+        """
         control = self._hero.get_control()
         fl = self._hero.get_wheel_steer_angle(carla.VehicleWheelLocation.FL_Wheel)
         fr = self._hero.get_wheel_steer_angle(carla.VehicleWheelLocation.FR_Wheel)
@@ -251,6 +302,7 @@ class GtPublisher:
         self._pub_vehicle_state.publish(msg)
 
     def _class_id(self, actor: carla.Actor) -> int:
+        """Agent class from the blueprint id (walker, prop, 2- or 4-wheeler)."""
         type_id = str(actor.type_id)
         if type_id.startswith("walker."):
             return int(Agent.CLASS_PEDESTRIAN)
@@ -265,6 +317,14 @@ class GtPublisher:
         return int(Agent.CLASS_TRUCK if is_truck else Agent.CLASS_CAR)
 
     def _publish_agents(self, stamp: Time, hero_pose: SE3) -> None:
+        """Every vehicle, walker and prop within ``agent_radius_m`` of the hero.
+
+        Per agent: bounding-box centre pose, box size, world-frame velocity,
+        yaw rate and the past poses at 0.1 s spacing that a predictor
+        conditions on. The ring buffers are per CARLA actor id and dropped
+        when the actor is gone or out of range, so a returning actor starts
+        with an empty history rather than a stale one.
+        """
         msg = AgentArray()
         msg.header.stamp = stamp
         msg.header.frame_id = FRAME_MAP
@@ -322,6 +382,17 @@ class GtPublisher:
         self._pub_agents.publish(msg)
 
     def _tl_static_for(self, tl: carla.Actor) -> _TlStatic:
+        """Resolve the static part of a light: map id, stop line, lanes (cached).
+
+        Matching: CARLA lists the waypoints of the lanes the light governs;
+        each is looked up in the LaneGraph by its OpenDRIVE (road, lane) and
+        position, and the ``TrafficLightMapping`` governing most of those
+        lanes wins (a majority vote, since a junction lane can be listed
+        under a neighbouring light's OpenDRIVE signal). The stop line is the
+        first stop waypoint, which CARLA places at its trigger volume; that
+        is where its own autopilot stops. Cached only once a lane graph is
+        available, so an early call does not freeze an unmapped id.
+        """
         cached = self._tl_static.get(int(tl.id))
         if cached is not None:
             return cached
@@ -353,6 +424,7 @@ class GtPublisher:
         return entry
 
     def _publish_traffic_lights(self, stamp: Time) -> None:
+        """Every light with its current state, time in state and yellow duration."""
         msg = TrafficLightArray()
         msg.header.stamp = stamp
         msg.header.frame_id = FRAME_MAP

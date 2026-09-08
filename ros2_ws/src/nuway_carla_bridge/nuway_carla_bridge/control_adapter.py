@@ -12,6 +12,19 @@ repeat-last logic and no watchdog (``M0_bringup.md`` §2.3). The pedal split
 uses the ``vehicle_state`` stamped with the command's own tick (docs/02 §2:
 no node consumes "the latest" message); the few recent ones are kept by
 tick, which needs no clearing on reset.
+
+Why an adapter at all. The stack's ``ControlCommand`` is in physical units
+(``accel`` in m/s^2, ``steering_angle`` as the front wheel angle in rad, ROS
+sign convention), so controllers and planners stay vehicle-agnostic. CARLA
+wants what a driver has: throttle and brake pedals in [0, 1] and a steer
+in [-1, 1], in its own left-handed sign. Pedals are not accelerations: the
+same throttle gives less acceleration at speed, and braking depends on
+speed too. The sysid step responses (M0 §2.6) measured those tables for
+this vehicle, and ``LongitudinalMap.inverse(speed, accel)`` is the inverse
+vehicle model: the pedal pair that produces ``accel`` at ``speed``,
+throttle when the wanted acceleration is above the coasting deceleration
+and brake below it, saturating at the pedal limits. Steer is a proportion
+of ``max_steer_angle``, the wheel angle at full lock.
 """
 
 from __future__ import annotations
@@ -43,6 +56,8 @@ from nuway_rclpy.ros_qos import qos
 
 NODE_NAME = "control_adapter"
 SPEED_HISTORY_TICKS = 20  # vehicle_state kept by tick (1 s)
+# CARLA's native ROS 2 subscriber for the hero (ros_name "hero"); the server
+# applies the last message it holds when it computes the next frame.
 TOPIC_CARLA_CONTROL = "/carla/hero/vehicle_control_cmd"
 # CARLA's native subscriber matched a reliable / volatile publisher on the dev
 # box (docs/02 §3.1, control command finding).
@@ -60,7 +75,13 @@ def carla_control_from_command(
     max_steer_rad: float,
     speed_mps: float,
 ) -> CarlaEgoVehicleControl:
-    """Map ``accel`` to pedals at ``speed_mps``, flip the steer sign; e-stop is brake 1."""
+    """Map ``accel`` to pedals at ``speed_mps``, flip the steer sign; e-stop is brake 1.
+
+    Pure function so the unit test can pin it. ``emergency_stop`` is the
+    no-input output of the controller (docs/02 §2): full brake, wheels
+    straight, whatever the other fields say. Gear 0 with manual shifting off
+    leaves CARLA's automatic gearbox in charge; reverse is never used.
+    """
     out = CarlaEgoVehicleControl()
     out.header.stamp = msg.header.stamp
     if msg.emergency_stop:
@@ -80,7 +101,12 @@ def carla_control_from_command(
 
 
 class ControlAdapterNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (03 §7.3)
-    """Thin conversion node; the logic is LongitudinalMap and carla_conv."""
+    """Thin conversion node; the logic is LongitudinalMap and carla_conv.
+
+    Not in the tick barrier: it answers every command as it comes and never
+    waits, so it cannot cause a lockstep timeout; its ``NodeDiag`` carries
+    the command's stamp for the diagnostics timeline.
+    """
 
     def __init__(self) -> None:
         """Load the vehicle model and wire the topics."""
@@ -116,6 +142,7 @@ class ControlAdapterNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs
         )
 
     def _on_vehicle_state(self, msg: VehicleState) -> None:
+        """Remember the speed of tick k; forget speeds older than 1 s."""
         k = tick_index(msg.header.stamp)
         self._speed_by_tick[k] = float(msg.speed)
         self._latest_speed = float(msg.speed)
@@ -123,6 +150,11 @@ class ControlAdapterNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs
             del self._speed_by_tick[old]
 
     def _on_control_command(self, msg: ControlCommand) -> None:
+        """Convert and forward one command, using the speed of its own tick.
+
+        The latest speed is the fallback only for a command whose
+        ``vehicle_state`` never arrived (a tick that timed out).
+        """
         k = tick_index(msg.header.stamp)
         speed = self._speed_by_tick.get(k, self._latest_speed)
         out = carla_control_from_command(msg, self._map, self._max_steer_rad, speed)

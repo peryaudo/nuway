@@ -166,8 +166,13 @@ TEST(PurePursuitPid, SlowsBeforeABend) {
   out = controller.Step({99.0, 0.0, 0.0}, 10.0, kDt);
   EXPECT_NEAR(out.target_speed_mps,
               std::sqrt((v_curve * v_curve) + (2.0 * 2.0 * 1.5)), 0.2);
-  // Far away (beyond the 60 m horizon): the limit.
+  // 80 m before the bend: still on the ramp (the horizon reaches
+  // v_limit^2 / (2 a) = 100 m, so the bound is continuous from there).
   out = controller.Step({20.0, 0.0, 0.0}, 10.0, kDt);
+  EXPECT_NEAR(out.target_speed_mps,
+              std::sqrt((v_curve * v_curve) + (2.0 * 2.0 * 80.0)), 0.3);
+  // 100 m before: the ramp meets the limit; farther out, the limit.
+  out = controller.Step({0.0, 0.0, 0.0}, 10.0, kDt);
   EXPECT_NEAR(out.target_speed_mps, 20.0, 1e-9);
   // On the braking ramp at the profile speed the feed-forward alone commands
   // the ramp's deceleration (fresh controller: no integral or derivative).
@@ -250,6 +255,120 @@ TEST(PurePursuitPid, StopsAtTheEndOfTheLine) {
   EXPECT_LT(sim.speed, 0.1);
   EXPECT_LT(sim.pose.x, 100.5);
   EXPECT_GT(sim.pose.x, 95.0);
+}
+
+TEST(PurePursuitPid, SpeedProfileIsContinuousWhenABendEntersTheHorizon) {
+  PurePursuitPid controller(Lincoln(), PurePursuitPidOptions{});
+  // 400 m straight at 24.6 m/s, then an R = 8 m bend (v_curve 3.5 m/s).
+  nuway_common::Vector2dList points;
+  for (int i = 0; i <= 800; ++i) {
+    points.emplace_back(0.5 * i, 0.0);
+  }
+  const double radius = 8.0;
+  const int n_arc = static_cast<int>(std::lround(0.5 * kPi * radius / 0.5));
+  for (int i = 1; i <= n_arc; ++i) {
+    const double theta = 0.5 * i / radius;
+    points.emplace_back(400.0 + (radius * std::sin(theta)),
+                        radius - (radius * std::cos(theta)));
+  }
+  const Eigen::Vector2d arc_end = points.back();
+  for (int i = 1; i <= 600; ++i) {
+    points.emplace_back(arc_end.x(), arc_end.y() + (0.5 * i));
+  }
+  const nuway_common::ReferenceLine line =
+      nuway_common::ReferenceLine::FromPoints(points);
+  controller.SetReferenceLine(line, Limit(line, 24.6));
+  // Sampled every metre from 250 m before the bend, the target never drops
+  // faster than the plan_decel ramp itself (dv/ds = a / v per metre); with
+  // a fixed 60 m horizon it fell 24.6 -> 15.8 in one sample.
+  double prev = controller.Step({150.0, 0.0, 0.0}, 24.6, kDt).target_speed_mps;
+  for (int metre = 151; metre <= 399; ++metre) {
+    const auto x = static_cast<double>(metre);
+    const double target =
+        controller.Step({x, 0.0, 0.0}, 24.6, kDt).target_speed_mps;
+    EXPECT_LE(prev - target, (2.0 / std::max(target, 1.0)) + 0.05) << x;
+    prev = target;
+  }
+  // And the bound does reach 140 m out: sqrt(3.46^2 + 2 * 2 * 140) < 24.6.
+  EXPECT_LT(controller.Step({260.0, 0.0, 0.0}, 24.6, kDt).target_speed_mps,
+            24.6);
+}
+
+TEST(PurePursuitPid, StandstillAtAZeroTargetHoldsTheBrake) {
+  PurePursuitPid controller(Lincoln(), PurePursuitPidOptions{});
+  const nuway_common::ReferenceLine line = Straight(0.0, 100.0);
+  controller.SetReferenceLine(line, Limit(line, 0.0));
+  const ControlOutput out = controller.Step({10.0, 0.0, 0.0}, 0.0, kDt);
+  EXPECT_FALSE(out.emergency_stop);
+  // The adapter splits pedals at the coast deceleration (-0.8 m/s^2 at
+  // rest): 0 m/s^2 would be throttle. end_decel_mps2 holds the brake.
+  EXPECT_LE(out.accel_mps2, -PurePursuitPidOptions{}.end_decel_mps2 + 1e-9);
+}
+
+TEST(PurePursuitPid, EmergencyStopTicksResetTheRateLimiter) {
+  const VehicleModel model = Lincoln();
+  PurePursuitPid controller(model, PurePursuitPidOptions{});
+  const nuway_common::ReferenceLine line = Circle(20.0);
+  controller.SetReferenceLine(line, Limit(line, 8.0));
+  // Drive a few ticks on the circle: the steer settles at a fair angle.
+  Sim sim{{20.0, 0.0, kPi / 2.0}, 5.0};
+  ControlOutput out;
+  for (int k = 0; k < 40; ++k) {
+    out = controller.Step(sim.pose, sim.speed, kDt);
+    sim.Step(out, model.wheelbase_m);
+  }
+  EXPECT_GT(std::abs(out.steering_angle_rad), 0.05);
+  // One invalid-pose tick: the node skips Step, the adapter sends steer 0.
+  // (Off the line here, which also returns emergency_stop.)
+  out = controller.Step({200.0, 200.0, 0.0}, sim.speed, kDt);
+  EXPECT_TRUE(out.emergency_stop);
+  // Back on the line: the limiter resumes from 0, not from the old angle.
+  out = controller.Step(sim.pose, sim.speed, kDt);
+  EXPECT_FALSE(out.emergency_stop);
+  EXPECT_LE(std::abs(out.steering_angle_rad),
+            (model.limits.steer_rate_max_radps * kDt) + 1e-9);
+}
+
+TEST(PurePursuitPid, LookaheadPastTheLineEndDoesNotSwerve) {
+  PurePursuitPid controller(Lincoln(), PurePursuitPidOptions{});
+  const nuway_common::ReferenceLine line = Straight(0.0, 100.0);
+  controller.SetReferenceLine(line, Limit(line, 15.0));
+  // 0.3 m left of the line, 1 m before its end, creeping: the target point
+  // continues the line past the end, so the correction stays a normal one
+  // (clamping it to the last sample gave full lock).
+  ControlOutput out;
+  for (int k = 0; k < 40; ++k) {  // let the rate limiter converge
+    out = controller.Step({99.0, 0.3, 0.0}, 1.5, kDt);
+  }
+  EXPECT_FALSE(out.emergency_stop);
+  EXPECT_LT(std::abs(out.steering_angle_rad), 0.5);
+  EXPECT_LT(out.steering_angle_rad, 0.0);  // still steers back towards it
+}
+
+TEST(PurePursuitPid, ProjectsNearThePreviousSOnASelfCrossingRoute) {
+  PurePursuitPid controller(Lincoln(), PurePursuitPidOptions{});
+  // Leg A along +x to (80, 0), then around and back down through (40, 0).
+  nuway_common::Vector2dList points;
+  for (int i = 0; i <= 160; ++i) {
+    points.emplace_back(0.5 * i, 0.0);
+  }
+  for (int i = 1; i <= 40; ++i) {
+    points.emplace_back(80.0, 0.5 * i);
+  }
+  for (int i = 1; i <= 80; ++i) {
+    points.emplace_back(80.0 - (0.5 * i), 20.0);
+  }
+  for (int i = 1; i <= 80; ++i) {
+    points.emplace_back(40.0, 20.0 - (0.5 * i));
+  }
+  const nuway_common::ReferenceLine line =
+      nuway_common::ReferenceLine::FromPoints(points);
+  controller.SetReferenceLine(line, Limit(line, 8.0));
+  // Approaching the crossing on leg A, slightly left of it.
+  controller.Step({38.0, 0.3, 0.0}, 8.0, kDt);
+  const ControlOutput out = controller.Step({40.15, 0.3, 0.0}, 8.0, kDt);
+  EXPECT_NEAR(out.s_m, 40.15, 1e-6);  // not 159.7 on leg B
+  EXPECT_NEAR(out.heading_error_rad, 0.0, 1e-6);
 }
 
 }  // namespace

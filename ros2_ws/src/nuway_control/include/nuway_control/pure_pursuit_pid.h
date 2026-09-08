@@ -30,8 +30,15 @@ struct PurePursuitPidOptions {
   double lookahead_min_m = 2.5;
   double lookahead_max_m = 20.0;
   double a_lat_max_mps2 = 1.5;
+  // Floor of the speed-profile horizon; the profile looks at least
+  // v_limit^2 / (2 plan_decel) ahead, the distance beyond which no bound can
+  // cap the speed below the current limit (so the profile is continuous).
   double curvature_horizon_m = 60.0;
   double plan_decel_mps2 = 2.0;  // braking assumed when approaching a bend
+  // Projection window around the previous s (a route that crosses or loops
+  // back near itself must not pull the ego onto the other leg).
+  double projection_back_m = 10.0;
+  double projection_ahead_m = 50.0;
   double kp = 0.8;
   double ki = 0.2;
   double kd = 0.05;
@@ -88,9 +95,15 @@ class PurePursuitPid {
   nuway_common::ReferenceLine line_;
   bool has_line_ = false;
   std::vector<double> speed_limit_mps_;
+  // Drops the cross-tick state of the loops (integral, derivative memory,
+  // steer rate limiter): after an emergency-stop tick the adapter sent
+  // steer 0 / brake 1, so resuming from the old values would jump.
+  void ResetTransients();
+
   double integral_ = 0.0;
-  std::optional<double> prev_speed_error_;
+  std::optional<double> prev_speed_mps_;  // derivative on the measurement
   double prev_steer_rad_ = 0.0;
+  std::optional<double> last_s_m_;  // projection hint (previous tick's s)
 };
 
 }  // namespace nuway_control

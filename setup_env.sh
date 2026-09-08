@@ -59,6 +59,8 @@ _nuway_check_prereqs || return 1
 source /opt/ros/jazzy/setup.bash
 export COLCON_DEFAULTS_FILE="${NUWAY_ROOT}/ros2_ws/colcon_defaults.yaml"
 export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+# Raise CycloneDDS's participant cap (10 per host by default; the stack alone has 9 nodes).
+export CYCLONEDDS_URI="file://${NUWAY_ROOT}/configs/cyclonedds.xml"
 
 # 3. uv venv from the system interpreter (rclpy ABI), then sync.
 if [ ! -f "${NUWAY_ROOT}/.venv/pyvenv.cfg" ]; then

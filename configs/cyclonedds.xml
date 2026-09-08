@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- configs/cyclonedds.xml: exported as CYCLONEDDS_URI by setup_env.sh (docs/04_setup.md).
+     CycloneDDS's default MaxAutoParticipantIndex (9) allows ten DDS participants per host and
+     domain; the M0 stack alone has nine nodes plus `ros2 launch`, so the evaluation harness, a
+     `ros2 topic` probe or Foxglove could not join ("Failed to find a free participant index").
+     Discovery stays multicast, so participants with any index find each other. -->
+<CycloneDDS xmlns="https://cdds.io/config">
+  <Domain Id="any">
+    <Discovery>
+      <ParticipantIndex>auto</ParticipantIndex>
+      <MaxAutoParticipantIndex>120</MaxAutoParticipantIndex>
+    </Discovery>
+  </Domain>
+</CycloneDDS>

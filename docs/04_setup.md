@@ -188,6 +188,9 @@ The stack runs on CycloneDDS. Add to your shell (`setup_env.sh` exports it too):
 export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 ```
 
+**Participant cap (M0 finding, 2026-09-07).** CycloneDDS allows ten DDS participants per host and domain by default (`MaxAutoParticipantIndex` 9). The M0 stack alone is nine nodes plus `ros2 launch`, so an eleventh process, such as `ros2 topic echo`, the evaluation harness or Foxglove's bridge, fails with `Failed to find a free participant index for domain 0` and, worse, a `ros2 topic` probe simply prints nothing. `setup_env.sh` therefore exports `CYCLONEDDS_URI=file://<repo>/configs/cyclonedds.xml`, which raises the cap to 120; discovery stays multicast. If you also want the shared-memory config below, merge the two `<Domain>` blocks into that one file.
+
+
 CycloneDDS interoperates with CARLA's embedded FastDDS for both discovery and data — verified.
 It logs one benign warning per CARLA topic, which can be ignored:
 

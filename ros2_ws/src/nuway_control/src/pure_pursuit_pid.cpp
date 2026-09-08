@@ -42,7 +42,9 @@ double PurePursuitPid::SpeedLimitAt(double s) const {
 
 double PurePursuitPid::TargetSpeed(double s) const {
   double target = SpeedLimitAt(s);
-  // Curvature bound over the horizon, on the line samples plus s itself.
+  // Bounds over the horizon: a bend or a lower limit ahead caps the speed now
+  // to what a plan_decel_mps2 braking reaches it with, so the profile is
+  // continuous and its slope is a usable feed-forward.
   const std::vector<double>& line_s = line_.s();
   const double s_end =
       std::min(line_.length(), s + options_.curvature_horizon_m);
@@ -50,9 +52,13 @@ double PurePursuitPid::TargetSpeed(double s) const {
   for (auto it = first; it != line_s.end() && *it <= s_end; ++it) {
     const std::size_t i = static_cast<std::size_t>(it - line_s.begin());
     const double kappa = std::abs(line_.curvature()[i]);
+    double v_there = SpeedLimitAt(*it);
     if (kappa > 1e-6) {
-      target = std::min(target, std::sqrt(options_.a_lat_max_mps2 / kappa));
+      v_there = std::min(v_there, std::sqrt(options_.a_lat_max_mps2 / kappa));
     }
+    const double v_here = std::sqrt(
+        (v_there * v_there) + (2.0 * options_.plan_decel_mps2 * (*it - s)));
+    target = std::min(target, v_here);
   }
   const double kappa_here = std::abs(line_.CurvatureAt(s));
   if (kappa_here > 1e-6) {
@@ -65,6 +71,22 @@ double PurePursuitPid::TargetSpeed(double s) const {
   return std::max(0.0, target);
 }
 
+double PurePursuitPid::ProfileAccel(double s, double dt_s) const {
+  // Feed-forward from the speed profile: dv/dt = v dv/ds along it, which on a
+  // braking ramp sqrt(v_b^2 + 2 a (s_b - s)) is exactly -a. The PID alone
+  // would trail the ramp by kp^-1 m/s^2 of error. Read over at least one
+  // sample so the difference is not noise between neighbours.
+  const double v_here = TargetSpeed(s);
+  const double ds = std::max(0.5, v_here * std::max(dt_s, 0.0));
+  const double s_ahead = std::min(s + ds, line_.length());
+  if (s_ahead <= s) {
+    return 0.0;
+  }
+  const double slope = (TargetSpeed(s_ahead) - v_here) / (s_ahead - s);
+  return std::clamp(v_here * slope, model_.limits.a_min_mps2,
+                    model_.limits.a_max_mps2);
+}
+
 double PurePursuitPid::LateralStep(const nuway_common::SE2& pose,
                                    double speed_mps, double s, double dt_s,
                                    ControlOutput* out) {
@@ -72,13 +94,13 @@ double PurePursuitPid::LateralStep(const nuway_common::SE2& pose,
       std::clamp((options_.lookahead_gain_s * std::max(0.0, speed_mps)) +
                      options_.lookahead_base_m,
                  options_.lookahead_min_m, options_.lookahead_max_m);
+  const double wheelbase =
+      std::max(0.5 * model_.wheelbase_m, model_.EffectiveWheelbaseM(speed_mps));
   const nuway_common::CartesianPoint target = line_.PointAt(s + lookahead);
   const double dx = target.x - pose.x;
   const double dy = target.y - pose.y;
   const double chord = std::max(0.5, std::hypot(dx, dy));
   const double alpha = nuway_common::WrapAngle(std::atan2(dy, dx) - pose.yaw);
-  const double wheelbase =
-      std::max(0.5 * model_.wheelbase_m, model_.EffectiveWheelbaseM(speed_mps));
   double steer = std::atan(2.0 * wheelbase * std::sin(alpha) / chord);
   steer = std::clamp(steer, -model_.max_steer_angle_rad,
                      model_.max_steer_angle_rad);
@@ -91,7 +113,7 @@ double PurePursuitPid::LateralStep(const nuway_common::SE2& pose,
 }
 
 double PurePursuitPid::LongitudinalStep(double speed_mps, double target_mps,
-                                        double dt_s) {
+                                        double feedforward_mps2, double dt_s) {
   const double error = target_mps - speed_mps;
   double derivative = 0.0;
   if (prev_speed_error_.has_value() && dt_s > 0.0) {
@@ -102,8 +124,8 @@ double PurePursuitPid::LongitudinalStep(double speed_mps, double target_mps,
       options_.ki > 0.0 ? options_.integral_limit_mps2 / options_.ki : 0.0;
   const double proposed =
       std::clamp(integral_ + (error * dt_s), -integral_bound, integral_bound);
-  const double accel = (options_.kp * error) + (options_.ki * proposed) +
-                       (options_.kd * derivative);
+  const double accel = feedforward_mps2 + (options_.kp * error) +
+                       (options_.ki * proposed) + (options_.kd * derivative);
   double lo = model_.limits.a_min_mps2;
   double hi = model_.limits.a_max_mps2;
   if (model_.longitudinal_map.has_value()) {
@@ -149,7 +171,8 @@ ControlOutput PurePursuitPid::Step(const nuway_common::SE2& pose,
   out.target_speed_mps = TargetSpeed(frenet->s);
   out.speed_error_mps = out.target_speed_mps - speed_mps;
   out.steering_angle_rad = LateralStep(pose, speed_mps, frenet->s, dt_s, &out);
-  out.accel_mps2 = LongitudinalStep(speed_mps, out.target_speed_mps, dt_s);
+  out.accel_mps2 = LongitudinalStep(speed_mps, out.target_speed_mps,
+                                    ProfileAccel(frenet->s, dt_s), dt_s);
   return out;
 }
 

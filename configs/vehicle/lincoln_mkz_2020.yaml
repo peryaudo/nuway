@@ -17,7 +17,7 @@ actor_origin_height: 0.091
 max_steer_angle: 1.2217
 tau_steer: 0.1
 tau_throttle: 0.4
-limits: {a_max: 3.0, a_min: -6.0, jerk_max: 5.0, steer_rate_max: 0.8, kappa_max: 0.18}
+limits: {a_max: 3.0, a_min: -6.0, jerk_max: 5.0, steer_rate_max: 1.2, kappa_max: 0.18}
 sysid:
   status: fitted
   date: '2026-09-07'

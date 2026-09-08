@@ -5,10 +5,12 @@
 // Lateral: lookahead L_d = clamp(k_v v + L_0, min, max) along the line from
 // the ego projection; delta = atan(2 L sin(alpha) / L_d) with L the effective
 // wheelbase of the vehicle model, clamped to max_steer_angle and rate-limited.
-// Longitudinal: target speed = min(speed_limit(s), sqrt(a_lat_max / |kappa|)
-// over [s, s + horizon], stop profile toward the line end); PID on the speed
-// error with clamped integral, output clamped to the vehicle limits and to
-// what the LongitudinalMap can deliver at the current speed.
+// Longitudinal: target speed = min over [s, s + horizon] of the curvature
+// speed sqrt(a_lat_max / |kappa|) raised by the braking distance to it
+// (sqrt(v_curv^2 + 2 a_plan (s' - s)), so a bend is slowed for early
+// enough), bounded by speed_limit(s) and a stop profile toward the line end;
+// PID on the speed error with clamped integral, output clamped to the vehicle
+// limits and to what the LongitudinalMap can deliver at the current speed.
 #ifndef NUWAY_CONTROL_PURE_PURSUIT_PID_HPP_
 #define NUWAY_CONTROL_PURE_PURSUIT_PID_HPP_
 
@@ -23,16 +25,17 @@
 namespace nuway_control {
 
 struct PurePursuitPidOptions {
-  double lookahead_gain_s = 0.6;  // k_v
-  double lookahead_base_m = 2.0;  // L_0
-  double lookahead_min_m = 3.0;
+  double lookahead_gain_s = 0.45;  // k_v
+  double lookahead_base_m = 1.0;   // L_0
+  double lookahead_min_m = 2.5;
   double lookahead_max_m = 20.0;
-  double a_lat_max_mps2 = 2.0;
-  double curvature_horizon_m = 30.0;
+  double a_lat_max_mps2 = 1.5;
+  double curvature_horizon_m = 60.0;
+  double plan_decel_mps2 = 2.0;  // braking assumed when approaching a bend
   double kp = 0.8;
   double ki = 0.2;
   double kd = 0.05;
-  double integral_limit_mps2 = 1.5;  // |ki * integral| bound (anti-windup)
+  double integral_limit_mps2 = 0.5;  // |ki * integral| bound (anti-windup)
   double end_decel_mps2 = 1.5;       // stop profile toward the line end
   double max_lateral_error_m = 5.0;  // farther off the line: emergency stop
 };
@@ -75,7 +78,10 @@ class PurePursuitPid {
   double TargetSpeed(double s) const;
   double LateralStep(const nuway_common::SE2& pose, double speed_mps, double s,
                      double dt_s, ControlOutput* out);
-  double LongitudinalStep(double speed_mps, double target_mps, double dt_s);
+  // Acceleration of the speed profile itself at `s` (feed-forward).
+  double ProfileAccel(double s, double dt_s) const;
+  double LongitudinalStep(double speed_mps, double target_mps,
+                          double feedforward_mps2, double dt_s);
 
   VehicleModel model_;
   PurePursuitPidOptions options_;

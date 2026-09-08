@@ -118,7 +118,7 @@ files = [
   "ml/nuway_ml", "tools", "tests",
   "ros2_ws/src/nuway_carla_bridge", "ros2_ws/src/nuway_rclpy", "ros2_ws/src/nuway_perception",
 ]
-exclude = ["ros2_ws/(build|install|log)/", "ros2_ws/src/carla_msgs/", "ros2_ws/src/[a-z_]+/setup\\.py$", "data/", "external/"]
+exclude = ["ros2_ws/(build|install|log)/", "ros2_ws/src/carla_msgs/", "ros2_ws/src/[a-z_]+/setup\\.py$", "ros2_ws/src/[a-z_]+/test/", "data/", "external/"]  # every package's test/ would be one duplicate `test` module
 # The ros2_ws Python packages sit one directory deeper than their import name
 # (ros2_ws/src/<pkg>/<pkg>/); mypy_path makes `import nuway_perception` resolve
 # without an install step. tools/eval holds the nuway_eval package.

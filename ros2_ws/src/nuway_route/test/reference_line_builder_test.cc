@@ -149,5 +149,44 @@ TEST(ReferenceLineBuilder, LaneChangeBlendsLaterally) {
   EXPECT_FALSE(BuildReferenceLine(graph, {12345U}, options).has_value());
 }
 
+TEST(ReferenceLineBuilder, BlendStartsAtTheEgoAndEndsWithinTheSection) {
+  const nuway_map::LaneGraph graph = BuildGraph(kCorridorXodr);
+  ReferenceLineOptions options;
+  options.extension_m = 0.0;
+  options.blend_length_m = 20.0;
+  const std::vector<std::uint32_t> ids{Id(1, 0, -1), Id(1, 0, -2), Id(5, 0, -2),
+                                       Id(2, 0, -2)};
+  // The ego is 12 m into lane -1 when the plan is made: the line stays on
+  // -1 up to there (anchoring at the section start would have put it 3 m
+  // sideways from the ego already) and eases over the next 18 m (20 m
+  // capped at the 30 m section's remainder).
+  nuway_msgs::msg::ReferenceLine line =
+      Unwrap(BuildReferenceLine(graph, ids, options, 12.0));
+  for (const geometry_msgs::msg::Point& p : line.points) {
+    if (p.x < 11.5) {
+      EXPECT_NEAR(p.y, -1.75, 1e-6) << "x=" << p.x;
+    }
+    if (std::abs(p.x - 21.0) < 0.3) {  // halfway: 12 + 9
+      EXPECT_NEAR(p.y, -1.75 + (0.5 * -3.25), 0.1) << "x=" << p.x;
+    }
+    if (p.x > 30.5) {
+      EXPECT_NEAR(p.y, -5.0, 1e-6) << "x=" << p.x;
+    }
+  }
+  // A blend longer than the section completes at the section end instead of
+  // stepping sideways there: 60 m requested on a 30 m section.
+  options.blend_length_m = 60.0;
+  line = Unwrap(BuildReferenceLine(graph, ids, options));
+  for (const geometry_msgs::msg::Point& p : line.points) {
+    if (std::abs(p.x - 15.0) < 0.3) {
+      EXPECT_NEAR(p.y, -1.75 + (0.5 * -3.25), 0.1) << "x=" << p.x;
+    }
+    if (p.x > 30.5) {
+      EXPECT_NEAR(p.y, -5.0, 1e-6) << "x=" << p.x;
+    }
+  }
+  EXPECT_LT(PointGap(line, line.points.size() - 1), 0.5 + 1e-9);
+}
+
 }  // namespace
 }  // namespace nuway_route

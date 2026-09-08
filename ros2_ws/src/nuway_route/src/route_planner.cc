@@ -20,10 +20,43 @@ struct Open {
   bool operator>(const Open& other) const { return f > other.f; }
 };
 
-double Heuristic(const nuway_map::Lane& lane, const Eigen::Vector2d& goal_xy) {
-  // Straight-line distance from the lane's entry: admissible because every
-  // edge out of the lane is charged at least the lane's own length.
-  return (lane.centerline.front().head<2>() - goal_xy).norm();
+// Admissible lower bound on the cost still to pay from `lane` to a goal
+// lane holding `goal_xy`. Costs are charged when a lane is *left* (its
+// length) or changed (a flat penalty); the goal lane itself is never charged
+// and is reached the moment it is expanded. Hence:
+//   - on a goal lane, or one lateral change away from one, nothing is
+//     certain to be paid: 0;
+//   - otherwise the chain of lanes still to be traversed covers at least the
+//     straight distance from this lane's end to wherever the goal lane is
+//     entered, which lies within `slack_m` (the longest goal lane plus a
+//     lane width) of the waypoint.
+// The straight-line distance from the lane *entry* to the waypoint, used
+// before, overestimated on the goal lane (its own length is free) and gave
+// valid but not always shortest routes.
+double RemainingLowerBound(const nuway_map::Lane& lane,
+                           const std::unordered_set<std::uint32_t>& goal_ids,
+                           const Eigen::Vector2d& goal_xy, double slack_m) {
+  if (goal_ids.count(lane.id) != 0U ||
+      (lane.left_neighbor != 0 && goal_ids.count(lane.left_neighbor) != 0U) ||
+      (lane.right_neighbor != 0 && goal_ids.count(lane.right_neighbor) != 0U)) {
+    return 0.0;
+  }
+  const double to_goal = (lane.centerline.back().head<2>() - goal_xy).norm();
+  return std::max(0.0, to_goal - slack_m);
+}
+
+// Longest goal lane plus a lane width: how far from the waypoint the goal
+// lane may be entered.
+double GoalSlackM(const nuway_map::LaneGraph& graph,
+                  const std::unordered_set<std::uint32_t>& goal_ids) {
+  double longest = 0.0;
+  for (const std::uint32_t id : goal_ids) {
+    const nuway_map::Lane* lane = graph.lane(id);
+    if (lane != nullptr) {
+      longest = std::max(longest, lane->length_m);
+    }
+  }
+  return longest + 5.0;
 }
 
 }  // namespace
@@ -36,11 +69,15 @@ std::optional<std::vector<std::uint32_t>> ShortestLanePath(
   if (graph.lane(start) == nullptr || goal_set.empty()) {
     return std::nullopt;
   }
+  const double slack_m = GoalSlackM(graph, goal_set);
+  const auto heuristic = [&](const nuway_map::Lane& lane) {
+    return RemainingLowerBound(lane, goal_set, goal_xy, slack_m);
+  };
   std::priority_queue<Open, std::vector<Open>, std::greater<>> open;
   std::unordered_map<std::uint32_t, double> best_g;
   std::unordered_map<std::uint32_t, std::uint32_t> parent;
   std::unordered_set<std::uint32_t> closed;
-  open.push(Open{Heuristic(*graph.lane(start), goal_xy), 0.0, start});
+  open.push(Open{heuristic(*graph.lane(start)), 0.0, start});
   best_g[start] = 0.0;
   while (!open.empty()) {
     const Open current = open.top();
@@ -70,7 +107,7 @@ std::optional<std::vector<std::uint32_t>> ShortestLanePath(
       }
       best_g[next_id] = g;
       parent[next_id] = current.lane_id;
-      open.push(Open{g + Heuristic(*next, goal_xy), g, next_id});
+      open.push(Open{g + heuristic(*next), g, next_id});
     };
     for (const std::uint32_t succ : lane->successors) {
       relax(succ, lane->length_m);
@@ -191,8 +228,18 @@ std::optional<RoutePlan> PlanRoute(const nuway_map::LaneGraph& graph,
   // junction several overlapping lanes sit on the waypoint and only some
   // lead on towards the next one.
   const std::size_t n = waypoints.size();
+  std::vector<std::unordered_set<std::uint32_t>> goal_ids(n);
+  std::vector<double> slack_m(n, 0.0);
+  for (std::size_t i = 0; i < n; ++i) {
+    for (const Goal& g : goals[i]) {
+      goal_ids[i].insert(g.lane_id);
+    }
+    slack_m[i] = GoalSlackM(graph, goal_ids[i]);
+  }
   const auto heuristic = [&](const nuway_map::Lane& lane, std::size_t stage) {
-    return stage >= n ? 0.0 : Heuristic(lane, waypoints[stage]);
+    return stage >= n ? 0.0
+                      : RemainingLowerBound(lane, goal_ids[stage],
+                                            waypoints[stage], slack_m[stage]);
   };
   std::vector<bool> behind_seen(n, false);
   std::priority_queue<JointOpen, std::vector<JointOpen>, std::greater<>> open;
@@ -268,6 +315,7 @@ std::optional<RoutePlan> PlanRoute(const nuway_map::LaneGraph& graph,
   }
   std::reverse(chain.begin(), chain.end());
   RoutePlan plan;
+  plan.start_s_m = start->s;
   std::size_t stage = 0;
   for (const std::uint64_t k : chain) {
     plan.lane_ids.push_back(KeyLane(k));

@@ -24,11 +24,16 @@ struct ReferenceLineOptions {
 };
 
 // Builds the reference line message (header left empty) for an ordered lane
-// list; nullopt when the list is empty or names unknown lanes.
+// list; nullopt when the list is empty or names unknown lanes. `start_s_m`
+// is the ego's arc length along the first lane: a lateral blend that starts
+// on that lane begins there (RoutePlan::start_s_m), so the line does not
+// sit fully on the neighbour lane behind an ego that is already
+// mid-section. Every blend is capped at the remaining section length so it
+// completes before the section ends.
 std::optional<nuway_msgs::msg::ReferenceLine> BuildReferenceLine(
     const nuway_map::LaneGraph& graph,
     const std::vector<std::uint32_t>& lane_ids,
-    const ReferenceLineOptions& options);
+    const ReferenceLineOptions& options, double start_s_m = 0.0);
 
 // Quintic ease 0 -> 1 with zero first and second derivatives at both ends.
 double QuinticBlend(double t);

@@ -65,19 +65,28 @@ void AppendLane(const nuway_map::LaneGraph& graph, const nuway_map::Lane& lane,
 }
 
 // Appends the lateral blend from `from` onto `to` (same section, so their
-// samples line up index by index) over the first blend_length_m of `to`.
+// samples line up index by index), starting at arc length `begin_s` along
+// `to` (the ego's position on the first lane of the plan, else 0) and
+// lasting min(blend_length_m, what is left of the section): a blend anchored
+// at the section start put the line fully on the neighbour behind an ego
+// already mid-section (an immediate 3.5 m error), and a fixed 30 m on a 15 m
+// section ended with the line 79 % on the source lane and a sideways step
+// at the section boundary.
 void AppendBlend(const nuway_map::LaneGraph& graph, const nuway_map::Lane& from,
                  const nuway_map::Lane& to, double blend_length_m,
-                 std::vector<RawPoint>* raw) {
+                 double begin_s, std::vector<RawPoint>* raw) {
   const std::size_t n = std::min(from.centerline.size(), to.centerline.size());
+  const double length = std::max(
+      1.0, std::min(blend_length_m, to.length_m - std::max(0.0, begin_s)));
   double s = 0.0;
   for (std::size_t i = 0; i < n; ++i) {
     if (i > 0) {
       s += (to.centerline[i] - to.centerline[i - 1]).norm();
     }
-    const double q = blend_length_m > 0.0
-                         ? QuinticBlend(std::min(1.0, s / blend_length_m))
-                         : 1.0;
+    const double q =
+        blend_length_m > 0.0
+            ? QuinticBlend(std::max(0.0, std::min(1.0, (s - begin_s) / length)))
+            : 1.0;
     const Eigen::Vector3d p =
         ((1.0 - q) * from.centerline[i]) + (q * to.centerline[i]);
     if (!raw->empty() && (raw->back().p - p).norm() < 1e-3) {
@@ -117,7 +126,7 @@ double QuinticBlend(double t) {
 std::optional<nuway_msgs::msg::ReferenceLine> BuildReferenceLine(
     const nuway_map::LaneGraph& graph,
     const std::vector<std::uint32_t>& lane_ids,
-    const ReferenceLineOptions& options) {
+    const ReferenceLineOptions& options, double start_s_m) {
   if (lane_ids.empty()) {
     return std::nullopt;
   }
@@ -142,7 +151,7 @@ std::optional<nuway_msgs::msg::ReferenceLine> BuildReferenceLine(
       AppendLane(graph, lane, &raw);
     } else {
       AppendBlend(graph, lane, *graph.lane(lane_ids[j]), options.blend_length_m,
-                  &raw);
+                  i == 0 ? start_s_m : 0.0, &raw);
     }
     i = j + 1;
   }

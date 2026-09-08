@@ -38,12 +38,15 @@ def check_header(header: Path, package_dir: Path) -> str | None:
     guard = expected_guard(header, package_dir)
     ifndef = re.search(r"^#ifndef\s+(\S+)", text, flags=re.MULTILINE)
     define = re.search(r"^#define\s+(\S+)", text, flags=re.MULTILINE)
-    endif = re.search(r"^#endif\s*//\s*(\S+)\s*$", text, flags=re.MULTILINE)
+    # The guard closes the file: the last #endif, not the first (an inner
+    # `#endif  // SOMETHING` before it must not be mistaken for the guard).
+    endifs = re.findall(r"^#endif\s*//\s*(\S+)\s*$", text, flags=re.MULTILINE)
+    endif = endifs[-1] if endifs else None
     if ifndef is None or define is None:
         return f"missing include guard {guard}"
     if ifndef.group(1) != guard or define.group(1) != guard:
         return f"guard is {ifndef.group(1)}, expected {guard}"
-    if endif is None or endif.group(1) != guard:
+    if endif != guard:
         return f"closing line must be '#endif  // {guard}'"
     return None
 

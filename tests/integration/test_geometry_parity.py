@@ -209,8 +209,6 @@ def test_occupancy_parity() -> None:
     assert list(occupancy.OCCUPANCY_CHANNEL_NAMES) == list(
         nuway_py.OCCUPANCY_CHANNEL_NAMES
     )
-    channel = RNG.uniform(0, 1, (200, 200))
-    torch = pytest.importorskip("torch", reason="bilinear_sample is torch-only")
     for _ in range(500):
         x, y = RNG.uniform(-52, 52, 2)
         np.testing.assert_allclose(
@@ -227,6 +225,16 @@ def test_occupancy_parity() -> None:
             nuway_py.grid_to_world(spec_cpp, int(row), int(col)),
             atol=ATOL,
         )
+
+
+def test_bilinear_sample_parity() -> None:
+    """Separate from the grid helpers so the import-light environment still runs those."""
+    spec_py = occupancy.GridSpec(0.5, -50.0, -50.0, 200, 200)
+    spec_cpp = nuway_py.GridSpec(0.5, -50.0, -50.0, 200, 200)
+    channel = RNG.uniform(0, 1, (200, 200))
+    torch = pytest.importorskip("torch", reason="bilinear_sample is torch-only")
+    for _ in range(500):
+        x, y = RNG.uniform(-52, 52, 2)
         v_py = occupancy.bilinear_sample(
             spec_py,
             torch.as_tensor(channel),

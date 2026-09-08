@@ -40,6 +40,7 @@ ros2 launch nuway_bringup stack.launch.py profile:=m0_gt_all
 - The venv must come from `/usr/bin/python3.12` with `--system-site-packages` (`rclpy` ABI). Never create it by hand; `setup_env.sh` does it.
 - `torch` is the `nuway-ml[torch]` extra on the **cu126** index (not cu130), pulled in only by the `train`/`infer` groups. Modules that must import without torch (`nuway_ml/common/*`, `data/gt_occupancy.py`) import it lazily inside functions.
 - `RMW_IMPLEMENTATION=rmw_cyclonedds_cpp`. The per-topic `Failed to parse type hash ... USER_DATA '(null)'` warning from CARLA topics is benign.
+- `CYCLONEDDS_URI` points at `configs/cyclonedds.xml` (exported by `setup_env.sh`): CycloneDDS allows only 10 participants per host by default and the M0 stack alone has 9 nodes, so without it `ros2 topic`, the eval harness and Foxglove fail with `Failed to find a free participant index`.
 - Sanitizer build: `colcon build --cmake-args -DNUWAY_SANITIZE=address,undefined --build-base build_asan --install-base install_asan`. Tidy-in-build: `-DNUWAY_CLANG_TIDY=ON`.
 
 ## CARLA gotchas (verified on the dev box; details in `docs/00_overview.md` §4, `docs/04_setup.md`)

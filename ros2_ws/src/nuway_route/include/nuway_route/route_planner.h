@@ -38,10 +38,16 @@ struct RoutePlan {
   std::vector<std::uint32_t> lane_ids;  // ordered, no repeats in a row
   // Index into lane_ids of the lane each waypoint was reached on.
   std::vector<std::size_t> waypoint_lane_index;
+  // The ego's arc length along lane_ids.front() when the plan was made (the
+  // reference line's first lateral blend starts there, not at the lane's
+  // section start).
+  double start_s_m = 0.0;
 };
 
 // A* from `start` (a lane id) to any lane in `goals`; returns the lane
-// sequence including both ends, or nullopt when unreachable.
+// sequence including both ends, or nullopt when unreachable. The heuristic
+// is admissible (see RemainingLowerBound in the .cc), so the sequence is the
+// cheapest one under the edge costs.
 std::optional<std::vector<std::uint32_t>> ShortestLanePath(
     const nuway_map::LaneGraph& graph, std::uint32_t start,
     const std::vector<std::uint32_t>& goals, const Eigen::Vector2d& goal_xy,

@@ -12,6 +12,7 @@
 // are latest-value inputs for the consumers.
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
@@ -28,6 +29,7 @@
 #include <nuway_common/params.h>
 #include <nuway_common/qos.h>
 #include <nuway_common/ros_conv.h>
+#include <nuway_common/tick.h>
 #include <nuway_map/lane_graph.h>
 #include <nuway_msgs/msg/ego_state.hpp>
 #include <nuway_msgs/msg/lane_graph.hpp>
@@ -94,17 +96,36 @@ class RoutePlannerNode final : public rclcpp::Node {
     RCLCPP_INFO(get_logger(), "lane graph: %zu lanes", graph_->lanes().size());
   }
 
+  // Stamped before the current episode's first tick (docs/02 §7), as tick
+  // indices (raw stamps of one tick can differ by nanoseconds between
+  // publishers). A zero stamp is "unknown", not "before".
+  bool BeforeEpisode(const builtin_interfaces::msg::Time& stamp) const {
+    return episode_tick_.has_value() &&
+           nuway_common::TickIndex(stamp) < *episode_tick_ &&
+           rclcpp::Time(stamp).nanoseconds() != 0;
+  }
+
   void OnResetEvent(const nuway_msgs::msg::ResetEvent& msg) {
-    episode_start_ = rclcpp::Time(msg.header.stamp);
-    waypoints_.clear();
+    // The event topic is transient_local: replays of earlier episodes arrive
+    // in no guaranteed order and must not clear anything.
+    if (episode_id_.has_value() && msg.episode_id <= *episode_id_) {
+      return;
+    }
+    episode_id_ = msg.episode_id;
+    episode_tick_ = nuway_common::TickIndex(msg.header.stamp);
+    // Waypoints already stamped for this episode survive: when the Path and
+    // the ResetEvent are ready in the same executor wake, the subscriptions
+    // are served in creation order (waypoints first), and clearing them here
+    // would leave the whole episode with "no waypoints".
+    if (!waypoints_.empty() && BeforeEpisode(waypoints_stamp_)) {
+      waypoints_.clear();
+    }
     ClearRoute();
     RCLCPP_INFO(get_logger(), "reset: episode %u", msg.episode_id);
   }
 
   void OnWaypoints(const nav_msgs::msg::Path& msg) {
-    if (episode_start_.has_value() &&
-        rclcpp::Time(msg.header.stamp) < *episode_start_ &&
-        rclcpp::Time(msg.header.stamp).nanoseconds() != 0) {
+    if (BeforeEpisode(msg.header.stamp)) {
       RCLCPP_WARN(get_logger(),
                   "waypoints stamped before the current episode; ignored");
       return;
@@ -114,6 +135,7 @@ class RoutePlannerNode final : public rclcpp::Node {
     for (const geometry_msgs::msg::PoseStamped& pose : msg.poses) {
       waypoints_.emplace_back(pose.pose.position.x, pose.pose.position.y);
     }
+    waypoints_stamp_ = msg.header.stamp;
     ClearRoute();
     RCLCPP_INFO(get_logger(), "route: %zu waypoints", waypoints_.size());
   }
@@ -124,8 +146,7 @@ class RoutePlannerNode final : public rclcpp::Node {
     DiagStatus status = DiagStatus::kOk;
     {
       const nuway_common::ScopedTimer timer(&cycle_ms);
-      if (episode_start_.has_value() &&
-          rclcpp::Time(msg.header.stamp) < *episode_start_) {
+      if (BeforeEpisode(msg.header.stamp)) {
         return;  // previous episode
       }
       if (!msg.valid) {
@@ -148,6 +169,7 @@ class RoutePlannerNode final : public rclcpp::Node {
     line_.reset();
     route_.reset();
     waypoint_s_.clear();
+    planned_from_ = 0;
     off_line_ticks_ = 0;
   }
 
@@ -168,8 +190,8 @@ class RoutePlannerNode final : public rclcpp::Node {
                            message->c_str());
       return;
     }
-    std::optional<nuway_msgs::msg::ReferenceLine> line =
-        BuildReferenceLine(*graph_, plan->lane_ids, line_options_);
+    std::optional<nuway_msgs::msg::ReferenceLine> line = BuildReferenceLine(
+        *graph_, plan->lane_ids, line_options_, plan->start_s_m);
     if (!line.has_value()) {
       *message = "reference line failed";
       *status = DiagStatus::kError;
@@ -187,11 +209,16 @@ class RoutePlannerNode final : public rclcpp::Node {
       points.emplace_back(p.x, p.y);
     }
     frenet_ = nuway_common::ReferenceLine::FromPoints(points);
-    waypoint_s_.clear();
-    for (const Eigen::Vector2d& wp : waypoints_) {
+    // Waypoints before first_waypoint are passed for good; projecting them
+    // onto the new line (which may run near them again) would give them a
+    // large s and make a later reroute replan through them.
+    planned_from_ = first_waypoint;
+    waypoint_s_.assign(waypoints_.size(), -1.0);
+    for (std::size_t i = first_waypoint; i < waypoints_.size(); ++i) {
+      const Eigen::Vector2d& wp = waypoints_[i];
       const std::optional<nuway_common::FrenetPoint> f = frenet_.ToFrenet(
           wp.x(), wp.y(), 2.0 * planner_options_.waypoint_max_dist_m);
-      waypoint_s_.push_back(f.has_value() ? f->s : -1.0);
+      waypoint_s_[i] = f.has_value() ? f->s : -1.0;
     }
     line_ = std::move(line);
     route_ = route;
@@ -243,7 +270,7 @@ class RoutePlannerNode final : public rclcpp::Node {
     }
     // Replan through the waypoints not yet passed.
     const double ego_s = f.has_value() ? f->s : 0.0;
-    std::size_t first = 0;
+    std::size_t first = planned_from_;
     while (first + 1 < waypoints_.size() && waypoint_s_[first] >= 0.0 &&
            waypoint_s_[first] < ego_s) {
       ++first;
@@ -263,12 +290,15 @@ class RoutePlannerNode final : public rclcpp::Node {
   int reroute_ticks_ = 40;
 
   std::unique_ptr<nuway_map::LaneGraph> graph_;
-  std::optional<rclcpp::Time> episode_start_;
+  std::optional<std::uint32_t> episode_id_;
+  std::optional<std::int64_t> episode_tick_;  // first tick of the episode
   nuway_common::Vector2dList waypoints_;
+  builtin_interfaces::msg::Time waypoints_stamp_;
   std::optional<nuway_msgs::msg::ReferenceLine> line_;
   std::optional<nuway_msgs::msg::Route> route_;
   nuway_common::ReferenceLine frenet_;
   std::vector<double> waypoint_s_;
+  std::size_t planned_from_ = 0;  // first waypoint of the current plan
   int off_line_ticks_ = 0;
 
   nuway_common::DiagPublisher diag_;

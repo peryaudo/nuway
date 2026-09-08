@@ -54,11 +54,11 @@ def test_every_launch_file_declares_its_arguments_before_the_opaque_function() -
         module = importlib.util.module_from_spec(spec)
         try:
             spec.loader.exec_module(module)
-        except (
-            ModuleNotFoundError
-        ) as err:  # ament_index / launch_ros without a workspace
+            entities = list(module.generate_launch_description().entities)
+        except (ModuleNotFoundError, LookupError) as err:
+            # launch_ros missing, or the package is not in the ament index
+            # (pytest without a colcon build, as in the python CI job).
             pytest.skip(f"{path.name}: {err}")
-        entities = list(module.generate_launch_description().entities)
         opaque = [i for i, e in enumerate(entities) if isinstance(e, OpaqueFunction)]
         declared = [
             i for i, e in enumerate(entities) if isinstance(e, DeclareLaunchArgument)

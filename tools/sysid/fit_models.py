@@ -42,9 +42,18 @@ from nuway_ml.common.tick import TICK_DT_S
 
 Array = NDArray[np.float64]
 
+MODES = ("throttle", "brake", "coast", "steer")
 V_BINS = np.arange(0.0, 31.0, 1.0)
 PEDAL_BINS = np.round(np.arange(0.0, 1.01, 0.1), 1)
 STEP_SKIP_S = 1.0  # samples this soon after a pedal step are not steady state
+# The brake hold starts the moment the reach phase's full throttle is released,
+# and the throttle lag is ~0.1-0.2 s, so 0.5 s is enough; 1 s would discard the
+# whole 5 m/s tier (its runs last 0.5 s).
+BRAKE_STEP_SKIP_S = 0.5
+# CARLA (PhysX) snaps a braking car to rest below ~5.5 m/s: the last ticks of
+# every brake run lose ~1.3 m/s per tick (about -26 m/s^2) whatever the pedal.
+# That is not brake authority; samples from the first such tick on are cut.
+STOP_CLIFF_MPS2 = 12.0
 STEADY_WINDOW_S = 1.5  # steer: steady state is the mean over the last window
 SMOOTH_TICKS = 5
 LINEAR_A_LAT_MPS2 = 3.0  # steer runs above this steady lateral accel are tyre-saturated
@@ -123,6 +132,15 @@ def runs_from_rows(rows: list[dict[str, str]]) -> list[Run]:
         group.sort(key=lambda r: int(r["k"]))
         t = np.array([float(r["t"]) for r in group])
         v = np.array([float(r["vx"]) for r in group])
+        # The wheel angle of the row's own tick. Sweeps recorded before the
+        # tick join carried the previous tick's value (wheel_tick = k - 1);
+        # the recorded wheel_tick puts it back on the right row.
+        wheel_by_tick = {
+            int(r.get("wheel_tick", r["k"])): float(r["wheel_angle"]) for r in group
+        }
+        wheel = np.array(
+            [wheel_by_tick.get(int(r["k"]), float(r["wheel_angle"])) for r in group]
+        )
         runs.append(
             Run(
                 mode=mode,
@@ -133,7 +151,7 @@ def runs_from_rows(rows: list[dict[str, str]]) -> list[Run]:
                 v=v,
                 a=acceleration(v),
                 yaw_rate=np.array([float(r["yaw_rate"]) for r in group]),
-                wheel_angle=np.array([float(r["wheel_angle"]) for r in group]),
+                wheel_angle=wheel,
             )
         )
     return runs
@@ -142,7 +160,7 @@ def runs_from_rows(rows: list[dict[str, str]]) -> list[Run]:
 def load_runs(sysid_dir: Path) -> dict[str, list[Run]]:
     """Load every mode CSV present in the directory."""
     out: dict[str, list[Run]] = {}
-    for mode in ("throttle", "brake", "coast", "steer"):
+    for mode in MODES:
         path = sysid_dir / f"{mode}.csv"
         if not path.is_file():
             continue
@@ -153,6 +171,18 @@ def load_runs(sysid_dir: Path) -> dict[str, list[Run]]:
 
 
 # ------------------------------------------------------------ longitudinal
+def brake_steady_mask(r: Run) -> Array:
+    """Select the brake samples that measure the pedal: past the step, moving, before the stop cliff."""
+    mask = (r.t >= BRAKE_STEP_SKIP_S) & (r.v > 0.3)
+    if len(r.v) >= 2:
+        raw_decel = np.diff(r.v) / TICK_DT_S
+        cliff = np.where(raw_decel < -STOP_CLIFF_MPS2)[0]
+        if len(cliff):
+            # The smoothing window spreads the cliff over its half width.
+            mask[max(0, int(cliff[0]) - SMOOTH_TICKS // 2) :] = False
+    return np.asarray(mask, dtype=bool)
+
+
 def fill_nearest(column: Array) -> Array:
     """Fill NaN bins with the nearest measured bin (flat extrapolation)."""
     out = column.copy()
@@ -201,7 +231,9 @@ def bin_means(v: Array, a: Array, v_bins: Array) -> tuple[Array, Array]:
     counts = np.zeros(len(v_bins))
     if len(v) == 0:
         return means, counts
-    idx = np.clip(np.round(v).astype(int), 0, len(v_bins) - 1)
+    # A sample past the last bin is dropped, not folded into it (throttle runs
+    # from 20 m/s exceed 30 m/s within the hold).
+    idx = np.round(v).astype(int)
     for i in range(len(v_bins)):
         sel = idx == i
         counts[i] = float(np.sum(sel))
@@ -233,19 +265,17 @@ def fit_pedal_table(
     total = 0
     for j, level in enumerate(pedal_bins[1:], start=1):
         sel = [r for r in runs if abs(r.level - level) < 1e-6]
+        masks = [brake_steady_mask(r) if brake else r.t >= STEP_SKIP_S for r in sel]
         v = (
-            np.concatenate([r.v[r.t >= STEP_SKIP_S] for r in sel])
+            np.concatenate([r.v[m] for r, m in zip(sel, masks, strict=True)])
             if sel
             else np.array([])
         )
         a = (
-            np.concatenate([r.a[r.t >= STEP_SKIP_S] for r in sel])
+            np.concatenate([r.a[m] for r, m in zip(sel, masks, strict=True)])
             if sel
             else np.array([])
         )
-        if brake:
-            keep = v > 0.3  # the stopped tail is not a deceleration sample
-            v, a = v[keep], a[keep]
         total += len(v)
         means, _ = bin_means(v, a, v_bins)
         table[:, j] = fill_along_drag(means, v_bins, coast)
@@ -276,9 +306,7 @@ def residual_rms(lon: LongitudinalMap, runs: list[Run], mode: str) -> float:
     """RMS of ``a_sample - table(v, pedal)`` over the steady-state samples."""
     errs: list[float] = []
     for r in runs:
-        sel = r.t >= STEP_SKIP_S
-        if mode == "brake":
-            sel &= r.v > 0.3
+        sel = brake_steady_mask(r) if mode == "brake" else r.t >= STEP_SKIP_S
         for v, a in zip(r.v[sel], r.a[sel], strict=True):
             if mode == "throttle":
                 pred = lon.accel(float(v), r.level)
@@ -584,11 +612,21 @@ def main(argv: list[str] | None = None) -> int:
         "--vehicle", type=Path, default=Path("configs/vehicle/lincoln_mkz_2020.yaml")
     )
     parser.add_argument("--no-plots", action="store_true")
+    parser.add_argument(
+        "--allow-partial",
+        action="store_true",
+        help="fit with some mode CSVs missing (their tables become placeholders)",
+    )
     args = parser.parse_args(argv)
 
     runs = load_runs(args.sysid_dir)
-    if not runs:
-        print(f"no sweep CSVs in {args.sysid_dir}")
+    missing = [m for m in MODES if m not in runs]
+    if missing and not (args.allow_partial and len(missing) < len(MODES)):
+        # A partial directory would otherwise silently overwrite the fitted
+        # vehicle YAML with placeholder tables (no throttle or brake authority).
+        print(
+            f"missing sweep CSVs in {args.sysid_dir}: {missing} (--allow-partial to fit anyway)"
+        )
         return 1
     for mode, mode_runs in runs.items():
         print(

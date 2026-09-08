@@ -33,8 +33,19 @@ def decel_true(v: float, b: float) -> float:
     return -8.0 * b + drag(v)
 
 
-def simulate(mode: str, run: int, v0: float, level: float, seconds: float) -> fm.Run:
-    """First-order actuator lag on the pedal, Euler integration of v."""
+def simulate(
+    mode: str,
+    run: int,
+    v0: float,
+    level: float,
+    seconds: float,
+    stop_cliff_below_mps: float = 0.0,
+) -> fm.Run:
+    """First-order actuator lag on the pedal, Euler integration of v.
+
+    ``stop_cliff_below_mps`` mimics CARLA: below that speed a braking car
+    loses 1.3 m/s per tick whatever the pedal (fit_models.STOP_CLIFF_MPS2).
+    """
     n = int(seconds / TICK_DT_S)
     v = np.zeros(n)
     a = np.zeros(n)
@@ -46,6 +57,8 @@ def simulate(mode: str, run: int, v0: float, level: float, seconds: float) -> fm
             acc = accel_true(speed, u)
         elif mode == "brake":
             acc = decel_true(speed, u) if speed > 0.0 else 0.0
+            if 0.0 < speed < stop_cliff_below_mps:
+                acc = -1.3 / TICK_DT_S
         else:
             acc = drag(speed)
         v[i] = speed
@@ -184,3 +197,37 @@ def test_runs_from_rows_groups_hold_phase() -> None:
     assert len(runs[0].t) == 20
     assert runs[0].t[0] == 0.0
     assert runs[0].level == 0.5
+
+
+def test_stop_cliff_samples_do_not_enter_the_brake_table() -> None:
+    """CARLA's low-speed snap to rest (-26 m/s^2 at every pedal) is not brake authority."""
+    coast = np.array([drag(v) for v in fm.V_BINS])
+    runs = [
+        simulate("brake", i, v0, b, 20.0, stop_cliff_below_mps=5.5)
+        for i, (v0, b) in enumerate(
+            (v0, b) for v0 in (5.0, 10.0, 20.0) for b in (0.1, 0.5, 1.0)
+        )
+    ]
+    # Every run ends in the cliff and the mask cuts it off; the 5 m/s tier
+    # lies entirely inside it and contributes nothing.
+    for r in runs:
+        mask = fm.brake_steady_mask(r)
+        assert mask.any() == (r.v0 >= 10.0), r.v0
+        if mask.any():
+            assert r.a[mask].min() > -12.0, r.a[mask].min()
+    table, _ = fm.fit_pedal_table(
+        runs, np.array([0.0, 0.1, 0.5, 1.0]), fm.V_BINS, coast, brake=True
+    )
+    # Bins below the cliff are filled along the drag from the nearest measured
+    # bin instead of averaging the -26 m/s^2 samples.
+    for v in (0.0, 2.0, 4.0):
+        assert table[int(v), 1] == pytest.approx(decel_true(v, 0.1), abs=0.6)
+        assert table[int(v), 3] == pytest.approx(decel_true(v, 1.0), abs=0.6)
+
+
+def test_samples_past_the_last_bin_are_dropped_not_folded() -> None:
+    v = np.array([29.6, 30.4, 31.0, 35.0])
+    a = np.array([1.0, 1.0, -5.0, -5.0])
+    means, counts = fm.bin_means(v, a, fm.V_BINS)
+    assert counts[30] == 2
+    assert means[30] == pytest.approx(1.0)

@@ -134,7 +134,9 @@ class SweepNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (03 §7.
         self._episode_stamp: tuple[int, int] | None = None
         self._episode_seen = False
         self._timeouts = 0
-        self._last_wheel: tuple[int, float] = (-1, 0.0)
+        # gt_publisher publishes ego_odom before vehicle_state, so at odom(k)
+        # only wheel(k-1) has arrived; rows are joined by tick after the run.
+        self._wheel_by_tick: dict[int, float] = {}
         self._pub_command = self.create_publisher(
             ControlCommand, TOPIC_CONTROL_COMMAND, _qos("stream")
         )
@@ -178,7 +180,7 @@ class SweepNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (03 §7.
         )
 
     def _on_vehicle_state(self, msg: VehicleState) -> None:
-        self._last_wheel = (tick_index(msg.header.stamp), float(msg.steering_angle))
+        self._wheel_by_tick[tick_index(msg.header.stamp)] = float(msg.steering_angle)
 
     def _on_ego_odom(self, msg: Odometry) -> None:
         k = tick_index(msg.header.stamp)
@@ -217,8 +219,8 @@ class SweepNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (03 §7.
                     "vx": vx,
                     "vy": float(msg.twist.twist.linear.y),
                     "yaw_rate": float(msg.twist.twist.angular.z),
-                    "wheel_angle": self._last_wheel[1],
-                    "wheel_tick": self._last_wheel[0],
+                    "wheel_angle": math.nan,  # filled by _join_wheel_angles
+                    "wheel_tick": k,
                 }
             )
         carla_cmd = CarlaEgoVehicleControl()
@@ -326,7 +328,18 @@ class SweepNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (03 §7.
                 break
         rows = self._run.rows
         self._run = None
+        self._join_wheel_angles(rows)
         return rows
+
+    def _join_wheel_angles(self, rows: list[dict[str, float | int | str]]) -> None:
+        """Fill ``wheel_angle`` with the vehicle_state of the row's own tick."""
+        last = 0.0
+        for row in rows:
+            k = int(row["k"])
+            if k in self._wheel_by_tick:
+                last = self._wheel_by_tick[k]
+            row["wheel_angle"] = last
+        self._wheel_by_tick.clear()
 
     @property
     def timeouts(self) -> int:

@@ -58,7 +58,7 @@ from nuway_ml.common.frames import (
 )
 from nuway_ml.common.geometry import SE3, compose, inverse, quaternion_to_rpy
 from nuway_ml.common.rig import VehicleGeometry, load_rig
-from nuway_ml.common.tick import TICK_DT_S, tick_index
+from nuway_ml.common.tick import TICK_DT_S, tick_index, tick_stamp
 from nuway_rclpy.ros_conv import (
     pose_from_se3,
     se3_from_pose,
@@ -131,7 +131,7 @@ class WorldManagerNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (
             int(p["carla.traffic.seed"]),
         )
 
-        self._hero = self._spawn_hero(int(p["spawn_index"]))
+        self._hero, self._spawn_pose = self._spawn_hero(int(p["spawn_index"]))
         self._sensor_rig = SensorRig(
             self,
             self._world,
@@ -141,17 +141,24 @@ class WorldManagerNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (
             label_only=bool(p["spawn_label_only_sensors"]),
             viz_only=bool(p["spawn_viz_only_sensors"]),
         )
-        self._sensor_rig.spawn()
-        self._gt = GtPublisher(
-            self,
-            self._world,
-            self._hero,
-            self._vehicle,
-            GtParams(
-                agent_radius_m=float(p["gt.agent_radius_m"]),
-                truck_blueprints=tuple(str(b) for b in p["gt.truck_blueprints"]),
-            ),
-        )
+        try:
+            self._sensor_rig.spawn()
+            self._gt = GtPublisher(
+                self,
+                self._world,
+                self._hero,
+                self._vehicle,
+                GtParams(
+                    agent_radius_m=float(p["gt.agent_radius_m"]),
+                    truck_blueprints=tuple(str(b) for b in p["gt.truck_blueprints"]),
+                ),
+            )
+        except (RuntimeError, ValueError, KeyError):
+            # CARLA does not garbage-collect actors when the client goes
+            # away: a failed start-up would leave a second `hero` (and its
+            # sensors) publishing on /carla/hero/** at the next launch.
+            self._destroy_actors()
+            raise
 
         self._pub_clock = self.create_publisher(Clock, TOPIC_CLOCK, CLOCK_QOS)
         self._pub_reset_event = self.create_publisher(
@@ -268,7 +275,8 @@ class WorldManagerNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (
         self._traffic_manager.set_synchronous_mode(sync)
         self._traffic_manager.set_random_device_seed(seed)
 
-    def _spawn_hero(self, spawn_index: int) -> carla.Actor:
+    def _spawn_hero(self, spawn_index: int) -> tuple[carla.Actor, SE3]:
+        """Spawn the hero; returns it with its actor pose (ROS) at the spawn point."""
         lib = self._world.get_blueprint_library()
         bp = lib.find(self._rig.vehicle)
         bp.set_attribute("role_name", HERO_ROLE)
@@ -280,7 +288,7 @@ class WorldManagerNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (
         self.get_logger().info(
             f"spawned {self._rig.vehicle} as hero at spawn point {spawn_index}"
         )
-        return hero
+        return hero, transform_to_ros(transform.location, transform.rotation)
 
     # ------------------------------------------------------------ callbacks
     def _on_control_command(self, msg: ControlCommand) -> None:
@@ -300,6 +308,13 @@ class WorldManagerNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (
                 return response
             self._pending_reset = pending
         if not pending.done.wait(timeout=self._startup_timeout_s + 30.0):
+            # Withdraw it: otherwise the tick loop would still apply a reset
+            # the caller was told failed, refuse the caller's retry with "a
+            # reset is already pending" until then, and write into a
+            # response object that was already returned.
+            with self._pending_lock:
+                if self._pending_reset is pending:
+                    self._pending_reset = None
             response.ok = False
             response.message = "reset did not complete in time"
         return pending.response
@@ -320,7 +335,10 @@ class WorldManagerNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (
     def run(self) -> None:
         """Tick until shutdown (main thread; the executor spins elsewhere)."""
         self._wait_for_peers()
-        self._publish_reset_event(self._hero_base_pose())
+        # Before the first tick the client snapshot of a freshly spawned actor
+        # is empty and get_transform() is the identity, so episode 0's start
+        # pose comes from the spawn transform itself.
+        self._publish_reset_event(self._base_pose_of(self._spawn_pose))
         while rclpy.ok():
             self._process_pending_reset()
             self._pace()
@@ -331,16 +349,16 @@ class WorldManagerNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (
 
         A node that joins after a tick was published never sees that tick and
         can never answer it, so the first tick waits for a publisher on the
-        command topic and subscribers on /clock and the GT ego odometry. This
-        is wall clock before any tick exists, so it cannot change results;
-        the bound is the startup timeout.
+        command topic and a subscriber on the GT ego odometry. (A /clock
+        subscriber count would be vacuous: this node's own use_sim_time
+        subscription counts.) This is wall clock before any tick exists, so
+        it cannot change results; the bound is the startup timeout.
         """
         deadline = time.monotonic() + self._startup_timeout_s
         last_log = 0.0
         while rclpy.ok() and time.monotonic() < deadline:
             ready = (
                 self.count_publishers(TOPIC_CONTROL_COMMAND) > 0
-                and self.count_subscribers(TOPIC_CLOCK) > 0
                 and self.count_subscribers(TOPIC_GT_EGO_ODOM) > 0
             )
             if ready:
@@ -351,7 +369,6 @@ class WorldManagerNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (
                 self.get_logger().info(
                     "waiting for peers before the first tick: "
                     f"command publishers {self.count_publishers(TOPIC_CONTROL_COMMAND)}, "
-                    f"clock subscribers {self.count_subscribers(TOPIC_CLOCK)}, "
                     f"ego_odom subscribers {self.count_subscribers(TOPIC_GT_EGO_ODOM)}"
                 )
             time.sleep(0.2)
@@ -378,7 +395,7 @@ class WorldManagerNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (
         clock = Clock()
         clock.clock = stamp
         self._pub_clock.publish(clock)
-        self._gt.publish(stamp, k)
+        self._gt.publish(stamp)
         publish_ms = 1000.0 * (time.monotonic() - wall_start)
 
         timeout_s = (
@@ -431,11 +448,11 @@ class WorldManagerNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (
         return time.monotonic() - start, False
 
     # ---------------------------------------------------------------- reset
-    def _hero_base_pose(self) -> SE3:
-        tf = self._hero.get_transform()
-        actor = transform_to_ros(tf.location, tf.rotation)
+    def _base_pose_of(self, actor_pose: SE3) -> SE3:
+        """base_link pose (ROS) of an actor pose."""
         base = compose(
-            actor, SE3(self._vehicle.base_link_in_actor, np.array([0.0, 0.0, 0.0, 1.0]))
+            actor_pose,
+            SE3(self._vehicle.base_link_in_actor, np.array([0.0, 0.0, 0.0, 1.0])),
         )
         assert isinstance(base, SE3)
         return base
@@ -499,12 +516,7 @@ class WorldManagerNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (
         with self._cmd_cond:
             self._latest_cmd_tick = -1
         self._startup_pending = True
-        base_after = compose(
-            actor_pose,
-            SE3(self._vehicle.base_link_in_actor, np.array([0.0, 0.0, 0.0, 1.0])),
-        )
-        assert isinstance(base_after, SE3)
-        self._publish_reset_event(base_after)
+        self._publish_reset_event(self._base_pose_of(actor_pose))
         self._tick_once()
         response.ok = True
         response.episode_id = self._episode_id
@@ -513,9 +525,14 @@ class WorldManagerNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (
 
     def _publish_reset_event(self, start_pose: SE3) -> None:
         """ResetEvent stamped with the first tick of the new episode."""
-        next_s = float(self._world.get_snapshot().timestamp.elapsed_seconds) + self._dt
+        # The exact tick stamp, not elapsed + dt in float: consumers compare
+        # tick indices, and the first pose of the episode carries CARLA's own
+        # float accumulation of the same tick.
+        next_k = tick_index(self._world.get_snapshot().timestamp.elapsed_seconds) + 1
+        sec, nanosec = tick_stamp(next_k)
         msg = ResetEvent()
-        msg.header.stamp = stamp_from_seconds(next_s)
+        msg.header.stamp.sec = sec
+        msg.header.stamp.nanosec = nanosec
         msg.episode_id = self._episode_id
         msg.town = self._town
         msg.start_pose = pose_from_se3(start_pose)
@@ -527,12 +544,7 @@ class WorldManagerNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (
         self.get_logger().info(
             f"shutting down after {self._timeouts} lockstep timeouts"
         )
-        self._sensor_rig.destroy()
-        try:
-            if self._hero.is_alive:
-                self._hero.destroy()
-        except RuntimeError as err:
-            self.get_logger().warning(f"destroying hero failed: {err}")
+        self._destroy_actors()
         try:
             settings = self._world.get_settings()
             settings.synchronous_mode = False
@@ -541,6 +553,15 @@ class WorldManagerNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (
             self._traffic_manager.set_synchronous_mode(False)
         except RuntimeError as err:
             self.get_logger().warning(f"restoring async mode failed: {err}")
+
+    def _destroy_actors(self) -> None:
+        """Destroy the rig (if spawned) and the hero."""
+        self._sensor_rig.destroy()
+        try:
+            if self._hero.is_alive:
+                self._hero.destroy()
+        except RuntimeError as err:
+            self.get_logger().warning(f"destroying hero failed: {err}")
 
 
 def main(args: list[str] | None = None) -> int:

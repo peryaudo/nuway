@@ -7,9 +7,10 @@ process (one CARLA client per process). Publishes ``/nuway/gt/ego_odom``,
 quantity passes through ``nuway_ml.common.carla_conv``; no conversion
 arithmetic lives here.
 
-State across ticks: the per-actor history ring buffers (0.1 s spacing, sampled
-on planning ticks) and the traffic-light id cache; :meth:`GtPublisher.reset`
-clears the ring buffers (``docs/02_interfaces.md`` §7).
+State across ticks: the per-actor history ring buffers (every tick, read
+at 0.1 s spacing so ``history[0]`` is 0.1 s old on control ticks too) and the
+traffic-light id cache; :meth:`GtPublisher.reset` clears the ring buffers
+(``docs/02_interfaces.md`` §7).
 
 Traffic lights are matched to ``TrafficLightMapping`` ids through their
 affected lanes (``M0_bringup.md`` §2.2): CARLA's affected waypoints and the
@@ -55,7 +56,6 @@ from nuway_ml.common.frames import (
 )
 from nuway_ml.common.geometry import SE3, apply, compose, inverse, quaternion_to_yaw
 from nuway_ml.common.rig import VehicleGeometry
-from nuway_ml.common.tick import is_planning_tick
 from nuway_rclpy.ros_conv import pose_from_se3
 from nuway_rclpy.ros_qos import qos
 
@@ -194,14 +194,14 @@ class GtPublisher:
         )
 
     # ------------------------------------------------------------- per tick
-    def publish(self, stamp: Time, k: int) -> None:
-        """Publish every GT topic for tick ``k`` stamped ``stamp``."""
+    def publish(self, stamp: Time) -> None:
+        """Publish every GT topic for the tick stamped ``stamp``."""
         self.warnings = []
         hero_tf = self._hero.get_transform()
         actor_pose = transform_to_ros(hero_tf.location, hero_tf.rotation)
         self._publish_ego(stamp, actor_pose)
         self._publish_vehicle_state(stamp)
-        self._publish_agents(stamp, k, actor_pose)
+        self._publish_agents(stamp, actor_pose)
         self._publish_traffic_lights(stamp)
 
     def _publish_ego(self, stamp: Time, actor_pose: SE3) -> None:
@@ -264,13 +264,12 @@ class GtPublisher:
         is_truck = type_id in self._params.truck_blueprints
         return int(Agent.CLASS_TRUCK if is_truck else Agent.CLASS_CAR)
 
-    def _publish_agents(self, stamp: Time, k: int, hero_pose: SE3) -> None:
+    def _publish_agents(self, stamp: Time, hero_pose: SE3) -> None:
         msg = AgentArray()
         msg.header.stamp = stamp
         msg.header.frame_id = FRAME_MAP
         hero_xy = hero_pose.translation[:2]
         seen: set[int] = set()
-        sample = is_planning_tick(k)
         for actor in self._world.get_actors():
             type_id = str(actor.type_id)
             if actor.id == self._hero.id or not (
@@ -301,16 +300,21 @@ class GtPublisher:
             agent.vy = float(velocity[1])
             agent.yaw_rate = float(omega[2])
             agent.visible = True
+            # Poses of the previous ticks, newest last. history[i] of the
+            # message is the pose 0.1 s * (i + 1) ago on *every* tick, i.e.
+            # every second entry counted back from the newest, which is one
+            # tick old; sampling only on planning ticks made history[0] 0.05 s
+            # old on control ticks.
             history = self._history.setdefault(
-                int(actor.id), collections.deque(maxlen=HISTORY_LEN)
+                int(actor.id), collections.deque(maxlen=2 * HISTORY_LEN)
             )
             flat = [0.0] * (3 * HISTORY_LEN)
-            for i, (hx, hy, hyaw) in enumerate(reversed(history)):
+            past = list(history)[-2::-2]  # 2, 4, 6, ... ticks ago
+            for i, (hx, hy, hyaw) in enumerate(past[:HISTORY_LEN]):
                 flat[3 * i : 3 * i + 3] = [hx, hy, hyaw]
-            agent.history_len = len(history)
+            agent.history_len = min(len(past), HISTORY_LEN)
             agent.history = flat
-            if sample:
-                history.append((float(center[0]), float(center[1]), float(yaw)))
+            history.append((float(center[0]), float(center[1]), float(yaw)))
             seen.add(int(actor.id))
             msg.agents.append(agent)
         for actor_id in [a for a in self._history if a not in seen]:

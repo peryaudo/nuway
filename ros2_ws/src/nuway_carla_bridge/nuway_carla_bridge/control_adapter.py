@@ -8,8 +8,10 @@ through ``carla_conv.steer_from_ros``; ``emergency_stop`` is brake 1.
 
 Converts every received command immediately: the lockstep gate in
 ``world_manager`` guarantees exactly one command per tick, so there is no
-repeat-last logic and no watchdog (``M0_bringup.md`` §2.3). Stateless apart
-from the last vehicle speed, which needs no clearing on reset.
+repeat-last logic and no watchdog (``M0_bringup.md`` §2.3). The pedal split
+uses the ``vehicle_state`` stamped with the command's own tick (docs/02 §2:
+no node consumes "the latest" message); the few recent ones are kept by
+tick, which needs no clearing on reset.
 """
 
 from __future__ import annotations
@@ -36,9 +38,11 @@ from nuway_ml.common.frames import (
     TOPIC_VEHICLE_STATE,
 )
 from nuway_ml.common.longitudinal_map import LongitudinalMap
+from nuway_ml.common.tick import tick_index
 from nuway_rclpy.ros_qos import qos
 
 NODE_NAME = "control_adapter"
+SPEED_HISTORY_TICKS = 20  # vehicle_state kept by tick (1 s)
 TOPIC_CARLA_CONTROL = "/carla/hero/vehicle_control_cmd"
 # CARLA's native subscriber matched a reliable / volatile publisher on the dev
 # box (docs/02 §3.1, control command finding).
@@ -87,7 +91,11 @@ class ControlAdapterNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs
             cfg = yaml.safe_load(f)
         self._max_steer_rad = float(cfg["max_steer_angle"])
         self._map = LongitudinalMap.from_dict(cfg["longitudinal_map"])
-        self._speed = 0.0
+        # speed by tick; the command of tick k is answered with the speed of
+        # tick k (world_manager publishes vehicle_state before it waits for
+        # the command, so it is normally already here).
+        self._speed_by_tick: dict[int, float] = {}
+        self._latest_speed = 0.0
         self._pub_carla = self.create_publisher(
             CarlaEgoVehicleControl, TOPIC_CARLA_CONTROL, CARLA_CONTROL_QOS
         )
@@ -108,12 +116,16 @@ class ControlAdapterNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs
         )
 
     def _on_vehicle_state(self, msg: VehicleState) -> None:
-        self._speed = float(msg.speed)
+        k = tick_index(msg.header.stamp)
+        self._speed_by_tick[k] = float(msg.speed)
+        self._latest_speed = float(msg.speed)
+        for old in [t for t in self._speed_by_tick if t < k - SPEED_HISTORY_TICKS]:
+            del self._speed_by_tick[old]
 
     def _on_control_command(self, msg: ControlCommand) -> None:
-        out = carla_control_from_command(
-            msg, self._map, self._max_steer_rad, self._speed
-        )
+        k = tick_index(msg.header.stamp)
+        speed = self._speed_by_tick.get(k, self._latest_speed)
+        out = carla_control_from_command(msg, self._map, self._max_steer_rad, speed)
         self._pub_carla.publish(out)
         diag = NodeDiag()
         diag.header.stamp = msg.header.stamp

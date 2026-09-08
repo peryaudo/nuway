@@ -44,8 +44,16 @@ def stack_node(
 SetupFn = Callable[[LaunchContext, dict[str, Any]], Iterable[Any]]
 
 
-def profile_launch(setup: SetupFn) -> LaunchDescription:
-    """LaunchDescription with the ``profile`` argument and ``setup(context, profile)``."""
+def profile_launch(
+    setup: SetupFn, extra_args: Iterable[DeclareLaunchArgument] = ()
+) -> LaunchDescription:
+    """LaunchDescription with the ``profile`` argument and ``setup(context, profile)``.
+
+    ``extra_args`` are declared *before* the OpaqueFunction: launch visits
+    the entities in order, and a ``LaunchConfiguration`` performed inside
+    ``setup`` raises ``SubstitutionFailure`` when its declaration has not
+    been visited yet and the argument was not given on the command line.
+    """
 
     def _launch(context: LaunchContext) -> list[Any]:
         return list(setup(context, profile_from_context(context)))
@@ -57,6 +65,7 @@ def profile_launch(setup: SetupFn) -> LaunchDescription:
                 default_value="m0_gt_all",
                 description="profile name under configs/profiles/ or a YAML path",
             ),
+            *extra_args,
             OpaqueFunction(function=_launch),
         ]
     )

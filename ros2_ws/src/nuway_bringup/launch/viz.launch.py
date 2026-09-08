@@ -32,10 +32,11 @@ def setup(context: LaunchContext, profile: dict[str, Any]) -> list[Any]:
 
 
 def generate_launch_description() -> LaunchDescription:
-    description = profile_launch(setup)
-    description.add_action(
-        DeclareLaunchArgument(
-            "foxglove", default_value="true", description="also run foxglove_bridge"
-        )
+    return profile_launch(
+        setup,
+        extra_args=[
+            DeclareLaunchArgument(
+                "foxglove", default_value="true", description="also run foxglove_bridge"
+            )
+        ],
     )
-    return description

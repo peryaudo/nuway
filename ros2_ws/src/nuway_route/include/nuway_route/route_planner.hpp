@@ -26,6 +26,10 @@ struct RoutePlannerOptions {
   // Lanes within this much of the nearest lane's offset form the goal set
   // (both directions of a road when the waypoint sits between them).
   double goal_slack_m = 1.0;
+  // A waypoint at most this far behind the ego on its current lane counts as
+  // already reached (the harness resets the hero onto waypoint 0), instead
+  // of being reached by looping back to it.
+  double passed_tolerance_m = 5.0;
 };
 
 struct RoutePlan {

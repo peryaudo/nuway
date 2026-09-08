@@ -143,6 +143,9 @@ def test_carla_conv_parity() -> None:
             < ATOL
         )
         angle = float(RNG.uniform(-3, 3))
+        assert carla_conv.steer_from_ros(angle, 0.0) == nuway_py.steer_from_ros(
+            angle, 0.0
+        )
         assert carla_conv.steer_from_ros(angle, 1.22) == pytest.approx(
             nuway_py.steer_from_ros(angle, 1.22), abs=ATOL
         )
@@ -201,6 +204,47 @@ def test_frenet_parity() -> None:
             assert (f_py.s, f_py.d) == pytest.approx((f_cpp.s, f_cpp.d), abs=1e-7)
         assert line_py.to_frenet(1e6, 1e6, 10.0) is None
         assert line_cpp.to_frenet(1e6, 1e6, 10.0) is None
+        for _ in range(50):
+            s_hint = RNG.uniform(0, line_py.length)
+            x, y = RNG.uniform(-20, 20, 2) + np.array(
+                [line_py.point_at(s_hint).x, line_py.point_at(s_hint).y]
+            )
+            n_py = line_py.to_frenet_near(x, y, 30.0, s_hint, back_m=10.0, ahead_m=50.0)
+            n_cpp = line_cpp.to_frenet_near(
+                x, y, 30.0, s_hint, back_m=10.0, ahead_m=50.0
+            )
+            assert (n_py is None) == (n_cpp is None)
+            if n_py is not None and n_cpp is not None:
+                assert (n_py.s, n_py.d) == pytest.approx((n_cpp.s, n_cpp.d), abs=1e-7)
+
+
+def test_windowed_projection_parity_on_a_self_crossing_line() -> None:
+    """Leg A along +x, leg B back through (40, 0) heading -y (frenet_test.cc twin)."""
+    pts = [(0.5 * i, 0.0) for i in range(161)]
+    pts += [(80.0, 0.5 * i) for i in range(1, 41)]
+    pts += [(80.0 - 0.5 * i, 20.0) for i in range(1, 81)]
+    pts += [(40.0, 20.0 - 0.5 * i) for i in range(1, 81)]
+    line_py = frenet.ReferenceLine.from_points(np.array(pts))
+    line_cpp = nuway_py.ReferenceLine.from_points(pts)
+    g_py = line_py.to_frenet(40.15, 0.3)
+    g_cpp = line_cpp.to_frenet(40.15, 0.3)
+    assert g_py is not None
+    assert g_cpp is not None
+    assert g_py.s == pytest.approx(159.7, abs=1e-6)  # leg B
+    assert (g_py.s, g_py.d) == pytest.approx((g_cpp.s, g_cpp.d), abs=1e-7)
+    n_py = line_py.to_frenet_near(40.15, 0.3, 5.0, 40.0, back_m=10.0, ahead_m=50.0)
+    n_cpp = line_cpp.to_frenet_near(40.15, 0.3, 5.0, 40.0, back_m=10.0, ahead_m=50.0)
+    assert n_py is not None
+    assert n_cpp is not None
+    assert (n_py.s, n_py.d) == pytest.approx((40.15, 0.3), abs=1e-6)  # leg A
+    assert (n_py.s, n_py.d) == pytest.approx((n_cpp.s, n_cpp.d), abs=1e-7)
+    assert (
+        line_py.to_frenet_near(40.0, 15.0, 5.0, 40.0, back_m=10.0, ahead_m=50.0) is None
+    )
+    assert (
+        line_cpp.to_frenet_near(40.0, 15.0, 5.0, 40.0, back_m=10.0, ahead_m=50.0)
+        is None
+    )
 
 
 def test_occupancy_parity() -> None:
@@ -251,6 +295,11 @@ def test_tick_parity() -> None:
     for _ in range(1000):
         stamp = RNG.uniform(0, 1e5)
         assert tick.tick_index(stamp) == nuway_py.tick_index(stamp)
+    for half in (0.025, 0.075, 0.125, -0.025, -0.125):
+        assert tick.tick_index(half) == nuway_py.tick_index(half)
+    for negative in (-1, -20, -21):
+        assert tick.tick_stamp(negative) == tuple(nuway_py.tick_stamp(negative))
+    for _ in range(1000):
         k = int(RNG.integers(0, 10_000_000))
         assert tick.tick_stamp(k) == tuple(nuway_py.tick_stamp(k))
         assert tick.tick_time_s(k) == pytest.approx(nuway_py.tick_time_s(k), abs=ATOL)

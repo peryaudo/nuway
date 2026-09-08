@@ -68,4 +68,7 @@ def test_duck_typed_carla_objects_are_accepted():
 def test_steer_from_ros_flips_sign_and_clamps():
     assert steer_from_ros(0.61, 1.22) == pytest.approx(-0.5)
     assert steer_from_ros(-5.0, 1.22) == pytest.approx(1.0)
+    assert (
+        steer_from_ros(0.5, 0.0) == 0.0
+    )  # a bad vehicle file, not a ZeroDivisionError
     assert steer_to_ros(-0.5, 1.22) == pytest.approx(0.61)

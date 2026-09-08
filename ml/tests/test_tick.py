@@ -58,3 +58,21 @@ def test_barrier_completes_when_every_input_arrived_for_the_tick():
     assert not barrier.is_degraded("agents")
     assert not barrier.is_complete(5)
     assert barrier.inputs == ["pose", "agents"]
+
+
+def test_negative_tick_stamps_keep_nanosec_in_range():
+    assert tick_stamp(-1) == (-1, 950_000_000)
+    assert tick_index(-0.05) == -1
+
+
+def test_tick_index_rounds_half_away_from_zero_like_llround():
+    assert tick_index(0.125) == 3  # 0.125 / 0.05 is exactly 2.5; round() gives 2
+    assert tick_index(0.225) == 5
+    assert tick_index(0.075) == 1  # 0.075 / 0.05 is 1.4999...: below the half
+
+
+def test_arrival_is_for_the_exact_tick():
+    barrier = TickBarrier(["pose"])
+    barrier.arrive("pose", 5)
+    assert not barrier.is_complete(4)  # k + 1 does not stand in for k
+    assert barrier.is_complete(5)

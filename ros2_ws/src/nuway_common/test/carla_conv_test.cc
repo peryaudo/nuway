@@ -55,6 +55,7 @@ TEST(CarlaConvTest, SteerFromRosFlipsSignAndClamps) {
   // A left (positive) ROS wheel angle is a negative CARLA steer.
   EXPECT_NEAR(SteerFromRos(0.61, 1.22), -0.5, 1e-9);
   EXPECT_NEAR(SteerFromRos(-5.0, 1.22), 1.0, 1e-9);
+  EXPECT_EQ(SteerFromRos(0.5, 0.0), 0.0);  // a bad vehicle file, not a NaN
   EXPECT_NEAR(SteerToRos(-0.5, 1.22), 0.61, 1e-9);
 }
 

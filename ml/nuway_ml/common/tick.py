@@ -8,6 +8,7 @@ are duck typed (``sec`` / ``nanosec`` attributes) or plain seconds.
 
 from __future__ import annotations
 
+import math
 from typing import Protocol
 
 TICK_DT_S = 0.05
@@ -30,7 +31,10 @@ def tick_index(stamp: float | StampLike) -> int:
         seconds = float(stamp)
     else:
         seconds = float(stamp.sec) + float(stamp.nanosec) / 1e9
-    return round(seconds / TICK_DT_S)
+    # Half away from zero, like C++ std::llround (Python's round() is
+    # banker's rounding and would give 2 for 0.125 s where tick.h gives 3).
+    ticks = seconds / TICK_DT_S
+    return int(math.copysign(math.floor(abs(ticks) + 0.5), ticks))
 
 
 def tick_time_s(k: int) -> float:
@@ -75,7 +79,9 @@ class TickBarrier:
         self._latest[name] = k
 
     def _has_arrived(self, name: str, k: int) -> bool:
-        return self._latest.get(name, -1) >= k
+        # Exactly tick k: a message for k + 1 (possible only after a
+        # TickTimeout let the world move on) does not stand in for a missing k.
+        return self._latest.get(name, -1) == k
 
     def is_complete(self, k: int) -> bool:
         """Return True when every non-degraded input has arrived for tick k."""

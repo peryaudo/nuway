@@ -76,5 +76,45 @@ TEST(FrenetTest, FarPointBeyondMaxDistIsRejected) {
   EXPECT_TRUE(line.ToFrenet(5.0, 5.0, 10.0).has_value());
 }
 
+// Leg A runs along +x, leg B comes back and crosses it at (40, 0) heading
+// -y. A point just left of the crossing is nearer to leg B, so the global
+// projection lands there; a follower on leg A (hint s = 40) must not.
+ReferenceLine SelfCrossing() {
+  Vector2dList points;
+  for (int i = 0; i <= 160; ++i) {
+    points.emplace_back(0.5 * i, 0.0);  // A: (0,0) -> (80,0)
+  }
+  for (int i = 1; i <= 40; ++i) {
+    points.emplace_back(80.0, 0.5 * i);  // up to (80,20)
+  }
+  for (int i = 1; i <= 80; ++i) {
+    points.emplace_back(80.0 - (0.5 * i), 20.0);  // back to (40,20)
+  }
+  for (int i = 1; i <= 80; ++i) {
+    points.emplace_back(40.0, 20.0 - (0.5 * i));  // B: down through (40,0)
+  }
+  return ReferenceLine::FromPoints(points);
+}
+
+TEST(FrenetTest, WindowedProjectionStaysOnTheHintedLeg) {
+  const ReferenceLine line = SelfCrossing();
+  // Global: leg B (s = 80 + 20 + 40 + 20 = 160 at the crossing), d = +0.15
+  // (+x is to the left of a -y heading).
+  const FrenetPoint global = Unwrap(line.ToFrenet(40.15, 0.3));
+  EXPECT_NEAR(global.s, 160.0 - 0.3, 1e-6);
+  EXPECT_NEAR(global.d, 0.15, 1e-6);
+  // Windowed around leg A: s = 40.15, d = +0.3.
+  const FrenetPoint near =
+      Unwrap(line.ToFrenetNear(40.15, 0.3, 5.0, 40.0, 10.0, 50.0));
+  EXPECT_NEAR(near.s, 40.15, 1e-6);
+  EXPECT_NEAR(near.d, 0.3, 1e-6);
+  // Nothing of leg A within max_dist of a point far off it: nullopt, and the
+  // caller falls back to the global projection.
+  EXPECT_FALSE(
+      line.ToFrenetNear(40.0, 15.0, 5.0, 40.0, 10.0, 50.0).has_value());
+  // The window is clamped to the line.
+  EXPECT_TRUE(line.ToFrenetNear(1.0, 0.2, 5.0, -100.0, 10.0, 50.0).has_value());
+}
+
 }  // namespace
 }  // namespace nuway_common

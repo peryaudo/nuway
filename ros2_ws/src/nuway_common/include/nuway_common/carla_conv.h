@@ -86,6 +86,9 @@ inline Eigen::Vector3d AngularVelocityToRos(const Eigen::Vector3d& omega_deg) {
 // VehicleControl.steer in [-1, 1] (positive = right). The native
 // vehicle_control_cmd topic keeps CARLA's convention (docs/02 §3.1).
 inline double SteerFromRos(double steering_angle_rad, double max_steer_rad) {
+  if (!(max_steer_rad > 0.0)) {
+    return 0.0;  // a bad vehicle file; std::min/max would pass a NaN through
+  }
   const double steer = -steering_angle_rad / max_steer_rad;
   return std::max(-1.0, std::min(1.0, steer));
 }

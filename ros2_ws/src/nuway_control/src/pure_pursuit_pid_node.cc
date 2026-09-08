@@ -1,7 +1,16 @@
-// pure_pursuit_pid_node (M0 §2.7): runs once per tick, triggered by
-// /nuway/loc/pose, and publishes /nuway/control/command stamped with that
-// tick plus /nuway/control/debug. Follows the latched
-// /nuway/route/reference_line directly (M0 has no planner in between).
+// pure_pursuit_pid_node (M0 §2.7): the ROS shell around PurePursuitPid. It
+// runs once per tick, triggered by /nuway/loc/pose, and publishes
+// /nuway/control/command stamped with that tick plus /nuway/control/debug.
+// Follows the latched /nuway/route/reference_line directly (M0 has no
+// planner in between).
+//
+// Lockstep contract (docs/02 §2). world_manager publishes the tick's pose
+// and then blocks until a ControlCommand whose tick index equals that tick
+// arrives; only then does it step CARLA again. So this node must answer
+// every pose exactly once, stamped with the stamp it consumed (never "now",
+// never the previous tick), and the tick spacing it hands the controller as
+// dt is derived from the tick indices, not from wall clock. There is no
+// timer in this node.
 //
 // No-input convention (docs/02 §2): a pose with valid == false, no reference
 // line for this episode yet, or an ego off the line still yields a command,
@@ -11,7 +20,12 @@
 // (docs/02 §7). Single per-tick input, so no barrier; a TickTimeout for a
 // tick whose pose never came is answered with an emergency stop stamped with
 // that tick (the no-input output), so one lost pose does not time out every
-// following tick.
+// following tick. Episode boundaries are compared as tick indices and
+// episode ids, never as raw stamps (BeforeEpisode, OnResetEvent).
+//
+// The steer sign convention of the CARLA control message is handled by
+// control_adapter through carla_conv (docs/02 §3); this node publishes the
+// ROS steering angle (counter-clockwise positive) in radians.
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -45,8 +59,16 @@ namespace {
 
 using nuway_common::DiagStatus;
 
+// One controller instance per stack; stateless apart from the episode and
+// tick bookkeeping below and the state inside PurePursuitPid.
 class PurePursuitPidNode final : public rclcpp::Node {
  public:
+  // Declares the parameters (read once at start-up, docs/03 §4; defaults
+  // mirror PurePursuitPidOptions and config/defaults.yaml), loads the
+  // vehicle model, and wires the four subscriptions. QoS (docs/02 §3):
+  // the command, debug and pose topics are per-tick streams; the reference
+  // line is latched so a controller that starts after the planner still
+  // sees it; reset and timeout are events (reliable, transient_local).
   PurePursuitPidNode() : rclcpp::Node(kNodeName), diag_(this) {
     const auto vehicle_path = nuway_common::DeclareParam<std::string>(
         this, "vehicle", "configs/vehicle/lincoln_mkz_2020.yaml",
@@ -157,6 +179,8 @@ class PurePursuitPidNode final : public rclcpp::Node {
     RCLCPP_INFO(get_logger(), "reset: episode %u", msg.episode_id);
   }
 
+  // Installs the episode's line in the controller after a size check;
+  // the line is not per-tick, so it is read latest-value (docs/02 §2).
   void OnReferenceLine(const nuway_msgs::msg::ReferenceLine& msg) {
     if (BeforeEpisode(msg.header.stamp)) {
       RCLCPP_WARN(get_logger(),
@@ -192,6 +216,11 @@ class PurePursuitPidNode final : public rclcpp::Node {
                 s.back());
   }
 
+  // The per-tick entry point. dt is the tick spacing times the number of
+  // ticks since the last answered one (a pose lost to a TickTimeout leaves
+  // a gap of two), or one tick on the first pose of an episode. An invalid
+  // pose skips the controller and publishes the default (emergency stop)
+  // output; the controller is not stepped, so its state is untouched.
   void OnPose(const nuway_msgs::msg::EgoState& msg) {
     if (BeforeEpisode(msg.header.stamp)) {
       return;  // previous episode; world_manager is not waiting on it
@@ -247,6 +276,8 @@ class PurePursuitPidNode final : public rclcpp::Node {
             DiagStatus::kWarn, "no pose for the tick (timeout)");
   }
 
+  // Emits the command, the debug telemetry and the NodeDiag for one tick,
+  // all stamped with `stamp` (the tick being answered).
   void Publish(const builtin_interfaces::msg::Time& stamp,
                const ControlOutput& out, double cycle_ms, DiagStatus status,
                const std::string& message) {
@@ -288,6 +319,7 @@ class PurePursuitPidNode final : public rclcpp::Node {
 }  // namespace
 }  // namespace nuway_control
 
+// Standard single-threaded spin (nuway_common/node_main.h).
 int main(int argc, char** argv) {
   return nuway_common::RunNode<nuway_control::PurePursuitPidNode>(argc, argv);
 }

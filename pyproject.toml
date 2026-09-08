@@ -117,8 +117,9 @@ warn_unreachable = true
 files = [
   "ml/nuway_ml", "tools", "tests",
   "ros2_ws/src/nuway_carla_bridge", "ros2_ws/src/nuway_rclpy", "ros2_ws/src/nuway_perception",
+  "ros2_ws/src/nuway_bringup",
 ]
-exclude = ["ros2_ws/(build|install|log)/", "ros2_ws/src/carla_msgs/", "ros2_ws/src/[a-z_]+/setup\\.py$", "ros2_ws/src/[a-z_]+/test/", "data/", "external/"]  # every package's test/ would be one duplicate `test` module
+exclude = ["ros2_ws/(build|install|log)/", "ros2_ws/src/carla_msgs/", "ros2_ws/src/[a-z_]+/setup\\.py$", "data/", "external/"]
 # The ros2_ws Python packages sit one directory deeper than their import name
 # (ros2_ws/src/<pkg>/<pkg>/); mypy_path makes `import nuway_perception` resolve
 # without an install step. tools/eval holds the nuway_eval package.
@@ -144,8 +145,10 @@ ignore_missing_imports = true
 follow_imports = "skip"
 
 [[tool.mypy.overrides]]
-# Typed, but absent from the import-light environment (03 §6.1).
-module = ["torch.*", "webdataset", "webdataset.*"]
+# Typed, but absent from the import-light environment (03 §6.1); matplotlib
+# is the viz group (tools/sysid/fit_models.py plots), so a plain `uv sync`
+# still type-checks.
+module = ["torch.*", "webdataset", "webdataset.*", "matplotlib", "matplotlib.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]

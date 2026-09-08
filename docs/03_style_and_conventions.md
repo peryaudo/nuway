@@ -421,6 +421,7 @@ explicit = true
 
 [tool.pytest.ini_options]
 testpaths = ["ml/tests", "tools", "tests"]
+pythonpath = ["tools/eval"]  # the nuway_eval harness package (docs/01 Rules) for tests/integration
 addopts = "--strict-markers -p no:launch_testing -p no:launch_ros -p no:ament_lint -p no:ament_copyright -p no:ament_flake8 -p no:ament_pep257 -p no:ament_xmllint"  # ROS pytest plugins leak in via system site packages; launch_testing breaks pytest >= 8
 markers = ["slow: minutes-long", "carla: needs a running CARLA server", "gpu: needs CUDA", "import_light: must pass in an env without torch"]
 

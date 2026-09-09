@@ -64,4 +64,6 @@ C++: `.h`/`.cc` as in Google (ROS-generated and third-party headers keep their `
 
 Python: full annotations, `mypy --strict` for `ml/`, `tools/`, `tests/`; 3.12 syntax only (`X | None`, `dict[str, int]`); every `# noqa` / `# type: ignore` carries a code and a justification; `frozen=True, slots=True` dataclasses or `TypedDict` at module boundaries; rclpy nodes end in `Node` with `self._pub_<what>`, `self._sub_<what>`, `_on_<message>()`; training entry points are Hydra apps (`argparse` forbidden there; `tools/` and `ml/scripts/` keep `argparse`); `wandb` imported only in `run_logger.py` and entry points.
 
+Comments (`docs/03_style_and_conventions.md` §2.7, §9.4): write them so a reader learns the algorithms and concepts from the nuway codebase itself. Where a function implements a named technique, say which one and why it was chosen; state the frames, units and invariants that make the arithmetic legible. Any non-trivial function gets at least a one-line docstring comment — a C++ `//` line above it, a PEP 257 one-liner in Python — including private helpers.
+
 Precedence on conflict: formatter output > linter > `03_style_and_conventions.md` > upstream style guide > ROS 2 conventions.

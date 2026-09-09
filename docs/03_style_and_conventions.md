@@ -7,6 +7,7 @@
 
 ## 1. Summary
 
+- **nuway is a teaching codebase.** It is a toy stack (`00_overview.md`) whose point is that a reader can learn how a modern AD stack works by reading it. Where a rule here trades terseness against explaining the algorithm, the explanation wins (§2.7, §9.4). That is never a licence to skip a tool: formatting and lint stay machine-enforced. The comment rules are the one part of this document enforced by review rather than by a tool — no linter flags a missing or shallow comment, and `ruff`'s `D` rules skip private names entirely — so the precedence rule below, which puts linter diagnostics above this document, does not silently cancel them.
 - **C++ follows the [Google C++ Style Guide](https://google.github.io/styleguide/cppguide.html).** It is the authoritative reference. This document only records project-specific decisions, the few deliberate deviations (§3), and how the style is enforced.
 - **Formatting is not a matter of taste.** `clang-format` with the repo `.clang-format` (`BasedOnStyle: Google`) is the single source of truth. Code that is not clang-format-clean does not merge.
 - **`clang-tidy` is mandatory.** Every C++ package builds with the repo `.clang-tidy`; warnings are errors in CI. Naming rules from the Google guide are machine-checked through `readability-identifier-naming`.
@@ -105,7 +106,10 @@ Extra project rules:
 ### 2.7 Comments
 
 - `//` comments only. No `/* */` blocks except for the license/file header if one is ever added.
-- Every header starts with a one-paragraph comment stating what the file provides and which milestone introduced it. Every non-trivial class and every public function has a comment describing *what* it does and its contract (units, frames, preconditions, failure behavior), not *how*.
+- Every header starts with a one-paragraph comment stating what the file provides and which milestone introduced it.
+- **Comments teach.** Google's "document *what*, not *how*" rule assumes a reader who already knows the algorithm and needs only the contract. That is the wrong reader for this project. Where a function implements a named technique — bicycle model, Frenet lattice sampling, Hungarian assignment, fixed-lag smoothing — name it, give the one- or two-sentence intuition for *why* it works, and point at where a reader goes next (a `docs/` section, a chapter, a paper). Where the implementation is a simplification of the textbook form, say what was dropped and what it costs.
+- Every non-trivial function carries a comment above it — one line is enough — stating what it does and its contract: units, frames, preconditions, failure behavior. Private helpers and functions in anonymous namespaces count; the public surface is not the boundary.
+- Explain the step that is not obvious, not the line that is. A derivation, a magic constant, an ordering that matters, a workaround for a CARLA quirk each earn a comment; `++i` does not.
 - Doxygen markup is not used. Plain sentences, full stops.
 - `TODO(username): text` or `TODO(M5): text` for work deferred to a milestone. No bare `TODO`.
 - Comment frames and units at every boundary: `// Pose of base_link in map frame, ROS convention (x forward, y left).`
@@ -580,7 +584,7 @@ Before declaring a C++ task done:
 3. Every new header has the `NUWAY_<PKG>_<FILE>_H_` guard (`tools/lint/check_header_guards.py` clean) and a file-level comment.
 4. Every new class/function follows the naming table in §2.1; every parameter member matches its YAML key plus `_`.
 5. No `throw` in library code; exceptions from third-party code caught at the node boundary.
-6. Frames and units are stated in comments at every interface.
+6. Frames and units are stated in comments at every interface; every non-trivial function has its one-line contract comment; any named algorithm is named and sourced (§2.7).
 7. New library code has a gtest under `test/` that does not link `rclcpp`.
 8. `docs/` updated if a node, topic, parameter, or file was renamed.
 
@@ -589,7 +593,7 @@ Before declaring a Python task done:
 1. `ruff format --check` reports no diff.
 2. `ruff check` reports no violations; every `# noqa` carries a rule code and a justification.
 3. `mypy` is clean for the touched packages; every `# type: ignore` carries an error code.
-4. Every public function, class and module has a PEP 257 docstring stating frames, units and tensor shapes where relevant.
+4. Every module, class and function — private helpers included — has a PEP 257 docstring stating frames, units and tensor shapes where relevant, and naming the algorithm it implements (§9.4).
 5. Parity modules keep the same function names (modulo case) and argument order as their `nuway_common` twin.
 6. New code has a pytest under the package's `tests/` directory.
 7. Training code composes its config through Hydra and logs through `run_logger.py`: no `argparse` in a training entry point, no `wandb` import in a training loop, every loss term logged separately (§9.7).
@@ -636,7 +640,8 @@ Extra project rules:
 
 ### 9.4 Docstrings and comments
 
-- PEP 257 docstrings (`convention = "pep257"`): one-line summary in the imperative, blank line, then details. Every public module, class and function has one; private helpers when non-obvious.
+- PEP 257 docstrings (`convention = "pep257"`): one-line summary in the imperative, blank line, then details. Every module, class and function has one, private helpers included. The only exemption is a body short enough and named plainly enough that the summary would just restate the signature.
+- Docstrings teach, on the same terms as C++ (§2.7): name the technique, give the intuition, cite where a reader goes next, and state what a simplification costs. For a model, a loss or a transform, say which convention the maths assumes — nobody should have to run the code to learn what a tensor holds.
 - State frames, units, and shapes at every interface, exactly as in C++ (§2.7): `"""Return agent poses in the map frame (ROS convention), shape (N, 3) as x, y, yaw_rad."""`
 - `# TODO(username): text` or `# TODO(M5): text`. No bare `TODO`.
 - Module docstring first line states what the module provides and which milestone introduced it.

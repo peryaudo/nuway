@@ -91,9 +91,14 @@ function(nuway_target_defaults target)
         )
     endif()
     if(NUWAY_CLANG_TIDY)
+        # clang-tidy re-parses the GCC compile command with a clang frontend,
+        # where GCC-only spellings such as -Wno-stringop-overread raise
+        # clang-diagnostic-unknown-warning-option, which -Werror makes fatal.
         set_target_properties(
             ${target}
-            PROPERTIES CXX_CLANG_TIDY "${NUWAY_CLANG_TIDY_EXE}"
+            PROPERTIES
+                CXX_CLANG_TIDY
+                    "${NUWAY_CLANG_TIDY_EXE};--extra-arg=-Wno-unknown-warning-option"
         )
     endif()
 endfunction()

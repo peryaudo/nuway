@@ -55,8 +55,9 @@ Rows index x (forward), columns index y (left). Default: `resolution = 0.5`, `x_
   | `/nuway/loc/pose` | everything | the node's no-input output (the stack stands still) |
   | `/nuway/perception/agents`, `/occupancy`, `/traffic_lights` | prediction, FSM, planner, safety layer | no-input outputs (stand still) |
   | `/nuway/prediction/samples` | FSM, planner, safety layer | `/nuway/prediction/fallback_samples` stamped `k` (§3.6) |
+  | `/nuway/planning/behavior` | planner | the injected in-lane stop candidates alone (`M1_classical_planning.md` §3.3), i.e. the gentlest stop along the reference line that the collision check clears; no normal candidate is sampled without a decision |
   | `/nuway/planning/learned_candidates` | planner | lattice candidates only; selected `Trajectory.source = "fallback"` (M8 §2) |
-  | `/nuway/planning/trajectory` | safety layer | max-decel stop profile along the last safe trajectory's path, then hold |
+  | `/nuway/planning/trajectory` | safety layer | the gentlest in-lane stop profile along the last safe trajectory's path that its own collision check clears, max-decel if none does, then hold |
   | `/nuway/planning/safe_trajectory` | controller | `emergency_stop: true` |
 - **Sim time is monotonic within a stack lifetime.** `world_manager` never reloads a town after start-up: `/nuway/sim/reset` respawns in the current town, so CARLA's `elapsed_seconds` — and therefore every stamp — keeps increasing across episodes. The evaluation harness launches one stack per town (`M1_classical_planning.md` §3.10). Nodes may therefore assume that a message stamped earlier than the last `ResetEvent` belongs to a previous episode.
 - Message `header.stamp` is the time of the *observation* the message is about, not publish time.
@@ -160,7 +161,7 @@ Semantic LiDAR and depth cameras are **never** subscribed by a learned node. In 
 ### 3.8 Control
 | Topic | Type | Producer |
 |-------|------|----------|
-| `/nuway/control/command` | `nuway_msgs/ControlCommand` | pure_pursuit_pid_node **or** mpc_node (every tick; `header.stamp` = the tick consumed, see §2) |
+| `/nuway/control/command` | `nuway_msgs/ControlCommand` | pure_pursuit_pid_node (M0 profiles only) **or** mpc_node (every profile from M1 on) — exactly one of them per profile, every tick; `header.stamp` = the tick consumed, see §2 |
 | `/nuway/control/debug` | `nuway_msgs/ControlDebug` | same |
 
 ### 3.9 Diagnostics and visualization
@@ -403,7 +404,8 @@ float32 kappa
 # Trajectory.msg
 std_msgs/Header header            # frame_id: "map" (all planning in map frame)
 TrajectoryPoint[] points          # 0.1 s spacing, horizon 8 s (81 points). Every producer, including iLQR (M10), emits 81 points.
-string source                     # "lattice", "learned", "fallback", "gt", "none" (no-input stop at the current pose, §2)
+string source                     # "lattice", "learned", "fallback", "gt", "stop" (an injected in-lane stop candidate,
+                                  #   M1 §3.3), "none" (no-input stop at the current pose, §2)
 uint32 candidate_id
 int32 sample_index                # M8: index into PredictionSamples of the joint sample this ego trajectory is consistent with
                                   # (Source A); -1 for lattice, learned-head (Source B) and fallback candidates
@@ -449,8 +451,12 @@ string reason
 # ControlCommand.msg
 std_msgs/Header header
 float32 accel                     # desired longitudinal accel, m/s^2
-float32 steering_angle            # desired front wheel angle, rad
-bool emergency_stop
+float32 steering_angle            # desired front wheel angle, rad. Converted by control_adapter independently of
+                                  #   emergency_stop (M0 §2.3 overrides throttle/brake only), so a producer that
+                                  #   raises emergency_stop still steers with whatever it puts here (M1 §3.8)
+bool emergency_stop               # brake=1, throttle=0 at the adapter: the physical floor, below the planning
+                                  #   limit a_min, and no trajectory is followed. Stronger than the max-decel stop
+                                  #   profiles of M1 §3.3/§3.7, which are tracked normally through the pedal table
 
 # ControlDebug.msg
 std_msgs/Header header
@@ -559,7 +565,7 @@ planning:
   forward_sim:                         # M9
     agent_mode: sample                 # sample | reactive | mix
 control:
-  controller: mpc                      # pure_pursuit | mpc | none (sysid: tools/sysid/run_sweeps.py is the controller, M0 §2.6)
+  controller: mpc                      # pure_pursuit (M0 profiles only) | mpc (M1 on) | none (sysid: tools/sysid/run_sweeps.py is the controller, M0 §2.6)
 eval:
   record: true
   record_sensors: false

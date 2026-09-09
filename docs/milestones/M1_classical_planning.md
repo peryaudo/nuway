@@ -84,6 +84,12 @@ Frenet frame from the reference line (`nuway_common/frenet.h`). Ego Frenet state
 - STOP: quintic to `(stop_s, 0, 0)` with horizon `{3, 5, 7}` s, plus a "hard stop" at max decel.
 - YIELD: quintic to `(s_conflict − 3, 0, 0)` plus a "go" candidate.
 
+**Injected stop candidates (always, in every behavior state).** Two candidates are built from the ego state and the reference line alone — no `BehaviorDecision` is consulted — and appended to the set on every planning tick:
+- **gentle**: quintic to `(s + v²/(2·a_gentle), 0, 0)` with `a_gentle = 1.5`, holding the current lane's centerline (`d_f` = current lane center).
+- **hard**: quintic to rest at `a_min` (max decel) on the same path.
+
+Both carry `source: "stop"`. They are the planner's floor: they are **exempt from the feasibility filter of this section** (they are never rejected, including for collision) and **bypass the QP of §3.5** (a QP infeasibility can never remove them), so the selector's input is never empty (§3.6). They are otherwise ordinary candidates — scored by the full cost table, so a colliding gentle stop loses to the hard one, and any feasible normal candidate beats both on `progress` and `speed_dev` by ~25 cost units, which is why injecting them does not perturb normal driving. Normal candidates keep the hard feasibility filter unchanged: a colliding normal candidate is still rejected outright.
+
 Combine path × speed → Cartesian trajectories via `frenet.h::ToCartesian`, resampled at 0.1 s, 8 s horizon (81 points), with `yaw`, `v`, `a`, `kappa`. A speed profile whose horizon is shorter than 8 s (the STOP and YIELD quintics, and the 4 s / 6 s keeping profiles) is **extended at its terminal state to 8 s**: at rest for stops, at constant speed along the path otherwise, so every candidate has 81 points regardless of the polynomial's own horizon. Total candidates ≈ 5·3·4·3 = 180 max; prune before QP.
 
 **Feasibility filter**: `|kappa| ≤ kappa_max`, `a ∈ [a_min, a_max]`, `|a_lat| ≤ 4`, path stays within `[−right_bound + w/2, left_bound − w/2]`, no collision with predictions (see 3.4).
@@ -138,18 +144,27 @@ Cost per candidate (all terms normalized to roughly [0, 1] before weighting; wei
 | consistency | distance to previous selected trajectory over first 2 s | 3 |
 | qp_relaxed | 1 if slack used | 30 |
 
-Select argmin. Publish `TrajectoryCandidates` with full breakdown (for the Foxglove table) and `Trajectory`. When the planner has no reference line or an invalid pose it publishes the no-input pair — an empty `TrajectoryCandidates` and a `source: "none"` stop trajectory at the current pose (`02_interfaces.md` §2) — so the safety layer's barrier is always satisfied. All candidates from every source are 81 points over 8 s (`02_interfaces.md` §4), so the horizon-normalised terms above compare like with like; a candidate with fewer points is rejected by the feasibility filter, not scored.
+Select argmin. Publish `TrajectoryCandidates` with full breakdown (for the Foxglove table) and `Trajectory`.
+
+**The planner publishes on every planning tick, and the selector's input is never empty.** Three cases, in order:
+1. Valid pose, a reference line, and a usable `BehaviorDecision`: normal candidates (hard feasibility filter, §3.3) **plus** the two injected stop candidates. Argmin over all of them.
+2. Valid pose and a reference line, but no usable decision — a no-input `BehaviorDecision` (`LONGITUDINAL_STOP` / `reason: "no_input"`, which is also what a degraded perception source produces) or `/nuway/planning/behavior` itself degraded (`02_interfaces.md` §2): no normal candidate can be sampled without a decision, so the set is the two injected stop candidates alone and the argmin is the gentle one unless it collides. An upstream failure with no collision imminent therefore ends in the gentlest in-lane stop the situation allows, not a hard brake and not a stop at the current pose.
+3. No reference line or an invalid pose: the no-input pair — an empty `TrajectoryCandidates` and a `source: "none"` stop trajectory at the current pose (`02_interfaces.md` §2). This is the only case that publishes no candidate, because without a pose or a line there is no lane to stop in.
+
+In every case the safety layer's barrier is satisfied, so an empty candidate set can never stall the tick and can never reach the `TickTimeout` path (§3.7, `02_interfaces.md` §2), which is reserved for a genuinely dead upstream process. All candidates from every source are 81 points over 8 s (`02_interfaces.md` §4), so the horizon-normalised terms above compare like with like; a candidate with fewer points is rejected by the feasibility filter, not scored.
 
 ### 3.7 `nuway_planning/safety_layer_node` (C++, 20 Hz)
 
 Independent last check on `/nuway/planning/trajectory`, using agents and predictions (`samples`, or `fallback_samples` once degraded) directly (not the planner's internal state). Runs every tick, after the pose of that tick and — on planning ticks — after the planner's output stamped with that tick (`02_interfaces.md` §2 barrier); on control-only ticks it re-checks the last planning tick's trajectory against the current pose:
-1. Under the barrier the input trajectory is never stale, so there is no staleness timer. If the planner is *degraded* (a `TickTimeout` while its output for that tick was missing) → publish a max-decel stop profile along the last safe trajectory's path and hold it for the rest of the episode. A `source: "none"` input passes through as a stop at the current pose.
+1. Under the barrier the input trajectory is never stale, so there is no staleness timer. If the planner is *degraded* (a `TickTimeout` while its output for that tick was missing) → publish the **gentlest** stop profile along the last safe trajectory's path that this node's own collision check clears — `a_gentle = 1.5` first, max decel only if the gentle one collides — and hold it for the rest of the episode. A dead planner with nothing bearing down on the car is not a reason to brake hard. If no safe trajectory was ever published in this episode (the planner died before its first output), the car is not yet moving and the fallback is the no-input stop at the current pose. A `source: "none"` input passes through as a stop at the current pose.
 2. Re-run collision check with a larger margin over the first 3 s. If collision → replace with a max-decel stop profile along the same path.
 3. Enforce limits: clip `a`, `kappa`, and re-integrate if clipped.
 4. Occupancy footprint check against `occupied` channel (threshold 0.6) over the first 3 s → stop profile.
 Publish `/nuway/planning/safe_trajectory` and a `NodeDiag` warning whenever it intervenes (intervention rate is a tracked metric).
 
 ### 3.8 `nuway_control/mpc_node` (C++, OSQP via osqp-eigen, 20 Hz)
+
+**M1 retires the M0 controller.** From M1 on, `mpc_node` is the only producer of `/nuway/control/command` in every profile: `control.controller: pure_pursuit` stays valid for the M0 profiles alone, and no M1+ profile sets it. There is no controller-level redundancy — a failure of any kind stops the car (below) rather than handing it to a cruder controller, because the guaranteed-safe input is the safety layer's job (§3.7), not the control layer's.
 
 **Model** (kinematic bicycle with steering lag), state `x = [X, Y, ψ, v, δ]`, input `u = [a, δ_cmd]`:
 ```
@@ -170,9 +185,38 @@ s.t. a ∈ [a_min, a_max], δ_cmd ∈ [−δ_max, δ_max], |Δa| ≤ jerk_max·d
 ```
 Implementation detail: position error expressed in the reference point's local frame (longitudinal/lateral) so `Q` can weight lateral more than longitudinal (`Q_lon=0.5, Q_lat=4.0`). Condense to a dense QP over `u` (N·2 = 40 variables) — small enough that dense is fastest.
 
-Output the first input `u_0` as `ControlCommand`. Warm start from the previous solution shifted. If the solver fails, fall back to pure pursuit for that cycle and raise `NodeDiag` warn. With a `valid: false` pose, or with `safe_trajectory` degraded, publish `emergency_stop: true` stamped with the tick (no-input convention); a `source: "none"` safe trajectory is simply tracked, which holds the car still.
+Output the first input `u_0` as `ControlCommand`. Warm start from the previous solution shifted.
+
+**Solver outcomes.** The QP constrains inputs only — box bounds on `a` and `δ_cmd`, rate bounds against the last command — and never the state, so holding the previous input is always feasible and the problem cannot be primal infeasible; with `R` positive definite it cannot be unbounded either. "Solver failure" therefore means one thing in practice: the iteration budget ran out. Three outcomes:
+- **Solved**, *including a failed polish step*: `polish: true` (§5) solves a reduced KKT system after convergence, and that step failing leaves the unpolished solution valid and optimal to tolerance. **A polish failure is not a solver failure** and must not be counted or reported as one — treating it as one would brake the car for a non-event.
+- **Iteration budget exhausted** (`max_iter` reached / solution inaccurate): use the returned iterate. It is near-optimal, but an ADMM iterate satisfies the constraints only in the limit, so **clamp `u_0` to the input bounds and to the rate limits against the last command** before publishing it. Raise `NodeDiag` warn and increment the consecutive-failure counter.
+- **No usable iterate** (factorization failure, non-finite values in the solution): straight to `emergency_stop: true` for that tick, without waiting for the counter.
+
+After `mpc.max_consecutive_solver_failures` (default 5, i.e. 0.25 s) *consecutive* counted failures, publish `emergency_stop: true` instead of the iterate, and keep doing so while the failures continue. Any solved tick resets the counter. **This is deliberately not the degradation mechanism of `02_interfaces.md` §2**: it is node-local, counted in ticks rather than wall clock (so it is deterministic), and it recovers within the episode, because a structurally always-feasible QP has no failure that a later tick cannot undo. The counter clears on `ResetEvent` like every other piece of node state (§5). Each counted failure is one `n_mpc_failures` in `results.csv` (§3.10) and an incident sheet (§3.11).
+
+**Steering while stopping.** On any tick this node raises `emergency_stop`, it sets `steering_angle` to the `δ_ref` of the reference point it was tracking (the last valid one when there is no usable reference), never 0: `control_adapter` converts `steering_angle` independently of `emergency_stop` (M0 §2.3 overrides throttle and brake only), so the wheel keeps the lane geometry while the brake is at the floor. Returning the wheel to centre at speed in a curve is a hazard of its own — the car brakes at the tyre limit while leaving the lane.
+
+With a `valid: false` pose or a degraded `safe_trajectory`, publish `emergency_stop: true` stamped with the tick (no-input convention). A `source: "none"` safe trajectory is simply tracked, which holds the car still.
 
 Debug: publish predicted MPC trajectory as markers.
+
+**Failure response ladder (index; the rules themselves are in the sections cited).** `emergency_stop` is the hardest stop in the stack — brake 1.0 at the adapter, below the planning limit `a_min`, no trajectory followed — so it is reserved for the cases where *"stop in the lane" cannot be expressed at all*: no pose (no lane frame), no trajectory (nothing to track), or no computable input. Everywhere else the stack stops by **planning** a stop and tracking it through the MPC and the pedal table.
+
+| failure | response | where |
+|---|---|---|
+| `/nuway/loc/pose` invalid or degraded | `emergency_stop` | §3.8, `02_interfaces.md` §2 |
+| `safe_trajectory` degraded (safety layer dead) | `emergency_stop` | §3.8, `02_interfaces.md` §2 |
+| MPC QP returns no usable iterate | `emergency_stop`, immediately | §3.8 |
+| MPC QP fails `max_consecutive_solver_failures` ticks in a row | `emergency_stop`, after the clamped iterate was used for those ticks | §3.8 |
+| `behavior` degraded (FSM dead) | gentlest in-lane stop the collision check clears | §3.6 case 2, `02_interfaces.md` §2 |
+| `trajectory` degraded (planner dead) | gentlest in-lane stop along the last safe path, max-decel if that collides | §3.7 |
+| perception degraded (agents / occupancy / traffic lights) | no-input decision → gentlest in-lane stop | §3.6 case 2 |
+| `samples` degraded (prediction dead) | `fallback_samples`; driving continues, no stop | §3.1, `02_interfaces.md` §2 |
+| every normal candidate rejected by the feasibility filter | injected stop candidates carry the tick: gentle, or hard if the gentle one collides | §3.3, §3.6 case 1 |
+| safety layer intervenes (collision, occupancy, limits) | max-decel stop *profile*, tracked normally; no `emergency_stop` | §3.7 |
+| no reference line, or pose invalid, at the planner | `source: "none"` stop at the current pose, tracked | §3.6 case 3 |
+
+Under the Leaderboard profile the agent's watchdog answers a tick that got no command with a full-brake `VehicleControl` (§3.12); in M1 that is *every* tick, since no localization source runs under the runner before M5.
 
 ### 3.9 Traffic in the world manager
 
@@ -249,12 +293,12 @@ The official Leaderboard runner owns the CARLA client, the tick, the sensors and
 1. [ ] `const_vel_node` (+ lane-follow option, unit test on a curved lane).
 2. [ ] `frenet.h` extensions: velocity/accel projection, `ToCartesian` with `d(s)` polynomials; tests; mirror in `nuway_ml/common/frenet.py` + parity test.
 3. [ ] `behavior_fsm` library + node + tests (scripted scenarios: lead vehicle, red light, yield at junction, route lane change).
-4. [ ] `lattice_sampler` + feasibility filter + tests (candidate count, limits respected).
+4. [ ] `lattice_sampler` + feasibility filter + the two injected `source: "stop"` candidates (§3.3) + tests (candidate count, limits respected, both stop candidates present in every behavior state and never rejected by the filter).
 5. [ ] `collision_checker` + tests (SAT correctness vs brute force on random boxes).
 6. [ ] `piecewise_jerk_qp` path + speed + tests (feasibility on synthetic bounds; warm start speeds up second solve).
-7. [ ] `rule_selector` + `planner_node` orchestrator; publish candidates/breakdown.
-8. [ ] `safety_layer_node` + tests (stale input, collision injection).
-9. [ ] `mpc_node` + `bicycle_model.h` jacobians (tests: finite-difference check) + delay compensation + fallback.
+7. [ ] `rule_selector` + `planner_node` orchestrator; publish candidates/breakdown. Tests for the three cases of §3.6: a feasible normal candidate beats both stop candidates, every normal candidate colliding leaves the gentle stop selected (the hard one when the gentle collides too), and a missing/no-input decision yields the gentle stop rather than `source: "none"`.
+8. [ ] `safety_layer_node` + tests (stale input, collision injection, planner degraded with a clear road → gentle profile, with an obstacle → max decel).
+9. [ ] `mpc_node` + `bicycle_model.h` jacobians (tests: finite-difference check) + delay compensation + the solver-outcome policy of §3.8 (tests: a failed polish is not counted as a failure; an exhausted iteration budget publishes the clamped iterate; `max_consecutive_solver_failures` consecutive failures escalate to `emergency_stop` and a solved tick resets the counter; an `emergency_stop` tick carries `δ_ref`, not steer 0). Record the chosen `max_iter` and the observed iteration distribution in the task 17 tuning note — a tight `max_iter` turns a timing problem into a braking event. Flip the `control.controller` default in `nuway_bringup/profile.py` from `pure_pursuit` to `mpc` so that an M1+ profile which omits the key cannot silently launch the M0 controller (§3.8).
 10. [ ] Traffic spawning in world_manager; seed determinism test (two runs → identical agent trajectories for 30 s); traffic respawn on reset.
 11. [ ] `tools/eval/nuway_eval/`: `infractions.py` (incl. the ported min-speed criterion), `driving_score.py`, `route_runner.py` (one stack per town, second non-ticking client, waypoint publishing, reset event, non-deterministic flag, `--resume`, crash recovery), `report.py` (the `results.csv` schema of §3.10), `compare_runs.py`; route XMLs with the `protocol="m1"` marks; `configs/eval/scoring_lb20.yaml`.
 12. [ ] Foxglove layout + marker node.
@@ -287,6 +331,9 @@ The official Leaderboard runner owns the CARLA client, the tick, the sensors and
 - (2026-09-05) Leaderboard integration lives in M1, not in a later milestone, so that every subsequent milestone is measured under both our harness and the official runner and no design decision can silently break Leaderboard compatibility.
 - (2026-09-06) The M1 Leaderboard criterion is mechanical integration only. The official runner provides no GT of any kind (perception included), and before M3/M5 the stack has nothing to fill those roles under it, so route completions and score parity against our harness are deferred to M5 — the first milestone whose `m5_no_gt.yaml` legitimately drives there.
 - (2026-09-06) **Design review.** (a) The M1 protocol is 10 routes × 3 weathers = 30 runs, five marked routes per town, so every later closed-loop criterion costs a few hours rather than a day; the 20-route set stays available. (b) Fallbacks are keyed off `TickTimeout`, never off a consumer's own wall-clock timer, which retired the safety layer's 0.3 s / 0.6 s staleness rule (unreachable under the barrier anyway). (c) The harness package moved to `tools/eval/nuway_eval/` so `tools/` never imports from `ros2_ws` except `nuway_py`. (d) Under the Leaderboard the harness runs one stack per route; the alternative (clock offsets and map reloads inside the agent) would have made the agent a second world manager. (e) `results.csv` got a schema and the runner a `--resume`, because a protocol run is hours long and the CARLA server does crash.
+- (2026-09-08) **No controller-level redundancy from M1 on.** `mpc_node`'s QP solver failure triggers `emergency_stop: true` directly instead of falling back to pure pursuit for that cycle, and `pure_pursuit_pid_node` is retired with M0: it stays launchable only by the M0 profiles, no M1+ profile sets `control.controller: pure_pursuit`, and the launch default flips to `mpc` (task 9) so the M0 controller cannot be reached by omission. Rationale: every other failure the node handles (invalid pose, degraded `safe_trajectory`) already stops rather than degrading to a cruder controller, and a second control path is a second thing to keep correct and tuned for a failure mode the safety layer already covers by construction (§3.7 guarantees a trackable `safe_trajectory`, so the control layer never needs its own opinion about safety).
+- (2026-09-09) **The planner always has a floor, and an upstream failure stops gently.** Two in-lane stop candidates (`source: "stop"`, one at `a_gentle = 1.5` and one at max decel) are injected in every behavior state, exempt from the feasibility filter and from the QP, so the selector's input is never empty (§3.3, §3.6). Reason: collision was a *hard* filter (§3.3) while the FSM only samples a max-decel profile in the STOP state, so a cut-in during FREE could reject all ~180 candidates; the planner would then publish nothing, stall the barrier, and be indistinguishable from a dead process — `TickTimeout`, planner degraded, stopped for the rest of the episode, route flagged `non_deterministic`. That is the right answer for a dead process and the wrong one for a planner correctly reporting that no collision-free option exists. The filter is unchanged for normal candidates: a colliding normal candidate is still rejected, and the injected pair is what keeps the set non-empty. The same principle applies to the fallbacks themselves — a degraded `behavior` source (§2 table, new row) and a degraded planner (§3.7) both stop as gently as their own collision check allows, since an upstream process dying is not evidence that anything is bearing down on the car.
+- (2026-09-09) **An MPC solver failure uses the iterate and escalates, rather than braking on the spot.** The (2026-09-08) entry above routed a solver failure straight to `emergency_stop`; that is too heavy once the QP is looked at closely. It constrains inputs only, so holding the previous input is always feasible: it cannot be primal infeasible, and with `R ≻ 0` it cannot be unbounded. The only realistic failure is the iteration budget running out — made likelier by §5's own `adaptive_rho: false` and fixed `max_iter`, and expected only at trajectory discontinuities where the warm start is poor (reset, a safety-layer intervention switching homotopy, a lane-change commit). Meanwhile `emergency_stop` is the *hardest* stop in the stack: brake 1.0 at the adapter, below the planning limit `a_min`, with no trajectory followed. Jumping there for a near-optimal-but-untightened iterate is disproportionate, so the node now publishes the clamped iterate, counts it, and escalates only after `max_consecutive_solver_failures` consecutive ones — node-local and recoverable, unlike the latching degradation of `02_interfaces.md` §2. Two traps recorded with it: a failed `polish` step leaves a valid solution and must not be counted as a failure, and an `emergency_stop` tick must carry `δ_ref` rather than steer 0, since `control_adapter` overrides only throttle and brake and a centred wheel under full braking leaves the lane on a curve.
 
 ## 7. Open questions
 

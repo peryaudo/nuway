@@ -84,7 +84,7 @@ Defaults: `w_col=1000, w_ttc=50, w_prox=10, w_prog=30, w_off=200, w_rule=500, w_
 1. [ ] `forward_sim.py` (torch reference) + scenario tests.
 2. [ ] `forward_sim_scorer.cc` + parity test vs torch; timing test.
 3. [ ] Agent Mode B (IDM along lane) in C++; tests (agent brakes for ego).
-4. [ ] `planner_node` two-stage selection, diversity guard, breakdown publishing; config `configs/planning/forward_sim.yaml`; profile `m9_forward_sim.yaml` (includes `m8_learned_planner.yaml`, sets `planning.selector: forward_sim`).
+4. [ ] `planner_node` two-stage selection, diversity guard, breakdown publishing; `forward_sim.*` parameters in `nuway_planning/config/defaults.yaml` (no `configs/planning/`, M1 §3.6); profile `m9_forward_sim.yaml` (includes `m8_learned_planner.yaml`, sets `planning.selector: forward_sim`).
 5. [ ] Foxglove "sim rollout" layer.
 6. [ ] Ablation runs and report `data/eval_runs/m9_report.md`.
 

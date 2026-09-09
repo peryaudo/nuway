@@ -51,8 +51,8 @@ nuway/
 │   ├── maps/
 │   │   ├── sysid_straight.xodr            # M0: generated 3 km straight for tools/sysid (carla.town: <path>.xodr)
 │   │   └── <town>/                        # curated per-town files: tl_overrides.yaml (M4), tl_bulbs.json
-│   ├── planning/
-│   ├── control/
+│   │                                      # (no planning/ or control/ directory: runtime node parameters live in each package's
+│   │                                      #   config/defaults.yaml and are overridden from a profile's <node>: block, 02 §5, M0 task 12)
 │   ├── perception/
 │   ├── localization/
 │   ├── eval/
@@ -100,7 +100,8 @@ nuway/
 │       │   │   ├── tick.h               # TickIndex(stamp), IsPlanningTick(k); current-tick barrier helper (02 §2)
 │       │   │   ├── frames.h             # frame ids and the topic names shared by more than one package (mirrors frames.py)
 │       │   │   ├── params.h             # declare/get param helpers
-│       │   │   ├── ros_conv.h           # geometry_msgs <-> Eigen / SE2 / SE3 field copies for nodes (mirrors ros_conv.py)
+│       │   │   ├── ros_conv.h           # geometry_msgs <-> Eigen / SE2 / SE3 field copies for nodes (mirrors ros_conv.py);
+│       │   │   │                        #   AgentsToMap(AgentArray, EgoState): the one base_link -> map agent transform (M1 §3.1)
 │       │   │   └── node_main.h          # RunNode<T>(): the one main() body of every C++ node (init, spin, shutdown, node-boundary catch)
 │       │   └── test/
 │       ├── nuway_py/                      # THE pybind11 package (one per repo). M0: nuway_common + nuway_control::LongitudinalMap

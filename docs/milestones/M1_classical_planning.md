@@ -294,7 +294,7 @@ The official Leaderboard runner owns the CARLA client, the tick, the sensors and
 ## 4. Task list
 
 1. [x] `const_vel_node` (+ lane-follow option, unit test on a curved lane); `ros_conv.h::AgentsToMap` (the §3.1 frame rule, test against a hand-transformed agent); `prediction.launch.py` launches it in every profile.
-2. [ ] `frenet.h` extensions: velocity/accel projection, `ToCartesian` with `d(s)` polynomials; tests; mirror in `nuway_ml/common/frenet.py` + parity test.
+2. [x] `frenet.h` extensions: velocity/accel projection, `ToCartesian` with `d(s)` polynomials; tests; mirror in `nuway_ml/common/frenet.py` + parity test.
 3. [ ] `behavior_fsm` library + node + tests (scripted scenarios: lead vehicle, red light, yield at junction, route lane change).
 4. [ ] `lattice_sampler` + feasibility filter (`kappa_phys` from `VehicleModel`, §3.3; rewrite the `limits.kappa_max` comment in `lincoln_mkz_2020.yaml` as unused) + the two injected `source: "stop"` candidates (§3.3) + tests (candidate count, limits respected, a κ = 0.42 corner keeps its normal candidates, `s_f` clipped at the line end, both stop candidates present in every behavior state and never rejected by the filter).
 5. [ ] `collision_checker` + tests (SAT correctness vs brute force on random boxes).

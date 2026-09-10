@@ -55,4 +55,8 @@ fi
 
 extra=()
 if [ "$fix" -eq 1 ]; then extra+=(--fix); fi
-uv run --frozen clang-tidy -p ros2_ws/build --quiet "${extra[@]}" "${checked[@]}"
+# clang-tidy re-parses GCC compile commands with a clang frontend; the
+# GCC-only -Wno-stringop-* spellings of the pybind11 module would otherwise be
+# fatal under -Werror (the in-build tidy passes the same flag, nuway_cmake).
+uv run --frozen clang-tidy -p ros2_ws/build --quiet \
+  --extra-arg=-Wno-unknown-warning-option "${extra[@]}" "${checked[@]}"

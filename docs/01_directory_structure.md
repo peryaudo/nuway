@@ -92,7 +92,8 @@ nuway/
 │       │   │   ├── geometry.h           # SE2, SE3 helpers, angle wrap
 │       │   │   ├── agents.h             # AgentClass, AgentState, PredictionSet: plain images of Agent / PredictionSamples
 │       │   │   │                        #   for the rclcpp-free planning and prediction libraries (M1)
-│       │   │   ├── frenet.h             # reference line, cartesian<->frenet
+│       │   │   ├── frenet.h             # reference line, cartesian<->frenet (+ state conversions, M1)
+│       │   │   ├── polynomial.h         # quintic / quartic polynomials for the lattice (M1; mirrors polynomial.py)
 │       │   │   ├── bicycle_model.h      # kinematic bicycle, discretization, jacobians
 │       │   │   ├── trajectory.h         # Trajectory struct, resampling, interpolation
 │       │   │   ├── carla_conv.h         # left-handed <-> ROS conversion, GNSS <-> map (C++ side; see Rules)
@@ -200,6 +201,7 @@ nuway/
 │   │   ├── common/
 │   │   │   ├── geometry.py                # numpy/torch SE2 utils, must mirror nuway_common
 │   │   │   ├── frenet.py                  # mirrors nuway_common/frenet.h
+│   │   │   ├── polynomial.py              # mirrors nuway_common/polynomial.h (M1)
 │   │   │   ├── trajectory.py              # mirrors nuway_common/trajectory.h resampling (M8 spline resample)
 │   │   │   ├── longitudinal_map.py        # mirrors nuway_control's LongitudinalMap; parity-tested (M0)
 │   │   │   ├── carla_conv.py              # left-handed <-> ROS conversion (Python side; see Rules)

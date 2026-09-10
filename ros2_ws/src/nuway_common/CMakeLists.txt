@@ -43,6 +43,7 @@ if(BUILD_TESTING)
         tick
         ros_conv
         polynomial
+        bicycle_model
     )
         ament_add_gtest(${unit}_test test/${unit}_test.cc)
         target_link_libraries(${unit}_test nuway_common)

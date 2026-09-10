@@ -60,6 +60,25 @@ double ProjectedS(const std::optional<nuway_common::FrenetPoint>& f) {
   return f.has_value() ? f->s : std::nan("");
 }
 
+TEST(RouteLineTest, CurvatureSpeedCapLooksAheadOverTheReach) {
+  // A 40 m straight into a 10 m radius arc (kappa 0.1) after s = 40.
+  nuway_common::Vector2dList points;
+  for (int i = 0; i < 80; ++i) {
+    points.emplace_back(0.5 * i, 0.0);
+  }
+  for (int i = 0; i <= 60; ++i) {
+    const double theta = 0.5 * i / 10.0;
+    points.emplace_back(40.0 + (10.0 * std::sin(theta)),
+                        10.0 * (1.0 - std::cos(theta)));
+  }
+  const RouteLine route(nuway_common::ReferenceLine::FromPoints(points), {1U},
+                        {20.0}, {1.75}, {1.75}, std::nullopt);
+  EXPECT_TRUE(std::isinf(route.CurvatureSpeedCap(0.0, 20.0, 4.0)));
+  // Reaching into the arc: sqrt(4 / 0.1) = 6.3 m/s (Menger on 0.5 m chords).
+  EXPECT_NEAR(route.CurvatureSpeedCap(0.0, 60.0, 4.0), std::sqrt(40.0), 0.2);
+  EXPECT_NEAR(route.CurvatureSpeedCap(50.0, 0.0, 4.0), std::sqrt(40.0), 0.2);
+}
+
 TEST(RouteLineTest, ProjectUsesTheHintAndFallsBackGlobally) {
   const RouteLine route = Straight();
   EXPECT_NEAR(ProjectedS(route.Project(50.2, 0.3, 5.0, 48.0, 10.0, 50.0)), 50.2,

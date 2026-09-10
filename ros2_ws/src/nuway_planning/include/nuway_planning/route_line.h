@@ -70,6 +70,13 @@ class RouteLine {
   // beyond that distance no bound can cap the speed below the limit.
   double SpeedBoundAt(double s, const SpeedProfileOptions& options) const;
 
+  // The curvature speed cap over the stretch [s, s + reach_m]: the lowest
+  // sqrt(a_lat_max / |kappa|) of the samples there (and of s itself);
+  // +infinity on a straight. What a speed profile that runs through the
+  // stretch at a constant end speed may aim at without exceeding a_lat_max
+  // (the lattice's keep targets, M1 §3.3 feasibility filter).
+  double CurvatureSpeedCap(double s, double reach_m, double a_lat_max) const;
+
   // Frenet projection with the windowed search of ReferenceLine::
   // ToFrenetNear when a hint is given, the global search otherwise, and the
   // global search as the fallback when the window finds nothing.

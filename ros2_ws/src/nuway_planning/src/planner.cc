@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <map>
 #include <numeric>
 #include <optional>
 #include <string>
@@ -155,6 +156,22 @@ PlanResult Planner::Plan(const SceneInput& in,
                      }
                      return set[a].cost < set[b].cost;
                    });
+  std::string reject_summary;
+  // Why the normal candidates were rejected, so a stop that came from
+  // the injected pair can be read off the diag (the first drives of task
+  // 9 were debugged from exactly this).
+  std::map<std::string, int> rejects;
+  for (const Candidate& c : set) {
+    if (!c.injected && !c.reject.empty()) {
+      ++rejects[c.reject];
+    }
+  }
+  if (!rejects.empty()) {
+    reject_summary = "; rejected:";
+    for (const auto& [reason, count] : rejects) {
+      reject_summary += " " + reason + " " + std::to_string(count);
+    }
+  }
   const auto limit =
       static_cast<std::size_t>(std::max(2, options_.publish_max));
   for (const std::size_t i : order) {
@@ -176,6 +193,7 @@ PlanResult Planner::Plan(const SceneInput& in,
   if (!qp_messages.empty()) {
     out.message += "; qp failed: " + qp_messages;
   }
+  out.message += reject_summary;
   return out;
 }
 

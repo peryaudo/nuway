@@ -182,6 +182,9 @@ class PlannerNode final : public rclcpp::Node {
         d("lattice.a_gentle_mps2", o.lattice.a_gentle_mps2, "gentle stop");
     o.lattice.ds_speed_factor_s = d("lattice.ds_speed_factor_s",
                                     o.lattice.ds_speed_factor_s, "ds factor");
+    o.lattice.curvature_cap_factor =
+        d("lattice.curvature_cap_factor", o.lattice.curvature_cap_factor,
+          "fraction of a_lat_max the keep targets aim at through bends");
     o.lattice.projection_max_dist_m =
         d("lattice.projection_max_dist_m", o.lattice.projection_max_dist_m,
           "off-line limit");

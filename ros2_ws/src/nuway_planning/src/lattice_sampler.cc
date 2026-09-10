@@ -185,8 +185,14 @@ std::optional<FrenetState> EgoFrenetState(const EgoObs& ego,
   c.x = ego.pose.x;
   c.y = ego.pose.y;
   c.yaw = ego.pose.yaw;
-  c.v = ego.vx_mps;
-  c.a = ego.ax_mps2;
+  // The lattice never plans in reverse: a car rolling back (a stop on a
+  // grade) is sampled from rest, and at rest the measured deceleration
+  // (the slope, the brake) is not a state the profiles must continue from,
+  // or every quartic would dip below zero and be rejected as "reverse",
+  // which left the car stopped for good on the Town03 ramp (task 9).
+  c.v = std::max(0.0, ego.vx_mps);
+  c.a = c.v < options.stopped_speed_mps ? std::max(0.0, ego.ax_mps2)
+                                        : ego.ax_mps2;
   c.kappa =
       wheelbase_m > kEps ? std::tan(ego.steering_angle_rad) / wheelbase_m : 0.0;
   if (s_hint.has_value()) {
@@ -304,8 +310,25 @@ std::vector<Candidate> LatticeSampler::Sample(
   const double v_limit = route.SpeedLimitAt(ego.s);
   const auto add_keeping = [&](double v_center) {
     std::vector<double> targets;
+    // A keep profile holds its end speed to the 8 s horizon, so the end
+    // speed must respect the bends of the whole stretch it can reach; a
+    // target above the corner speed would be rejected for a_lat on every
+    // horizon and leave the injected stop alone (a car at rest before a
+    // junction corner then never moves again). The cap becomes a target of
+    // its own where it bites.
+    double v_high = v_center;
     for (const double offset : options_.speed_offsets_mps) {
-      const double v_t = std::clamp(v_center + offset, 0.0, v_limit);
+      v_high = std::max(v_high, v_center + offset);
+    }
+    const double reach =
+        std::max(v, v_high) * nuway_common::kTrajectoryDtS *
+        static_cast<double>(nuway_common::kTrajectoryPoints - 1);
+    const double v_cap = std::min(
+        v_limit, route.CurvatureSpeedCap(
+                     ego.s, reach,
+                     options_.curvature_cap_factor * limits_.a_lat_max_mps2));
+    for (const double offset : options_.speed_offsets_mps) {
+      const double v_t = std::clamp(v_center + offset, 0.0, v_cap);
       bool duplicate = false;
       for (const double e : targets) {
         duplicate = duplicate || std::abs(e - v_t) < kEps;

@@ -1,5 +1,6 @@
 #include "nuway_planning/lattice_sampler.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <optional>
@@ -175,6 +176,67 @@ TEST(LatticeSamplerTest, TightCornerKeepsItsNormalCandidates) {
   yaml.Filter(route, &rejected);
   EXPECT_EQ(CountFeasibleNormal(rejected), 0U);
   EXPECT_EQ(CountInjected(rejected), 2U);
+}
+
+// A straight of `straight` m into a left turn of radius r over a quarter
+// circle, then a straight again; one lane, 1.75 m bounds.
+RouteLine StraightThenCorner(double straight, double r) {
+  nuway_common::Vector2dList points;
+  const int n = static_cast<int>(std::lround(straight / 0.5));
+  for (int i = 0; i < n; ++i) {
+    points.emplace_back(0.5 * i, 0.0);
+  }
+  const int arc = static_cast<int>(std::lround(0.5 * kPi * r / 0.5));
+  for (int i = 0; i <= arc; ++i) {
+    const double theta = 0.5 * i / r;
+    points.emplace_back(straight + (r * std::sin(theta)),
+                        r * (1.0 - std::cos(theta)));
+  }
+  for (int i = 1; i <= 100; ++i) {
+    points.emplace_back(straight + r, r + (0.5 * i));
+  }
+  return RouteLine(nuway_common::ReferenceLine::FromPoints(points), {1U},
+                   {kLimit}, {1.75}, {1.75}, std::nullopt);
+}
+
+TEST(LatticeSamplerTest, KeepTargetsAreCappedByTheCornerAhead) {
+  // The Town03 junction of task 9: at rest 8 m before a 6 m radius corner
+  // (kappa 0.167, corner speed sqrt(4 / 0.167) = 4.9 m/s) with a free
+  // target of 7 m/s every uncapped keep candidate exceeded a_lat.
+  const RouteLine route = StraightThenCorner(30.0, 6.0);
+  SceneInput in;
+  in.route = &route;
+  const LatticeSampler sampler{LatticeOptions{}, LatticeLimits{}};
+  std::vector<Candidate> set =
+      sampler.Sample(in, Ego(22.0, 0.0), Decision(Longitudinal::kFree, 7.0));
+  sampler.Filter(route, &set);
+  EXPECT_GT(CountFeasibleNormal(set), 0U);
+  double v_max = 0.0;
+  for (const Candidate& c : set) {
+    if (!c.injected && c.feasible()) {
+      for (const nuway_common::TrajectoryPoint& p : c.trajectory) {
+        v_max = std::max(v_max, p.v);
+      }
+      EXPECT_LE(c.v_target_mps, std::sqrt(0.9 * 4.0 * 6.0) + 0.2);
+    }
+  }
+  EXPECT_LE(v_max, std::sqrt(4.0 * 6.0) + 0.2);
+  // Approaching at 6 m/s from 30 m out: still feasible (the profile
+  // decelerates to the cap before the corner).
+  std::vector<Candidate> fast =
+      sampler.Sample(in, Ego(0.0, 6.0), Decision(Longitudinal::kFree, 7.0));
+  sampler.Filter(route, &fast);
+  EXPECT_GT(CountFeasibleNormal(fast), 0U);
+  // Far from any bend the targets are the plain offsets around the centre.
+  const RouteLine straight = Straight(300.0);
+  in.route = &straight;
+  const std::vector<Candidate> free =
+      sampler.Sample(in, Ego(10.0, 7.0), Decision(Longitudinal::kFree, 7.0));
+  double v_t_max = 0.0;
+  for (const Candidate& c : free) {
+    v_t_max = std::max(v_t_max, c.v_target_mps);
+  }
+  EXPECT_NEAR(v_t_max, 8.5, 1e-9);
 }
 
 TEST(LatticeSamplerTest, PathEndIsClippedAtTheLineEnd) {

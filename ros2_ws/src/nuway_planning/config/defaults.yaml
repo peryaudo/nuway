@@ -64,6 +64,7 @@ planner_node:
     lattice:
       a_gentle_mps2: 1.5            # the injected gentle stop (M1 §3.3)
       ds_speed_factor_s: 3.0        # path length ds = max(ds, factor * v)
+      curvature_cap_factor: 0.9     # keep targets aim at this fraction of a_lat_max through the bends they reach
       projection_max_dist_m: 5.0    # farther off the line: no-input output
     qp:                             # M1 §3.5
       w_d: 1.0                      # path: lattice d tracking

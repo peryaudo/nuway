@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <limits>
 #include <utility>
 
 namespace nuway_planning {
@@ -109,6 +110,27 @@ double RouteLine::SpeedBoundAt(double s,
     target = std::min(target, std::sqrt(options.a_lat_max_mps2 / kappa_here));
   }
   return std::max(0.0, target);
+}
+
+double RouteLine::CurvatureSpeedCap(double s, double reach_m,
+                                    double a_lat_max) const {
+  double cap = std::numeric_limits<double>::infinity();
+  if (line_.size() < 2) {
+    return cap;
+  }
+  const auto bound = [&](double kappa) {
+    if (std::abs(kappa) > 1e-6) {  // 1e-6: R of 1000 km, a straight
+      cap = std::min(cap, std::sqrt(a_lat_max / std::abs(kappa)));
+    }
+  };
+  bound(line_.CurvatureAt(s));
+  const std::vector<double>& line_s = line_.s();
+  const double s_end = std::min(line_.length(), s + std::max(0.0, reach_m));
+  const auto first = std::lower_bound(line_s.begin(), line_s.end(), s);
+  for (auto it = first; it != line_s.end() && *it <= s_end; ++it) {
+    bound(line_.curvature()[static_cast<std::size_t>(it - line_s.begin())]);
+  }
+  return cap;
 }
 
 std::optional<nuway_common::FrenetPoint> RouteLine::Project(

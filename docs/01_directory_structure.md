@@ -164,6 +164,7 @@ nuway/
 │       │       └── prediction_node.py        # M7; also hosts the M8 ego planning head
 │       ├── nuway_planning/                # C++ except gt_planning_node.py
 │       │   ├── src/
+│       │   │   ├── route_line.cc          # reference line + lane ids, limits, bounds, goal; the M0 speed profile as SpeedBoundAt (M1)
 │       │   │   ├── behavior_fsm.cc / behavior_fsm_node.cc      # M1
 │       │   │   ├── lattice_sampler.cc                           # M1
 │       │   │   ├── collision_checker.cc                         # M1

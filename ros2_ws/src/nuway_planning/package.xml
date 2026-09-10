@@ -1,0 +1,24 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>nuway_planning</name>
+  <version>0.0.0</version>
+  <description>The classical planning stack (M1): behavior FSM, Frenet lattice sampler, collision checker, piecewise-jerk QP, rule selector, planner node and safety layer; gt_planning_node (M6), forward-sim selector (M9), iLQR (M10).</description>
+  <maintainer email="peryaudo@gmail.com">Tetsui Ohkubo</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <buildtool_depend>nuway_cmake</buildtool_depend>
+
+  <depend>eigen</depend>
+  <depend>rclcpp</depend>
+  <depend>nuway_common</depend>
+  <depend>nuway_map</depend>
+  <depend>nuway_msgs</depend>
+
+  <test_depend>ament_cmake_gtest</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

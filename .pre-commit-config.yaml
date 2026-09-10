@@ -18,7 +18,7 @@ repos:
         name: gersemi
         entry: uv run --frozen gersemi --check
         language: system
-        files: '^ros2_ws/src/nuway_[a-z_]+/.*(CMakeLists\.txt|\.cmake)$'
+        files: '^ros2_ws/src/(nuway_[a-z_]+|[a-z_]+_vendor)/.*(CMakeLists\.txt|\.cmake)$'
       - id: header-guards
         name: header guards
         entry: uv run --frozen python tools/lint/check_header_guards.py

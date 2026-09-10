@@ -80,7 +80,7 @@ nuway/
 │   └── src/
 │       ├── nuway_cmake/                   # shared CMake: warnings, -Werror, NUWAY_CLANG_TIDY/SANITIZE/LTO
 │       ├── carla_msgs/                    # vendored from ros-carla-msgs (leaderboard-2.0 branch); messages only (M0)
-│       ├── osqp_eigen_vendor/             # FetchContent, pinned tag+hash (M1) — the only vendored
+│       ├── osqp_eigen_vendor/             # ExternalProject, pinned tag+hash (M1) — the only vendored
 │       │                                  #   dep; OSQP, GTSAM and nanoflann come from apt on
 │       │                                  #   Jazzy/noble (03_style_and_conventions.md §6.2)
 │       ├── nuway_msgs/                    # ALL custom messages and services. No msgs/srvs elsewhere.

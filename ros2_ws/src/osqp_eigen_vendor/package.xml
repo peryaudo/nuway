@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>osqp_eigen_vendor</name>
+  <version>0.8.1</version>
+  <description>Vendor package for osqp-eigen (robotology), the Eigen wrapper around OSQP used by the M1 planner QPs and MPC; pinned to the v0.8.1 tag by commit hash (docs/03 §6.4).</description>
+  <maintainer email="peryaudo@gmail.com">Tetsui Ohkubo</maintainer>
+  <license>MIT</license>
+  <url type="repository">https://github.com/robotology/osqp-eigen</url>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <buildtool_depend>git</buildtool_depend>
+
+  <depend>eigen</depend>
+  <depend>osqp_vendor</depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

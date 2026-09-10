@@ -8,6 +8,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <string>
 #include <vector>
 
 #include <Eigen/Geometry>
@@ -19,10 +20,13 @@
 #include <nuway_msgs/msg/agent_array.hpp>
 #include <nuway_msgs/msg/ego_state.hpp>
 #include <nuway_msgs/msg/prediction_samples.hpp>
+#include <nuway_msgs/msg/trajectory.hpp>
+#include <nuway_msgs/msg/trajectory_point.hpp>
 
 #include "nuway_common/agents.h"
 #include "nuway_common/frames.h"
 #include "nuway_common/geometry.h"
+#include "nuway_common/trajectory.h"
 
 namespace nuway_common {
 
@@ -178,6 +182,50 @@ inline nuway_msgs::msg::PredictionSamples PredictionSetToMsg(
   msg.xy.assign(set.xy.begin(), set.xy.end());
   msg.yaw.assign(set.yaw.begin(), set.yaw.end());
   msg.sample_weight.assign(set.sample_weight.begin(), set.sample_weight.end());
+  return msg;
+}
+
+// nuway_msgs/Trajectory points -> Trajectory (t relative to the stamp).
+inline Trajectory TrajectoryFromMsg(const nuway_msgs::msg::Trajectory& msg) {
+  Trajectory out;
+  out.reserve(msg.points.size());
+  for (const nuway_msgs::msg::TrajectoryPoint& p : msg.points) {
+    TrajectoryPoint q;
+    q.t = static_cast<double>(p.t);
+    q.x = static_cast<double>(p.x);
+    q.y = static_cast<double>(p.y);
+    q.yaw = static_cast<double>(p.yaw);
+    q.v = static_cast<double>(p.v);
+    q.a = static_cast<double>(p.a);
+    q.kappa = static_cast<double>(p.kappa);
+    out.push_back(q);
+  }
+  return out;
+}
+
+// Trajectory -> nuway_msgs/Trajectory in the map frame with the given
+// stamp, source and candidate id (docs/02 §4; sample_index -1).
+inline nuway_msgs::msg::Trajectory TrajectoryToMsg(
+    const Trajectory& traj, const builtin_interfaces::msg::Time& stamp,
+    const std::string& source, std::uint32_t candidate_id) {
+  nuway_msgs::msg::Trajectory msg;
+  msg.header.stamp = stamp;
+  msg.header.frame_id = kFrameMap;
+  msg.source = source;
+  msg.candidate_id = candidate_id;
+  msg.sample_index = -1;
+  msg.points.reserve(traj.size());
+  for (const TrajectoryPoint& p : traj) {
+    nuway_msgs::msg::TrajectoryPoint q;
+    q.t = static_cast<float>(p.t);
+    q.x = static_cast<float>(p.x);
+    q.y = static_cast<float>(p.y);
+    q.yaw = static_cast<float>(p.yaw);
+    q.v = static_cast<float>(p.v);
+    q.a = static_cast<float>(p.a);
+    q.kappa = static_cast<float>(p.kappa);
+    msg.points.push_back(q);
+  }
   return msg;
 }
 

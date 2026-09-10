@@ -40,3 +40,41 @@ behavior_fsm_node:
     lane_search_dist_m: 3.0         # NearestLane radius for the ego lane
     default_lane_half_width_m: 1.75 # without a lane graph
     ego_front_m: 3.9                # rear axle to front bumper
+
+planner_node:
+  ros__parameters:
+    vehicle: configs/vehicle/lincoln_mkz_2020.yaml  # kappa_phys, footprint, limits (profile: vehicle)
+    top_k: 8                        # candidates refined by the QPs (M1 §3.5)
+    publish_max_candidates: 32      # candidates in /nuway/planning/candidates (viz)
+    rule_selector:                  # the cost table of M1 §3.6
+      w_collision: 1000.0
+      w_ttc: 50.0
+      w_proximity: 10.0
+      w_progress: 20.0
+      w_speed_dev: 10.0
+      w_lateral_dev: 5.0
+      w_comfort: 5.0
+      w_rule: 500.0
+      w_consistency: 3.0
+      w_qp_relaxed: 30.0
+    collision:
+      margin_lon_m: 1.0             # ego inflation front and rear (M1 §3.4)
+      margin_lat_m: 0.4             # ego inflation each side
+      agent_margin_m: 0.2           # agent inflation all round
+    lattice:
+      a_gentle_mps2: 1.5            # the injected gentle stop (M1 §3.3)
+      ds_speed_factor_s: 3.0        # path length ds = max(ds, factor * v)
+      projection_max_dist_m: 5.0    # farther off the line: no-input output
+    qp:                             # M1 §3.5
+      w_d: 1.0                      # path: lattice d tracking
+      w_dd: 50.0                    # path: second derivative (curvature)
+      w_ddd: 500.0                  # path: third derivative
+      w_end: 10.0                   # path: end offset
+      w_v: 1.0                      # speed: target speed tracking
+      w_a: 5.0                      # speed: acceleration
+      w_j: 10.0                     # speed: jerk
+      w_s: 0.1                      # speed: lattice s(t) tracking
+      max_iter: 2000                # fixed OSQP budget (M1 §5)
+      rho: 1.0                      # fixed ADMM step (adaptive_rho off, M1 §5)
+      slack_weight: 10000.0         # bound relaxation weight
+      static_speed_mps: 0.5         # slower agents bound the path, faster the speed

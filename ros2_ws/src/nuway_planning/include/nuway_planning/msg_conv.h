@@ -18,6 +18,7 @@
 #include <nuway_msgs/msg/route.hpp>
 #include <nuway_msgs/msg/traffic_light_array.hpp>
 
+#include "nuway_planning/behavior_fsm.h"
 #include "nuway_planning/route_line.h"
 #include "nuway_planning/scene.h"
 
@@ -88,6 +89,20 @@ inline std::optional<RouteLine> RouteLineFromMsg(
       std::vector<double>(msg.left_bound.begin(), msg.left_bound.end()),
       std::vector<double>(msg.right_bound.begin(), msg.right_bound.end()),
       goal_s);
+}
+
+// nuway_msgs/BehaviorDecision -> BehaviorOutput (the wire fields only).
+inline BehaviorOutput BehaviorOutputFromMsg(
+    const nuway_msgs::msg::BehaviorDecision& msg) {
+  BehaviorOutput out;
+  out.lateral = static_cast<Lateral>(msg.lateral);
+  out.target_lane_id = msg.target_lane_id;
+  out.longitudinal = static_cast<Longitudinal>(msg.longitudinal);
+  out.lead_agent_id = msg.lead_agent_id;
+  out.stop_s = static_cast<double>(msg.stop_s);
+  out.target_speed_mps = static_cast<double>(msg.target_speed);
+  out.reason = msg.reason;
+  return out;
 }
 
 }  // namespace nuway_planning

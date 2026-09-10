@@ -44,6 +44,7 @@ PROFILE_PARAMS: dict[str, tuple[tuple[str, str], ...]] = {
     "control_adapter": (("vehicle", "vehicle"),),
     "map_server_node": (("carla.town", "town"),),
     "pure_pursuit_pid_node": (("vehicle", "vehicle"),),
+    "planner_node": (("vehicle", "vehicle"),),
 }
 
 

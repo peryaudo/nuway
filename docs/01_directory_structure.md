@@ -170,9 +170,10 @@ nuway/
 │       │   │   ├── collision_checker.cc   # SAT box overlap vs predictions, min_ttc, 3-disc min distance (M1)
 │       │   │   ├── piecewise_jerk_qp.cc   # the OSQP piecewise-jerk QP both refinements reduce to (M1)
 │       │   │   ├── candidate_refiner.cc   # path QP + speed QP (S-T boxes) on one candidate (M1)
-│       │   │   ├── rule_selector.cc                             # M1
+│       │   │   ├── rule_selector.cc       # the §3.6 cost table and the argmin over refined + injected (M1)
+│       │   │   ├── planner.cc             # the pipeline as a library: sample -> filter -> score -> refine -> select (M1)
 │       │   │   ├── safety_layer_node.cc                         # M1
-│       │   │   ├── planner_node.cc        # orchestrates: candidates -> refine -> select
+│       │   │   ├── planner_node.cc        # the ROS shell around planner.cc: barrier, three §3.6 cases, candidates + trajectory
 │       │   │   ├── forward_sim_scorer.cc  # M9
 │       │   │   └── ilqr.cc                # M10
 │       │   ├── nuway_planning/gt_planning_node.py   # cheat twin: M6 expert (via nuway_py) as a node (M6)

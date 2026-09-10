@@ -3,7 +3,7 @@
 <package format="3">
   <name>nuway_rclpy</name>
   <version>0.0.0</version>
-  <description>rclpy-side helpers shared by the Python node packages (M0): QoS profiles from the docs/02 table and geometry <-> message conversions.</description>
+  <description>rclpy-side helpers shared by the Python node packages (M0): QoS profiles from the docs/02 table and geometry &lt;-&gt; message conversions.</description>
   <maintainer email="peryaudo@gmail.com">Tetsui Ohkubo</maintainer>
   <license>MIT</license>
 

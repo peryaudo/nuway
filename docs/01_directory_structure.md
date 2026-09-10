@@ -167,7 +167,7 @@ nuway/
 │       │   │   ├── route_line.cc          # reference line + lane ids, limits, bounds, goal; the M0 speed profile as SpeedBoundAt (M1)
 │       │   │   ├── behavior_fsm.cc / behavior_fsm_node.cc      # M1
 │       │   │   ├── lattice_sampler.cc     # Frenet lattice + feasibility filter + the injected stop pair; candidate.h is the Candidate struct (M1)
-│       │   │   ├── collision_checker.cc                         # M1
+│       │   │   ├── collision_checker.cc   # SAT box overlap vs predictions, min_ttc, 3-disc min distance (M1)
 │       │   │   ├── piecewise_jerk_qp.cc                         # M1
 │       │   │   ├── rule_selector.cc                             # M1
 │       │   │   ├── safety_layer_node.cc                         # M1

@@ -17,6 +17,7 @@ add_library(
     src/route_line.cc
     src/behavior_fsm.cc
     src/lattice_sampler.cc
+    src/collision_checker.cc
 )
 target_include_directories(
     nuway_planning_lib
@@ -58,7 +59,7 @@ install(DIRECTORY config DESTINATION share/${PROJECT_NAME})
 
 if(BUILD_TESTING)
     find_package(ament_cmake_gtest REQUIRED)
-    foreach(unit route_line behavior_fsm lattice_sampler)
+    foreach(unit route_line behavior_fsm lattice_sampler collision_checker)
         ament_add_gtest(${unit}_test test/${unit}_test.cc)
         target_link_libraries(${unit}_test nuway_planning_lib)
         nuway_target_defaults(${unit}_test)

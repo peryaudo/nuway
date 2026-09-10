@@ -19,6 +19,8 @@ def setup(_context: LaunchContext, profile: dict[str, Any]) -> list[Any]:
         raise NotImplementedError(msg)
     return [
         stack_node(profile, "nuway_planning", "behavior_fsm_node", "behavior_fsm_node"),
+        stack_node(profile, "nuway_planning", "planner_node", "planner_node"),
+        stack_node(profile, "nuway_planning", "safety_layer_node", "safety_layer_node"),
     ]
 
 

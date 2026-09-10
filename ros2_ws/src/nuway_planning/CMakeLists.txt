@@ -23,6 +23,7 @@ add_library(
     src/candidate_refiner.cc
     src/rule_selector.cc
     src/planner.cc
+    src/safety_layer.cc
 )
 target_include_directories(
     nuway_planning_lib
@@ -45,7 +46,7 @@ set_target_properties(
 )
 nuway_target_defaults(nuway_planning_lib)
 
-foreach(node behavior_fsm_node planner_node)
+foreach(node behavior_fsm_node planner_node safety_layer_node)
     add_executable(${node} src/${node}.cc)
     target_link_libraries(
         ${node}
@@ -74,6 +75,7 @@ if(BUILD_TESTING)
         piecewise_jerk_qp
         candidate_refiner
         rule_selector
+        safety_layer
     )
         ament_add_gtest(${unit}_test test/${unit}_test.cc)
         target_link_libraries(${unit}_test nuway_planning_lib)

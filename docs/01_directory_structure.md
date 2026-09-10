@@ -172,7 +172,7 @@ nuway/
 │       │   │   ├── candidate_refiner.cc   # path QP + speed QP (S-T boxes) on one candidate (M1)
 │       │   │   ├── rule_selector.cc       # the §3.6 cost table and the argmin over refined + injected (M1)
 │       │   │   ├── planner.cc             # the pipeline as a library: sample -> filter -> score -> refine -> select (M1)
-│       │   │   ├── safety_layer_node.cc                         # M1
+│       │   │   ├── safety_layer.cc / safety_layer_node.cc      # re-time, degraded fallback, doubled-margin check, limits, occupancy (M1)
 │       │   │   ├── planner_node.cc        # the ROS shell around planner.cc: barrier, three §3.6 cases, candidates + trajectory
 │       │   │   ├── forward_sim_scorer.cc  # M9
 │       │   │   └── ilqr.cc                # M10

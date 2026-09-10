@@ -78,3 +78,14 @@ planner_node:
       rho: 1.0                      # fixed ADMM step (adaptive_rho off, M1 §5)
       slack_weight: 10000.0         # bound relaxation weight
       static_speed_mps: 0.5         # slower agents bound the path, faster the speed
+
+safety_layer_node:
+  ros__parameters:
+    vehicle: configs/vehicle/lincoln_mkz_2020.yaml  # footprint, limits, kappa_phys (profile: vehicle)
+    margin_lon_m: 2.0               # twice the planner's (M1 §3.7 step 2)
+    margin_lat_m: 0.8
+    agent_margin_m: 0.4
+    collision_horizon_s: 3.0        # the check covers the first seconds
+    occupancy_threshold: 0.6        # `occupied` above this is a hit (step 4)
+    occupancy_horizon_s: 3.0
+    a_gentle_mps2: 1.5              # the degraded planner's first choice (step 1)

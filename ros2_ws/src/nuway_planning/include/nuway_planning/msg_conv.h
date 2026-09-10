@@ -14,12 +14,14 @@
 #include <nuway_common/ros_conv.h>
 #include <nuway_msgs/msg/behavior_decision.hpp>
 #include <nuway_msgs/msg/ego_state.hpp>
+#include <nuway_msgs/msg/occupancy_grid_mc.hpp>
 #include <nuway_msgs/msg/reference_line.hpp>
 #include <nuway_msgs/msg/route.hpp>
 #include <nuway_msgs/msg/traffic_light_array.hpp>
 
 #include "nuway_planning/behavior_fsm.h"
 #include "nuway_planning/route_line.h"
+#include "nuway_planning/safety_layer.h"
 #include "nuway_planning/scene.h"
 
 namespace nuway_planning {
@@ -103,6 +105,32 @@ inline BehaviorOutput BehaviorOutputFromMsg(
   out.target_speed_mps = static_cast<double>(msg.target_speed);
   out.reason = msg.reason;
   return out;
+}
+
+// The `occupied` channel of an OccupancyGridMC as the safety layer reads
+// it; `base_pose` is the ego pose at the grid's stamp. nullopt when the
+// message is malformed (data shorter than its channels claim).
+inline std::optional<OccupancyView> OccupancyViewFromMsg(
+    const nuway_msgs::msg::OccupancyGridMC& msg,
+    const nuway_common::SE2& base_pose) {
+  OccupancyView view;
+  view.spec.resolution = static_cast<double>(msg.resolution);
+  view.spec.x_min = static_cast<double>(msg.x_min);
+  view.spec.y_min = static_cast<double>(msg.y_min);
+  view.spec.height = msg.height;
+  view.spec.width = msg.width;
+  view.base_pose = base_pose;
+  const std::size_t cells = static_cast<std::size_t>(msg.height) *
+                            static_cast<std::size_t>(msg.width);
+  const auto channel =
+      static_cast<std::size_t>(nuway_common::OccupancyChannel::kOccupied);
+  if (msg.num_channels <= channel || msg.data.size() < (channel + 1) * cells) {
+    return std::nullopt;
+  }
+  view.occupied.assign(
+      msg.data.begin() + static_cast<std::ptrdiff_t>(channel * cells),
+      msg.data.begin() + static_cast<std::ptrdiff_t>((channel + 1) * cells));
+  return view;
 }
 
 }  // namespace nuway_planning

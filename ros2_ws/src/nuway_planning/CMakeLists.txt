@@ -9,6 +9,7 @@ find_package(nuway_common REQUIRED)
 find_package(nuway_control REQUIRED)
 find_package(nuway_map REQUIRED)
 find_package(nuway_msgs REQUIRED)
+find_package(osqp_eigen_vendor REQUIRED)
 
 # Library: no rclcpp. Position independent because nuway_py binds it for
 # the M6 expert and gt_planning_node.
@@ -18,6 +19,8 @@ add_library(
     src/behavior_fsm.cc
     src/lattice_sampler.cc
     src/collision_checker.cc
+    src/piecewise_jerk_qp.cc
+    src/candidate_refiner.cc
 )
 target_include_directories(
     nuway_planning_lib
@@ -32,6 +35,7 @@ target_link_libraries(
         nuway_common::nuway_common
         nuway_control::nuway_control_lib
         nuway_map::nuway_map_lib
+    PRIVATE OsqpEigen::OsqpEigen
 )
 set_target_properties(
     nuway_planning_lib
@@ -59,7 +63,15 @@ install(DIRECTORY config DESTINATION share/${PROJECT_NAME})
 
 if(BUILD_TESTING)
     find_package(ament_cmake_gtest REQUIRED)
-    foreach(unit route_line behavior_fsm lattice_sampler collision_checker)
+    foreach(
+        unit
+        route_line
+        behavior_fsm
+        lattice_sampler
+        collision_checker
+        piecewise_jerk_qp
+        candidate_refiner
+    )
         ament_add_gtest(${unit}_test test/${unit}_test.cc)
         target_link_libraries(${unit}_test nuway_planning_lib)
         nuway_target_defaults(${unit}_test)
@@ -67,5 +79,12 @@ if(BUILD_TESTING)
 endif()
 
 ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
-ament_export_dependencies(Eigen3 nuway_common nuway_control nuway_map nuway_msgs)
+ament_export_dependencies(
+    Eigen3
+    nuway_common
+    nuway_control
+    nuway_map
+    nuway_msgs
+    osqp_eigen_vendor
+)
 ament_package()

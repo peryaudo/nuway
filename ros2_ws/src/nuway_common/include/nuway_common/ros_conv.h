@@ -1,14 +1,27 @@
 // geometry_msgs <-> Eigen / SE2 / SE3 conversions for nodes (part of
-// nuway_common_ros; mirrors nuway_carla_bridge/ros_conv.py). No arithmetic
-// beyond field copies, so nothing here needs a parity test. Introduced in M0.
+// nuway_common_ros; mirrors nuway_rclpy/ros_conv.py), plus the message <->
+// plain-struct copies of agents.h and the one base_link -> map agent
+// transform of M1 §3.1 (AgentsToMap). Field copies and one rigid transform;
+// nothing here needs a parity test. Introduced in M0; agents in M1.
 #ifndef NUWAY_COMMON_ROS_CONV_H_
 #define NUWAY_COMMON_ROS_CONV_H_
+
+#include <cstddef>
+#include <cstdint>
+#include <vector>
 
 #include <Eigen/Geometry>
 #include <geometry_msgs/msg/point.hpp>
 #include <geometry_msgs/msg/pose.hpp>
 #include <geometry_msgs/msg/quaternion.hpp>
 
+#include <nuway_msgs/msg/agent.hpp>
+#include <nuway_msgs/msg/agent_array.hpp>
+#include <nuway_msgs/msg/ego_state.hpp>
+#include <nuway_msgs/msg/prediction_samples.hpp>
+
+#include "nuway_common/agents.h"
+#include "nuway_common/frames.h"
 #include "nuway_common/geometry.h"
 
 namespace nuway_common {
@@ -54,6 +67,118 @@ inline SE3 SE3FromMsg(const geometry_msgs::msg::Pose& pose) {
 inline SE2 SE2FromMsg(const geometry_msgs::msg::Pose& pose) {
   return SE2{pose.position.x, pose.position.y,
              QuaternionToYaw(QuaternionFromMsg(pose.orientation))};
+}
+
+// Pose message of a planar pose (z = 0, yaw-only rotation).
+inline geometry_msgs::msg::Pose PoseMsg(const SE2& pose) {
+  SE3 pose3;
+  pose3.translation = Eigen::Vector3d{pose.x, pose.y, 0.0};
+  pose3.rotation = YawToQuaternion(pose.yaw);
+  return PoseMsg(pose3);
+}
+
+// The agent frame rule of M1 §3.1: /nuway/perception/agents arrives in
+// base_link and every consumer transforms it into map with the EgoState of
+// the same tick, which it already holds under the barrier, never with a TF
+// lookup (whose buffer contents depend on delivery timing). Poses are
+// composed as SE3 (the box centre keeps its height), velocities and the
+// history are rotated / transformed in the plane. An array already in map
+// (the GT topic the M6 expert reads) is returned unchanged, so the runtime
+// and the expert cannot disagree about a frame.
+inline nuway_msgs::msg::AgentArray AgentsToMap(
+    const nuway_msgs::msg::AgentArray& agents,
+    const nuway_msgs::msg::EgoState& ego) {
+  if (agents.header.frame_id == kFrameMap) {
+    return agents;
+  }
+  const SE3 ego_pose = SE3FromMsg(ego.pose);
+  const SE2 ego_plane = ToSE2(ego_pose);
+  nuway_msgs::msg::AgentArray out = agents;
+  out.header.frame_id = kFrameMap;
+  for (nuway_msgs::msg::Agent& agent : out.agents) {
+    agent.pose = PoseMsg(Compose(ego_pose, SE3FromMsg(agent.pose)));
+    const Eigen::Vector2d velocity =
+        Rotate(ego_plane, Eigen::Vector2d(static_cast<double>(agent.vx),
+                                          static_cast<double>(agent.vy)));
+    agent.vx = static_cast<float>(velocity.x());
+    agent.vy = static_cast<float>(velocity.y());
+    const int n =
+        std::min<int>(agent.history_len, nuway_msgs::msg::Agent::HISTORY_LEN);
+    for (int i = 0; i < n; ++i) {
+      const auto base = static_cast<std::size_t>(i) * 3;
+      const Eigen::Vector2d p =
+          Apply(ego_plane,
+                Eigen::Vector2d(static_cast<double>(agent.history[base]),
+                                static_cast<double>(agent.history[base + 1])));
+      agent.history[base] = static_cast<float>(p.x());
+      agent.history[base + 1] = static_cast<float>(p.y());
+      agent.history[base + 2] = static_cast<float>(WrapAngle(
+          static_cast<double>(agent.history[base + 2]) + ego_plane.yaw));
+    }
+  }
+  return out;
+}
+
+// Plain-struct copies of an AgentArray (whatever its frame; the caller has
+// applied AgentsToMap first when a map-frame state is needed).
+inline std::vector<AgentState> AgentStatesFromMsg(
+    const nuway_msgs::msg::AgentArray& agents) {
+  std::vector<AgentState> out;
+  out.reserve(agents.agents.size());
+  for (const nuway_msgs::msg::Agent& agent : agents.agents) {
+    AgentState state;
+    state.id = agent.id;
+    state.class_id = static_cast<AgentClass>(agent.class_id);
+    state.pose = SE2FromMsg(agent.pose);
+    state.length_m = static_cast<double>(agent.length);
+    state.width_m = static_cast<double>(agent.width);
+    state.vx_mps = static_cast<double>(agent.vx);
+    state.vy_mps = static_cast<double>(agent.vy);
+    state.yaw_rate_radps = static_cast<double>(agent.yaw_rate);
+    state.visible = agent.visible;
+    out.push_back(state);
+  }
+  return out;
+}
+
+// PredictionSamples -> PredictionSet. A message whose array sizes do not
+// match S * A * T is returned with num_samples = 0 (an empty set) rather
+// than trusted, so a malformed message can never index out of bounds.
+inline PredictionSet PredictionSetFromMsg(
+    const nuway_msgs::msg::PredictionSamples& msg) {
+  PredictionSet out;
+  out.agent_ids = msg.agent_ids;
+  out.num_samples = msg.num_samples;
+  out.num_timesteps = msg.num_timesteps;
+  out.dt_s = static_cast<double>(msg.dt);
+  const std::size_t n = static_cast<std::size_t>(out.num_samples) *
+                        msg.agent_ids.size() *
+                        static_cast<std::size_t>(out.num_timesteps);
+  if (msg.xy.size() != 2 * n || msg.yaw.size() != n ||
+      msg.sample_weight.size() != static_cast<std::size_t>(out.num_samples)) {
+    out.num_samples = 0;
+    out.agent_ids.clear();
+    return out;
+  }
+  out.xy.assign(msg.xy.begin(), msg.xy.end());
+  out.yaw.assign(msg.yaw.begin(), msg.yaw.end());
+  out.sample_weight.assign(msg.sample_weight.begin(), msg.sample_weight.end());
+  return out;
+}
+
+// PredictionSet -> PredictionSamples (frame_id map; the caller stamps it).
+inline nuway_msgs::msg::PredictionSamples PredictionSetToMsg(
+    const PredictionSet& set) {
+  nuway_msgs::msg::PredictionSamples msg;
+  msg.header.frame_id = kFrameMap;
+  msg.agent_ids = set.agent_ids;
+  msg.num_samples = static_cast<std::uint8_t>(set.num_samples);
+  msg.num_timesteps = static_cast<std::uint8_t>(set.num_timesteps);
+  msg.dt = static_cast<float>(set.dt_s);
+  msg.xy.assign(set.xy.begin(), set.xy.end());
+  msg.yaw.assign(set.yaw.begin(), set.yaw.end());
+  msg.sample_weight.assign(set.sample_weight.begin(), set.sample_weight.end());
+  return msg;
 }
 
 }  // namespace nuway_common

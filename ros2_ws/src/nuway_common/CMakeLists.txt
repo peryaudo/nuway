@@ -9,7 +9,8 @@ find_package(rclcpp REQUIRED)
 find_package(nuway_msgs REQUIRED)
 
 # Pure library: geometry, frenet, trajectory, occupancy, tick, carla_conv,
-# frames. No rclcpp, so gtest targets link only this.
+# frames, agents, ros_conv. No rclcpp (the generated nuway_msgs types are
+# plain structs), so gtest targets link only this.
 add_library(nuway_common INTERFACE)
 target_include_directories(
     nuway_common
@@ -19,16 +20,13 @@ target_include_directories(
 )
 target_link_libraries(
     nuway_common
-    INTERFACE Eigen3::Eigen ${builtin_interfaces_TARGETS}
+    INTERFACE Eigen3::Eigen ${builtin_interfaces_TARGETS} ${nuway_msgs_TARGETS}
 )
 target_compile_features(nuway_common INTERFACE cxx_std_17)
 
 # ROS-facing helpers: qos, diag, params. Nodes link this.
 add_library(nuway_common_ros INTERFACE)
-target_link_libraries(
-    nuway_common_ros
-    INTERFACE nuway_common rclcpp::rclcpp ${nuway_msgs_TARGETS}
-)
+target_link_libraries(nuway_common_ros INTERFACE nuway_common rclcpp::rclcpp)
 
 install(DIRECTORY include/ DESTINATION include)
 install(TARGETS nuway_common nuway_common_ros EXPORT export_${PROJECT_NAME})
@@ -43,6 +41,7 @@ if(BUILD_TESTING)
         trajectory
         occupancy
         tick
+        ros_conv
     )
         ament_add_gtest(${unit}_test test/${unit}_test.cc)
         target_link_libraries(${unit}_test nuway_common)

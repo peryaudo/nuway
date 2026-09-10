@@ -150,6 +150,11 @@ def use_gt(profile: Mapping[str, Any], module: str) -> bool:
     return bool(get(profile, f"use_gt.{module}", True))
 
 
+def prediction_source(profile: Mapping[str, Any]) -> str:
+    """``prediction.source``: const_vel | learned (docs/02 §5); missing means const_vel."""
+    return str(get(profile, "prediction.source", "const_vel"))
+
+
 def controller(profile: Mapping[str, Any]) -> str:
     """``control.controller``: pure_pursuit | mpc | none (docs/02 §5)."""
     return str(get(profile, "control.controller", "pure_pursuit"))

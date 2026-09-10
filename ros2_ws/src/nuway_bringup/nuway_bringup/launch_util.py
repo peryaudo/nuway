@@ -29,15 +29,27 @@ def defaults_file(package: str) -> Path:
 
 
 def stack_node(
-    profile: dict[str, Any], package: str, executable: str, node: str
+    profile: dict[str, Any],
+    package: str,
+    executable: str,
+    node: str,
+    extra_params: dict[str, Any] | None = None,
 ) -> Node:
-    """Build the Node action for ``node`` with its merged parameters."""
+    """Build the Node action for ``node`` with its merged parameters.
+
+    ``extra_params`` are values the launch file derives from the profile
+    (a role decided by several profile keys, such as const_vel_node's
+    ``publish_primary``); they override the merged parameters.
+    """
+    params = node_params(profile, node, defaults_file(package))
+    if extra_params:
+        params.update(extra_params)
     return Node(
         package=package,
         executable=executable,
         name=node,
         output="screen",
-        parameters=[node_params(profile, node, defaults_file(package))],
+        parameters=[params],
     )
 
 

@@ -1,7 +1,7 @@
 // Frame ids and the topic names shared by more than one package
 // (docs/02_interfaces.md §1, §3). Package-specific topics live in that
 // package's own names header. Mirrored by nuway_ml/common/frames.py.
-// Introduced in M0.
+// Introduced in M0; the prediction and planning topics arrive with M1.
 #ifndef NUWAY_COMMON_FRAMES_H_
 #define NUWAY_COMMON_FRAMES_H_
 
@@ -30,6 +30,14 @@ constexpr const char* kTopicPerceptionAgents = "/nuway/perception/agents";
 constexpr const char* kTopicPerceptionOccupancy = "/nuway/perception/occupancy";
 constexpr const char* kTopicPerceptionTrafficLights =
     "/nuway/perception/traffic_lights";
+constexpr const char* kTopicPredictionSamples = "/nuway/prediction/samples";
+constexpr const char* kTopicPredictionFallbackSamples =
+    "/nuway/prediction/fallback_samples";
+constexpr const char* kTopicPlanningBehavior = "/nuway/planning/behavior";
+constexpr const char* kTopicPlanningCandidates = "/nuway/planning/candidates";
+constexpr const char* kTopicPlanningTrajectory = "/nuway/planning/trajectory";
+constexpr const char* kTopicPlanningSafeTrajectory =
+    "/nuway/planning/safe_trajectory";
 constexpr const char* kTopicControlCommand = "/nuway/control/command";
 constexpr const char* kTopicControlDebug = "/nuway/control/debug";
 constexpr const char* kTopicDiagPrefix = "/nuway/diag/";

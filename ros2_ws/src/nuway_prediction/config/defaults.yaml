@@ -1,0 +1,10 @@
+# Package defaults for const_vel_node; the profile overrides them (docs/02 §5).
+const_vel_node:
+  ros__parameters:
+    publish_primary: true           # also publish /nuway/prediction/samples (prediction.source: const_vel); the launch file sets it
+    lane_follow: true               # vehicles follow their lane centerline instead of a straight line (M1 §3.1)
+    num_timesteps: 16               # T: 8 s at dt_s
+    dt_s: 0.5
+    pedestrian_speed_max_mps: 2.0   # walker speed clamp
+    lane_search_dist_m: 3.0         # NearestLane radius for lane_follow
+    lane_follow_min_speed_mps: 0.3  # slower along the lane: straight line

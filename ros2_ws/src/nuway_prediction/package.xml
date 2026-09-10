@@ -1,0 +1,24 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>nuway_prediction</name>
+  <version>0.0.0</version>
+  <description>Agent prediction. M1: the constant-velocity / lane-follow predictor library and const_vel_node, the fallback producer of every profile; M6 gt_prediction_node, M7 prediction_node.</description>
+  <maintainer email="peryaudo@gmail.com">Tetsui Ohkubo</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <buildtool_depend>nuway_cmake</buildtool_depend>
+
+  <depend>eigen</depend>
+  <depend>rclcpp</depend>
+  <depend>nuway_common</depend>
+  <depend>nuway_map</depend>
+  <depend>nuway_msgs</depend>
+
+  <test_depend>ament_cmake_gtest</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

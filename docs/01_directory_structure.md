@@ -90,6 +90,8 @@ nuway/
 │       ├── nuway_common/                  # C++ header-mostly library
 │       │   ├── include/nuway_common/
 │       │   │   ├── geometry.h           # SE2, SE3 helpers, angle wrap
+│       │   │   ├── agents.h             # AgentClass, AgentState, PredictionSet: plain images of Agent / PredictionSamples
+│       │   │   │                        #   for the rclcpp-free planning and prediction libraries (M1)
 │       │   │   ├── frenet.h             # reference line, cartesian<->frenet
 │       │   │   ├── bicycle_model.h      # kinematic bicycle, discretization, jacobians
 │       │   │   ├── trajectory.h         # Trajectory struct, resampling, interpolation

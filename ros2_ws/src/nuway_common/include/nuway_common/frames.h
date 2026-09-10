@@ -40,6 +40,7 @@ constexpr const char* kTopicPlanningSafeTrajectory =
     "/nuway/planning/safe_trajectory";
 constexpr const char* kTopicControlCommand = "/nuway/control/command";
 constexpr const char* kTopicControlDebug = "/nuway/control/debug";
+constexpr const char* kTopicControlHorizon = "/nuway/control/horizon";
 constexpr const char* kTopicDiagPrefix = "/nuway/diag/";
 
 }  // namespace nuway_common

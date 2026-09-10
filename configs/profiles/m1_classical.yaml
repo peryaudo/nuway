@@ -1,0 +1,42 @@
+# configs/profiles/m1_classical.yaml — M1 stack: GT localization/perception/traffic lights, constant-velocity
+# prediction, behavior FSM + lattice + QP + rule selector + safety layer, LTV-MPC, Traffic Manager traffic
+# (M1_classical_planning.md §2). Schema: docs/02_interfaces.md §5. Paths are relative to the repo root.
+profile: m1_classical
+carla:
+  host: localhost
+  port: 2000
+  town: Town03
+  fixed_delta_seconds: 0.05
+  sync: true
+  quality: Epic
+  render_offscreen: true
+  no_rendering: false
+  lockstep_timeout_s: 2.0
+  lockstep_startup_timeout_s: 120.0
+  realtime_factor: 0.0
+  traffic:                             # M1 §3.9; the harness overrides seed per route through Reset.srv
+    n_vehicles: 50
+    n_walkers: 30
+    seed: 0
+    tm_port: 8000
+    hybrid_physics: false
+sensors: configs/sensors/rig_dev.json
+vehicle: configs/vehicle/lincoln_mkz_2020.yaml
+use_gt:
+  localization: true
+  perception: true
+  traffic_lights: true
+  prediction: false
+  planning: false
+prediction:
+  source: const_vel
+control:
+  controller: mpc
+eval:
+  record: true
+  record_sensors: false
+  render: incidents
+  render_stride: 10
+  incident_window: [40, 20]
+  chase_cam: false
+  scoring: configs/eval/scoring_lb20.yaml

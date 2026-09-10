@@ -17,3 +17,35 @@ pure_pursuit_pid_node:
     integral_limit_mps2: 0.5        # anti-windup bound on the integral term
     end_decel_mps2: 1.5             # stop profile toward the end of the line
     max_lateral_error_m: 5.0        # farther off the line: emergency_stop
+
+# Package defaults for mpc_node (M1 §3.8); the profile overrides them (docs/02 §5).
+mpc_node:
+  ros__parameters:
+    vehicle: configs/vehicle/lincoln_mkz_2020.yaml   # wheelbase, tau_steer, limits
+    horizon: 20                     # N steps of one tick (1 s)
+    t_delay_s: 0.10                 # perception-to-actuation delay compensated (2 ticks)
+    q:                              # state error weights in the reference knot's local frame
+      lon: 0.5
+      lat: 4.0
+      yaw: 2.0
+      v: 0.5
+      steer: 0.0
+    q_terminal_scale: 1.0           # the last knot's Q multiplier
+    r:                              # on u - u_ref
+      accel: 0.1
+      steer: 1.0
+    r_d:                            # on u_k - u_{k-1}
+      accel: 1.0
+      steer: 10.0
+    max_consecutive_solver_failures: 5   # counted failures in a row before emergency_stop (0.25 s)
+    accel_bias_tau_s: 0.5           # acceleration disturbance observer (grade, pedal-map residual); 0 disables
+    accel_bias_max_mps2: 3.0
+    accel_bias_stop_speed_mps: 1.0  # the observer ignores braking below this (the sim brake at a crawl is not the model's)
+    use_measured_steering: true     # false: the steering-lag model driven by our own commands (Leaderboard)
+    qp:                             # OSQP, fixed for determinism (M1 §5)
+      max_iter: 400                 # the fixed iteration budget (task 17 tuning note)
+      check_termination: 5
+      eps_abs: 1.0e-4
+      eps_rel: 1.0e-4
+      rho: 0.5
+      polish: true

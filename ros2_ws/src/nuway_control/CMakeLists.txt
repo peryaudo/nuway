@@ -8,6 +8,7 @@ find_package(yaml-cpp REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(nuway_common REQUIRED)
 find_package(nuway_msgs REQUIRED)
+find_package(osqp_eigen_vendor REQUIRED)
 
 # Library: no rclcpp. Position independent because nuway_py links it into
 # the pybind11 extension module.
@@ -16,6 +17,7 @@ add_library(
     src/longitudinal_map.cc
     src/vehicle_model.cc
     src/pure_pursuit_pid.cc
+    src/mpc.cc
 )
 target_include_directories(
     nuway_control_lib
@@ -26,7 +28,7 @@ target_include_directories(
 target_link_libraries(
     nuway_control_lib
     PUBLIC Eigen3::Eigen nuway_common::nuway_common
-    PRIVATE yaml-cpp::yaml-cpp
+    PRIVATE yaml-cpp::yaml-cpp OsqpEigen::OsqpEigen
 )
 set_target_properties(nuway_control_lib PROPERTIES POSITION_INDEPENDENT_CODE ON)
 nuway_target_defaults(nuway_control_lib)
@@ -42,14 +44,25 @@ target_link_libraries(
 )
 nuway_target_defaults(pure_pursuit_pid_node)
 
+add_executable(mpc_node src/mpc_node.cc)
+target_link_libraries(
+    mpc_node
+    PRIVATE
+        nuway_control_lib
+        rclcpp::rclcpp
+        ${nuway_msgs_TARGETS}
+        nuway_common::nuway_common_ros
+)
+nuway_target_defaults(mpc_node)
+
 install(DIRECTORY include/ DESTINATION include)
 install(TARGETS nuway_control_lib EXPORT export_${PROJECT_NAME})
-install(TARGETS pure_pursuit_pid_node DESTINATION lib/${PROJECT_NAME})
+install(TARGETS pure_pursuit_pid_node mpc_node DESTINATION lib/${PROJECT_NAME})
 install(DIRECTORY config DESTINATION share/${PROJECT_NAME})
 
 if(BUILD_TESTING)
     find_package(ament_cmake_gtest REQUIRED)
-    foreach(unit longitudinal_map pure_pursuit_pid)
+    foreach(unit longitudinal_map pure_pursuit_pid mpc)
         ament_add_gtest(${unit}_test test/${unit}_test.cc)
         target_link_libraries(${unit}_test nuway_control_lib)
         target_compile_definitions(
@@ -61,5 +74,5 @@ if(BUILD_TESTING)
 endif()
 
 ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
-ament_export_dependencies(Eigen3 yaml-cpp nuway_common)
+ament_export_dependencies(Eigen3 yaml-cpp nuway_common osqp_eigen_vendor)
 ament_package()

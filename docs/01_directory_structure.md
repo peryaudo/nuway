@@ -184,6 +184,7 @@ nuway/
 │       │   │   ├── vehicle_model.cc           # configs/vehicle/<vehicle>.yaml -> VehicleModel (geometry, limits, fit, map) (M0)
 │       │   │   ├── pure_pursuit_pid.cc        # the controller as a library (gtest without rclcpp) (M0)
 │       │   │   ├── pure_pursuit_pid_node.cc   # M0
+│       │   │   ├── mpc.cc                     # LTV-MPC on the kinematic bicycle, dense condensed QP on OSQP (library, gtest without rclcpp) (M1)
 │       │   │   └── mpc_node.cc                # M1
 │       │   ├── include/nuway_control/
 │       │   ├── config/defaults.yaml

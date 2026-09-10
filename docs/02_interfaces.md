@@ -163,6 +163,7 @@ Semantic LiDAR and depth cameras are **never** subscribed by a learned node. In 
 |-------|------|----------|
 | `/nuway/control/command` | `nuway_msgs/ControlCommand` | pure_pursuit_pid_node (M0 profiles only) **or** mpc_node (every profile from M1 on) — exactly one of them per profile, every tick; `header.stamp` = the tick consumed, see §2 |
 | `/nuway/control/debug` | `nuway_msgs/ControlDebug` | same |
+| `/nuway/control/horizon` | `nuway_msgs/Trajectory` | mpc_node, every tick: the predicted horizon of the solved QP (`source: "mpc"`, N + 1 points at the tick spacing starting at `t_delay`, the first being the delay-compensated state); empty on a tick without a usable iterate. Feeds the `mpc_horizon` layer (M1 §3.11) and nothing in the control path |
 
 ### 3.9 Diagnostics and visualization
 | Topic | Type | Producer |

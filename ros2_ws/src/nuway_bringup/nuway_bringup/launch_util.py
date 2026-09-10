@@ -15,6 +15,9 @@ from launch_ros.actions import Node
 from nuway_bringup.profile import load_profile, node_params, resolve_profile_path
 
 PROFILE_ARG = "profile"
+# Every node runs single-threaded BLAS (M1 §5): OSQP and Eigen must not
+# spread a reduction over a thread count that changes results.
+SINGLE_THREADED_BLAS = {"OMP_NUM_THREADS": "1"}
 
 
 def profile_from_context(context: LaunchContext) -> dict[str, Any]:
@@ -50,6 +53,7 @@ def stack_node(
         name=node,
         output="screen",
         parameters=[params],
+        additional_env=SINGLE_THREADED_BLAS,
     )
 
 

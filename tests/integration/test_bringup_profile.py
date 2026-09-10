@@ -32,6 +32,13 @@ def test_committed_profiles_load_and_map() -> None:
     assert Path(wm["carla.town"]).exists()
     m0 = bp.load_profile(ROOT / "configs/profiles/m0_gt_all.yaml")
     assert bp.controller(m0) == "pure_pursuit"
+    m1 = bp.load_profile(ROOT / "configs/profiles/m1_classical.yaml")
+    assert bp.controller(m1) == "mpc"
+    assert bp.prediction_source(m1) == "const_vel"
+    assert bp.node_params(m1, "world_manager", None, ROOT)["carla.traffic.seed"] == 0
+    assert bp.node_params(m1, "mpc_node", None, ROOT)["vehicle"].endswith(
+        "lincoln_mkz_2020.yaml"
+    )
     assert bp.node_params(m0, "map_server_node", None, ROOT)["town"] == "Town03"
     assert bp.use_gt(m0, "localization")
 
@@ -71,7 +78,7 @@ def test_helpers() -> None:
     assert bp.get({"a": {"b": 2}}, "a.b") == 2
     assert bp.get({"a": {"b": 2}}, "a.z", 7) == 7
     assert bp.use_gt({}, "perception") is True
-    assert bp.controller({}) == "pure_pursuit"
+    assert bp.controller({}) == "mpc"  # M1 §3.8: the M0 controller is opt-in
     assert bp.resolve_profile_path("m0_gt_all").name == "m0_gt_all.yaml"
     assert bp.resolve_profile_path("/abs/p.yaml") == Path("/abs/p.yaml")
 

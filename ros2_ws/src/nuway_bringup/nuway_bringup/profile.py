@@ -44,6 +44,7 @@ PROFILE_PARAMS: dict[str, tuple[tuple[str, str], ...]] = {
     "control_adapter": (("vehicle", "vehicle"),),
     "map_server_node": (("carla.town", "town"),),
     "pure_pursuit_pid_node": (("vehicle", "vehicle"),),
+    "mpc_node": (("vehicle", "vehicle"),),
     "planner_node": (("vehicle", "vehicle"),),
     "safety_layer_node": (("vehicle", "vehicle"),),
 }
@@ -158,5 +159,9 @@ def prediction_source(profile: Mapping[str, Any]) -> str:
 
 
 def controller(profile: Mapping[str, Any]) -> str:
-    """``control.controller``: pure_pursuit | mpc | none (docs/02 §5)."""
-    return str(get(profile, "control.controller", "pure_pursuit"))
+    """``control.controller``: pure_pursuit | mpc | none (docs/02 §5).
+
+    Missing means ``mpc``: an M1+ profile that omits the key must not launch
+    the M0 controller silently (M1 §3.8); the M0 profiles name pure_pursuit.
+    """
+    return str(get(profile, "control.controller", "mpc"))

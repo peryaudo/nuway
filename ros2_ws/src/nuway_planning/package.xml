@@ -13,6 +13,7 @@
   <depend>eigen</depend>
   <depend>rclcpp</depend>
   <depend>nuway_common</depend>
+  <depend>nuway_control</depend>
   <depend>nuway_map</depend>
   <depend>nuway_msgs</depend>
 

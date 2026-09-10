@@ -23,6 +23,7 @@
 #ifndef NUWAY_CONTROL_VEHICLE_MODEL_H_
 #define NUWAY_CONTROL_VEHICLE_MODEL_H_
 
+#include <cmath>
 #include <optional>
 #include <string>
 
@@ -37,7 +38,9 @@ struct VehicleLimits {
   double a_min_mps2 = -6.0;           // braking cap (negative)
   double jerk_max_mps3 = 5.0;         // |da/dt| cap (used from M1)
   double steer_rate_max_radps = 0.8;  // |d delta / dt| cap
-  double kappa_max = 0.18;            // path curvature cap (used from M1)
+  // Comfort curvature from the YAML; unused by planning and control, which
+  // bound curvature by VehicleModel::PhysicalCurvatureMax() (M1 §3.3).
+  double kappa_max = 0.18;
 };
 
 // Everything the controllers know about the ego. Plain data: the node loads
@@ -66,6 +69,14 @@ struct VehicleModel {
   // pure pursuit steer for a wanted curvature kappa is atan(kappa L_eff).
   double EffectiveWheelbaseM(double speed_mps) const {
     return wheelbase_fitted_m + (understeer_gradient * speed_mps * speed_mps);
+  }
+
+  // The physical path-curvature limit of the kinematic bicycle at full
+  // lock, tan(max_steer) / L (about 0.96 rad/m for the Lincoln): the bound
+  // the M1 lattice filter and QP use, since the Town03 junction corners
+  // (R = 2.4 m, kappa = 0.42) exceed the YAML's comfort limits.kappa_max.
+  double PhysicalCurvatureMax() const {
+    return std::tan(max_steer_angle_rad) / wheelbase_m;
   }
 };
 

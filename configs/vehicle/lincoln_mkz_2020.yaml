@@ -17,6 +17,10 @@ actor_origin_height: 0.091
 max_steer_angle: 1.2217
 tau_steer: 0.05
 tau_throttle: 0.4
+# limits: what the planner and controllers may command. kappa_max is a comfort figure kept
+#   for reference only: planning and control bound curvature by the physical
+#   tan(max_steer_angle) / wheelbase (~0.96 rad/m), because the Town03 junction corners have
+#   R = 2.4 m (kappa = 0.42) and a 0.18 bound would stop the car at each one (M1 §3.3).
 limits: {a_max: 3.0, a_min: -6.0, jerk_max: 5.0, steer_rate_max: 1.2, kappa_max: 0.18}
 sysid:
   status: fitted

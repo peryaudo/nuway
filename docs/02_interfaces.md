@@ -616,7 +616,7 @@ All drawing lives in `ml/nuway_ml/viz/` and is imported by everything that rende
 - Deterministic: the same bag produces byte-identical PNGs. Fixed figure size and DPI, no wall-clock text, no random jitter in colors — a render diff between two runs is therefore meaningful.
 - The layer names drawn are exactly the `/nuway/viz/<layer>` names of §3.9. One vocabulary for both back-ends; adding a Foxglove layer without the matching `draw_<layer>()` is a defect.
 
-`tools/viz/render_bag.py --bag <path> [--out <dir>] [--stride N] [--ticks a:b] [--layers ...]` replays one route's MCAP (§7) and writes into the route's directory:
+`tools/viz/render_bag.py --bag <path> [--out <dir>] [--stride N] [--ticks a:b] [--layers ...] [--no-frames]` replays one route's MCAP (§7) and writes into the route's directory (`--out` defaults to the bag's directory); `--incident TICK:KIND` (repeatable, with `--window BEFORE:AFTER`, default `40:20`) renders incident sheets only (§8.2):
 
 ```
 data/eval_runs/<run_id>/
@@ -636,7 +636,7 @@ A route at 20 Hz is 6k–12k ticks, so `eval.render: full` (stride 10 → 2 Hz) 
 
 ### 8.2 Incident frames
 
-`report.py` already knows the tick of every infraction, safety-layer intervention, MPC failure, lockstep timeout and source degradation. With `eval.render: incidents` (the default) it renders `eval.incident_window` ticks around each one — by default 40 before and 20 after, i.e. 2 s of approach and 1 s of aftermath — into `incidents/` plus one contact sheet per incident, named `{tick:06d}_<kind>.png` with `<kind>` one of `collision_pedestrian`, `collision_vehicle`, `collision_layout`, `red_light`, `stop_sign`, `min_speed`, `route_deviation`, `blocked`, `safety_intervention`, `mpc_failure`, `tick_timeout`, `degraded_<source>` (the `results.csv` vocabulary of M1 §3.10, so a row and its sheet share a name), and links them from `report.md` by relative path next to the row that reports the infraction. This is what turns "driving score dropped 8 points" into something diagnosable without re-running the route.
+`report.py` already knows the tick of every infraction, safety-layer intervention, MPC failure, lockstep timeout and source degradation. With `eval.render: incidents` (the default) it renders `eval.incident_window` ticks around each one — by default 40 before and 20 after, i.e. 2 s of approach and 1 s of aftermath — into one contact sheet per incident in `incidents/`, named `{tick:06d}_<kind>.png` (the window sampled down to the sheet's 20 tiles, the incident tick always among them) with `<kind>` one of `collision_pedestrian`, `collision_vehicle`, `collision_layout`, `red_light`, `stop_sign`, `min_speed`, `route_deviation`, `blocked`, `safety_intervention`, `mpc_failure`, `tick_timeout`, `degraded_<source>` (the `results.csv` vocabulary of M1 §3.10, so a row and its sheet share a name), and links them from `report.md` by relative path next to the row that reports the infraction. This is what turns "driving score dropped 8 points" into something diagnosable without re-running the route.
 
 ### 8.3 Chase camera
 

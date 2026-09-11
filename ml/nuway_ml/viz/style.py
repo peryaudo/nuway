@@ -57,6 +57,12 @@ LANE_DRIVING = "#8c8c99"
 LANE_OTHER = "#667359"
 STOP_LINE_LIGHT = "#ff3333"
 STOP_LINE_SIGN = "#ff991a"
+# A light's stop line takes its observed state's color when the tick has one.
+LIGHT_STATE_COLORS: dict[str, str] = {
+    "red": "#ff3333",
+    "yellow": "#ffcc00",
+    "green": "#33cc55",
+}
 CROSSWALK = "#e6e6e6"
 REFERENCE_LINE = "#ff8000"
 REFERENCE_BOUNDS = "#ffbf4d"

@@ -55,15 +55,17 @@ class StopLine:
     y: float
     heading: float
     kind: str
+    state: str = ""  # a light's observed state on this tick: red | yellow | green | ""
 
 
 @dataclass(frozen=True, slots=True)
 class LaneMap:
-    """Lane centerlines ([N, 2] each), their drivability, stop lines, crosswalks."""
+    """Lane centerlines ([N, 2] each), their drivability, stop lines, sign volumes, crosswalks."""
 
     centerlines: tuple[Array, ...]
     drivable: tuple[bool, ...]
     stop_lines: tuple[StopLine, ...] = ()
+    sign_volumes: tuple[Array, ...] = ()  # stop-sign trigger volumes, [M, 2]
     crosswalks: tuple[Array, ...] = ()  # closed footprints, [M, 2]
 
 

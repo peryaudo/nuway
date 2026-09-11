@@ -319,7 +319,8 @@ nuway/
 │   │   └── compare_runs.py                # two run dirs: results rows within tolerance, first command tick outside the spread
 │   ├── lint/                              # format_cpp.sh, tidy_cpp.sh, lint_py.sh, merge_compile_commands.py, header guard check (M0)
 │   └── viz/                               # M1; headless renderers (docs/02 §8); no ROS env needed
-│       ├── render_bag.py                  # MCAP -> frames/, sheets/, incidents/ PNGs
+│       ├── render_bag.py                  # MCAP -> frames/, sheets/, incidents/ PNGs (rosbags decode, two streaming passes)
+│       ├── tests/                         # a synthetic MCAP written with rosbags; the no-ROS CLI run
 │       └── make_video.sh                  # optional ffmpeg wrapper; MP4 is never the primary artifact
 │
 ├── external/                              # gitignored; leaderboard/ and scenario_runner/ checkouts (tools/eval/setup_leaderboard.sh)

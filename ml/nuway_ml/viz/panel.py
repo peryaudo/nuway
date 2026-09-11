@@ -56,8 +56,16 @@ def diag_line(scene: Scene) -> str:
     """Compose the diag strip: per-node cycle times of the tick, in a fixed order."""
     if not scene.diag_cycle_ms:
         return "diag: -"
-    parts = [f"{node} {ms:.1f} ms" for node, ms in sorted(scene.diag_cycle_ms.items())]
-    return "diag: " + "   ".join(parts)
+    parts = [
+        f"{node.removesuffix('_node')} {ms:.1f}"
+        for node, ms in sorted(scene.diag_cycle_ms.items())
+    ]
+    # Two lines past six nodes, so a full M1 stack fits the strip.
+    half = (len(parts) + 1) // 2 if len(parts) > 6 else len(parts)
+    lines = ["   ".join(parts[:half])]
+    if parts[half:]:
+        lines.append("   ".join(parts[half:]))
+    return "diag [ms]: " + "\n           ".join(lines)
 
 
 def render_frame(

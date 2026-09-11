@@ -86,6 +86,7 @@ def _draw_boxes(ax: Axes, agents: Sequence[AgentBox], *, hollow: bool) -> None:
                 ha="center",
                 va="bottom",
                 zorder=7,
+                clip_on=True,
             )
 
 
@@ -156,12 +157,25 @@ def draw_lanes(ax: Axes, lanes: LaneMap) -> None:
         # A 3.5 m bar across the driving direction (heading faces the traffic).
         nx, ny = -np.sin(line.heading), np.cos(line.heading)
         color = style.STOP_LINE_LIGHT if line.kind == "light" else style.STOP_LINE_SIGN
+        color = style.LIGHT_STATE_COLORS.get(line.state, color)
         ax.plot(
             [line.x + 1.75 * nx, line.x - 1.75 * nx],
             [line.y + 1.75 * ny, line.y - 1.75 * ny],
             color=color,
             linewidth=1.8,
             zorder=2,
+        )
+    for volume in lanes.sign_volumes:
+        ax.add_patch(
+            Polygon(
+                volume,
+                closed=True,
+                fill=False,
+                edgecolor=style.STOP_LINE_SIGN,
+                linewidth=0.8,
+                alpha=0.8,
+                zorder=2,
+            )
         )
     for footprint in lanes.crosswalks:
         ax.add_patch(

@@ -224,7 +224,8 @@ nuway/
 │   │   │   ├── run_logger.py              # the one wandb wrapper; training loops log through it
 │   │   │   └── schema.py                  # dataset record schema (dataclasses + validation)
 │   │   ├── viz/                           # M1; the one BEV drawing implementation (docs/02 §8)
-│   │   │   ├── style.py                   # colors, widths, figure geometry; Agg backend only
+│   │   │   ├── style.py                   # colors, widths, figure geometry, the §3.9 layer vocabulary; Agg backend only
+│   │   │   ├── scene.py                   # plain-data view of one tick (no ROS messages): what the draw functions take
 │   │   │   ├── bev_draw.py                # one draw_<layer>() per §3.9 marker layer, onto an Axes
 │   │   │   ├── panel.py                   # the standard frame: BEV + header text + diag strip
 │   │   │   └── contact_sheet.py           # tile N frames into one PNG

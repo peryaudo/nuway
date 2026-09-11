@@ -5,10 +5,14 @@ from typing import Any
 from launch import LaunchContext, LaunchDescription
 
 from nuway_bringup.launch_util import profile_launch, stack_node
-from nuway_bringup.profile import use_gt
+from nuway_bringup.profile import runner, use_gt
 
 
 def setup(_context: LaunchContext, profile: dict[str, Any]) -> list[Any]:
+    if runner(profile) == "leaderboard" and not (
+        use_gt(profile, "perception") or use_gt(profile, "traffic_lights")
+    ):
+        return []  # M1 §3.12: no perception source under the runner before M3/M4
     if not use_gt(profile, "perception"):
         msg = "use_gt.perception: false needs the M3 perception_node"
         raise NotImplementedError(msg)

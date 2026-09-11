@@ -123,7 +123,7 @@ nuway/
 │       │   │   │                          #   parsing/arithmetic comes from nuway_ml.common.rig (shared with the collectors)
 │       │   │   ├── traffic.py             # module: seeded Traffic Manager vehicles + AI walkers, spawned/cleared from its own bookkeeping (M1)
 │       │   │   ├── control_adapter.py     # node: ControlCommand -> CarlaEgoVehicleControl
-│       │   │   └── leaderboard_agent.py   # Leaderboard 2.x ROS agent entry point (M1)
+│       │   │   └── leaderboard_agent.py   # Leaderboard 2.x agent (MAP track; does the ROS side itself, M1 §3.12)
 │       │   └── launch/
 │       ├── nuway_map/                     # C++
 │       │   ├── src/
@@ -309,12 +309,14 @@ nuway/
 │   │   │   ├── infractions.py             # the Leaderboard 2.0 criteria as pure tick-driven detectors (M1 §3.10)
 │   │   │   ├── driving_score.py           # scoring config (configs/eval/scoring_*.yaml) and the LB 2.0 formula
 │   │   │   ├── report.py                  # results.csv (schema in M1 §3.10), report.md, incident renders
-│   │   │   └── chase_writer.py            # M1; /nuway/viz/chase_cam -> chase/*.jpg (docs/02 §8.3)
+│   │   │   ├── chase_writer.py            # M1; /nuway/viz/chase_cam -> chase/*.jpg (docs/02 §8.3)
+│   │   │   └── leaderboard_results.py     # M1: splits a route file per route; merges the evaluator's JSON + agent sidecars into leaderboard_results.csv
 │   │   ├── routes/                        # route XMLs (leaderboard format): dev_* (M0: dev_town01/03/05, 10 routes >= 1.5 km
 │   │   │                                  #   from route_gen), smoke_town03 (M1: one 105 m Town03 route, protocol="smoke",
 │   │   │                                  #   for the integration tests), mapping_*, collect_long_*
 │   │   ├── run_routes.py                  # entry point: --routes m1|full, --weathers, --seed, --resume, --render, crash recovery (also --replay, M6)
-│   │   ├── setup_leaderboard.sh           # M1: clones leaderboard + scenario_runner into external/ at the pinned commits
+│   │   ├── patches/                       # M1: fixes carried on the pinned external/ checkouts (scenario_runner_*.patch, applied by setup_leaderboard.sh)
+│   │   ├── setup_leaderboard.sh           # M1: clones leaderboard + scenario_runner into external/ at the pinned commits, applies patches/
 │   │   ├── run_leaderboard.sh             # M1: one stack + one evaluator invocation per route (M1 §3.12)
 │   │   ├── eval_localization.py           # M5
 │   │   └── compare_runs.py                # two run dirs: results rows within tolerance, first command tick outside the spread

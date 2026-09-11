@@ -28,7 +28,25 @@ train = ["hydra-core", "wandb", "nuway-ml[torch]"]   # config management and run
 viz = ["matplotlib", "rosbags", "jupyterlab"]        # headless rendering (02_interfaces.md §8); never imported by runtime nodes
 # Python deps of external/{leaderboard,scenario_runner}. M1 task 19 completes the list from the
 # pinned checkouts' requirements.txt (03 §6.4); these are the ones known today.
-leaderboard = ["py-trees", "networkx", "shapely"]
+leaderboard = [
+    "py-trees==0.8.3",
+    "networkx",
+    "shapely",
+    "dictor>=0.1.12",
+    "requests>=2.34.2",
+    "opencv-python>=5.0.0.93",
+    "pygame>=2.6.1",
+    "tabulate>=0.10.0",
+    "pexpect>=4.9.0",
+    "transforms3d>=0.4.2",
+    "psutil>=7.2.2",
+    "xmlschema>=4.3.2",
+    "ephem>=4.2.1",
+    "six>=1.17.0",
+    "simple-watchdog-timer>=0.1.1",
+    "antlr4-python3-runtime==4.10",
+    "graphviz>=0.21",
+]
 
 [tool.uv]
 package = false                    # the root is not installable
@@ -143,6 +161,7 @@ module = [
   "std_msgs.*", "geometry_msgs.*", "sensor_msgs.*", "nav_msgs.*", "tf2_msgs.*",
   "visualization_msgs.*", "rosgraph_msgs.*", "builtin_interfaces.*", "tf2_ros", "tf2_ros.*",
   "launch", "launch.*", "launch_ros", "launch_ros.*", "ament_index_python", "ament_index_python.*",
+  "leaderboard", "leaderboard.*", "srunner", "srunner.*",
 ]
 ignore_missing_imports = true
 follow_imports = "skip"

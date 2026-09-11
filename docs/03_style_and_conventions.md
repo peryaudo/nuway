@@ -260,7 +260,7 @@ Decided in M0 (2026-09-07) and kept current here whenever `uv.lock` or the workf
 | hydra-core, wandb | exact in lock | `pyproject.toml` `train` group, `uv.lock` |
 | GTSAM / osqp-vendor / nanoflann / pugixml | 4.2.0 / 0.2.0 (the `ros-jazzy-osqp-vendor` package version, not OSQP's own) / 1.5.4 / 1.14 (`libpugixml-dev`), from apt | `package.xml` + rosdep (§6.2) |
 | osqp-eigen | v0.8.1, commit `85c37623774c682db396505f0d4ea677040c2557` (the last release for the OSQP 0.6 API; v0.9.0 moved to OSQP 1.0) | `ros2_ws/src/osqp_eigen_vendor/CMakeLists.txt` |
-| CARLA Leaderboard 2.x / scenario_runner | commit hashes, decided in M1 task 19 (the pair must be the one that targets CARLA 0.9.16, and the pinned Leaderboard must expose the ROS 2 agent track — verify before pinning) | `tools/eval/setup_leaderboard.sh`, checkouts in `external/` (gitignored); Python deps in the `leaderboard` group |
+| CARLA Leaderboard 2.x / scenario_runner | leaderboard `master` commit `aec81319de6bec57372f25aa94083c9ab0bd4223` (2025-03-27; `MIN_CARLA_VERSION 0.9.14`, SENSORS/MAP tracks — no ROS track exists in any Leaderboard commit, see the M1 Decisions log, task 19) / scenario_runner `master` commit `94ff3b8af752bad2b9d464ad5105868906aa34c0` (the "0.9.16 release", 2025-09-29) plus `tools/eval/patches/scenario_runner_complex_junctions.patch` (a one-line upstream bug that crashes every Town03 route, M1 Decisions log task 19) | `tools/eval/setup_leaderboard.sh`, checkouts in `external/` (gitignored); Python deps in the `leaderboard` group |
 
 ---
 

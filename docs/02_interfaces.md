@@ -531,6 +531,10 @@ carla:
   lockstep_timeout_s: 2.0              # §2; wall-clock wait for the tick's ControlCommand
   lockstep_startup_timeout_s: 120.0    # §2; the same wait for the first tick of the stack and the first tick after each reset
   realtime_factor: 0.0                 # 0 = as fast as lockstep allows; 1 = wall-clock pace
+  runner: world_manager                # M1; world_manager | leaderboard — under the official evaluator the stack launches
+                                       #   no world_manager and no control_adapter (leaderboard_agent.py owns the tick, the
+                                       #   sensors, /clock, the reset services and the command conversion, M1 §3.12), and
+                                       #   a module whose non-GT implementation does not exist yet launches nothing
   traffic:                             # M1
     n_vehicles: 50
     n_walkers: 30

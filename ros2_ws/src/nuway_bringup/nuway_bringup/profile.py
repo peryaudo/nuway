@@ -160,6 +160,17 @@ def use_gt(profile: Mapping[str, Any], module: str) -> bool:
     return bool(get(profile, f"use_gt.{module}", True))
 
 
+def runner(profile: Mapping[str, Any]) -> str:
+    """``carla.runner``: world_manager | leaderboard (docs/02 §5); missing means world_manager.
+
+    Under ``leaderboard`` the official evaluator owns the tick, the sensors
+    and the hero: the stack launches no world_manager and no control_adapter,
+    and the modules without a non-GT implementation yet launch nothing
+    (M1 §3.12).
+    """
+    return str(get(profile, "carla.runner", "world_manager"))
+
+
 def prediction_source(profile: Mapping[str, Any]) -> str:
     """``prediction.source``: const_vel | learned (docs/02 §5); missing means const_vel."""
     return str(get(profile, "prediction.source", "const_vel"))

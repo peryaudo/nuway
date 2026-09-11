@@ -1,0 +1,32 @@
+# configs/profiles/leaderboard.yaml — the stack under the official Leaderboard evaluator (M1 §3.12): one stack per
+# route, launched by tools/eval/run_leaderboard.sh with carla.town set to the route's town. No world_manager, no
+# control_adapter, no GT: leaderboard_agent.py owns the tick, the sensors, /clock and the command conversion.
+# Schema: docs/02_interfaces.md §5. Paths are relative to the repo root.
+profile: leaderboard
+carla:
+  host: localhost
+  port: 2000
+  town: Town03                          # overwritten per route by run_leaderboard.sh (map_server reads data/maps/<town>/)
+  fixed_delta_seconds: 0.05             # the evaluator's frame_rate 20 Hz
+  sync: true
+  runner: leaderboard
+  lockstep_timeout_s: 2.0               # the agent's watchdog (M1 §3.12)
+  lockstep_startup_timeout_s: 60.0     # below the evaluator's own 120 s agent watchdog (run_leaderboard.sh)
+sensors: configs/sensors/rig_leaderboard.json
+vehicle: configs/vehicle/lincoln_mkz_2020.yaml
+use_gt:                                 # the agent refuses to start with any of these true (M1 §3.12)
+  localization: false
+  perception: false
+  traffic_lights: false
+  prediction: false
+  planning: false
+prediction:
+  source: const_vel
+control:
+  controller: mpc
+eval:
+  record: true
+  record_sensors: false
+  render: off
+  chase_cam: false
+  scoring: configs/eval/scoring_lb20.yaml

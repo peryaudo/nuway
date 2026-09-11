@@ -9,12 +9,14 @@ i.e. ``use_gt.prediction`` is off and ``prediction.source`` is ``const_vel``
 from typing import Any
 
 from launch import LaunchContext, LaunchDescription
+from launch.actions import DeclareLaunchArgument
+from launch.substitutions import LaunchConfiguration
 
 from nuway_bringup.launch_util import profile_launch, stack_node
 from nuway_bringup.profile import get, prediction_source
 
 
-def setup(_context: LaunchContext, profile: dict[str, Any]) -> list[Any]:
+def setup(context: LaunchContext, profile: dict[str, Any]) -> list[Any]:
     # Unlike the other toggles, use_gt.prediction defaults to false: the GT
     # twin needs a recorded log (docs/02 §5).
     source = prediction_source(profile)
@@ -27,16 +29,28 @@ def setup(_context: LaunchContext, profile: dict[str, Any]) -> list[Any]:
     if source != "const_vel":
         msg = f"prediction.source: unknown value {source!r}"
         raise ValueError(msg)
+    # The M1 §5 delay injection: a wall-clock sleep in the node's tick that
+    # must not change any result under the current-tick barrier.
+    delay_ms = float(LaunchConfiguration("callback_delay_ms").perform(context))
     return [
         stack_node(
             profile,
             "nuway_prediction",
             "const_vel_node",
             "const_vel_node",
-            extra_params={"publish_primary": True},
+            extra_params={"publish_primary": True, "callback_delay_ms": delay_ms},
         )
     ]
 
 
 def generate_launch_description() -> LaunchDescription:
-    return profile_launch(setup)
+    return profile_launch(
+        setup,
+        extra_args=[
+            DeclareLaunchArgument(
+                "callback_delay_ms",
+                default_value="0",
+                description="wall-clock sleep injected into const_vel_node's tick",
+            )
+        ],
+    )

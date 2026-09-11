@@ -52,7 +52,7 @@ explicit = true
 
 [tool.pytest.ini_options]
 testpaths = ["ml/tests", "tools", "tests"]
-pythonpath = ["tools/eval", "tools/viz", "ros2_ws/src/nuway_bringup"]  # nuway_eval (docs/01 Rules) and the pure-Python profile loader, so tests/integration runs without a colcon build
+pythonpath = ["tools/eval", "tools/viz", "ros2_ws/src/nuway_bringup", "tests/integration"]  # nuway_eval (docs/01 Rules) and the pure-Python profile loader, so tests/integration runs without a colcon build
 addopts = "--strict-markers -p no:launch_testing -p no:launch_ros -p no:ament_lint -p no:ament_copyright -p no:ament_flake8 -p no:ament_pep257 -p no:ament_xmllint"  # ROS pytest plugins leak in via system site packages; launch_testing breaks pytest >= 8
 markers = [
   "slow: minutes-long",
@@ -128,7 +128,7 @@ exclude = ["ros2_ws/(build|install|log)/", "ros2_ws/src/carla_msgs/", "ros2_ws/s
 # without an install step. tools/eval holds the nuway_eval package.
 explicit_package_bases = true
 mypy_path = [
-  "ml", "tools/eval", "tools/viz",
+  "ml", "tools/eval", "tools/viz", "tests/integration",
   "ros2_ws/src/nuway_carla_bridge", "ros2_ws/src/nuway_rclpy", "ros2_ws/src/nuway_perception",
   "ros2_ws/src/nuway_prediction", "ros2_ws/src/nuway_planning",
   "ros2_ws/src/nuway_bringup", "ros2_ws/src/nuway_viz",

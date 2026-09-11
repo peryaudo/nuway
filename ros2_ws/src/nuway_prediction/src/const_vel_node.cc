@@ -16,10 +16,12 @@
 // lane graph is latched and read latest-value. Cross-tick state (barrier,
 // buffers) is dropped on ResetEvent; messages stamped before the reset are
 // ignored (docs/02 §7). The predictor itself is stateless.
+#include <chrono>
 #include <cstdint>
 #include <map>
 #include <memory>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <rclcpp/rclcpp.hpp>
@@ -60,6 +62,9 @@ class ConstVelNode final : public rclcpp::Node {
         barrier_({kInputPose, kInputAgents}),
         diag_(this) {
     ConstVelOptions options;
+    callback_delay_ms_ = nuway_common::DeclareParam<double>(
+        this, "callback_delay_ms", 0.0,
+        "wall-clock sleep before each tick's work (M1 §5 determinism check)");
     publish_primary_ = nuway_common::DeclareParam<bool>(
         this, "publish_primary", true,
         "also publish /nuway/prediction/samples (the primary producer)");
@@ -190,6 +195,12 @@ class ConstVelNode final : public rclcpp::Node {
       return;
     }
     last_published_k_ = k;
+    if (callback_delay_ms_ > 0.0) {
+      // Test-only: under the current-tick barrier a late input reorders
+      // nothing, so the drive must come out the same (M1 §5).
+      std::this_thread::sleep_for(
+          std::chrono::duration<double, std::milli>(callback_delay_ms_));
+    }
     double cycle_ms = 0.0;
     nuway_msgs::msg::PredictionSamples out;
     DiagStatus status = DiagStatus::kOk;
@@ -242,6 +253,7 @@ class ConstVelNode final : public rclcpp::Node {
   }
 
   bool publish_primary_ = true;
+  double callback_delay_ms_ = 0.0;
   std::unique_ptr<ConstVelPredictor> predictor_;
   std::unique_ptr<nuway_map::LaneGraph> lane_graph_;
 

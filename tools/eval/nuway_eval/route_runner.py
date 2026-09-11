@@ -28,7 +28,7 @@ import shutil
 import signal
 import subprocess
 import time
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -776,8 +776,10 @@ def town_profile(profile_path: Path, town: str, out_dir: Path) -> Path:
 class StackProcess:
     """One ``ros2 launch nuway_bringup stack.launch.py`` per town."""
 
-    def __init__(self, profile_path: Path, log_path: Path) -> None:
-        """Start the launch in its own process group."""
+    def __init__(
+        self, profile_path: Path, log_path: Path, launch_args: Sequence[str] = ()
+    ) -> None:
+        """Start the launch in its own process group (``launch_args``: extra ``k:=v``)."""
         self._log = log_path.open("a")
         self._proc = subprocess.Popen(
             [
@@ -787,6 +789,7 @@ class StackProcess:
                 "stack.launch.py",
                 f"profile:={profile_path}",
                 "foxglove:=false",
+                *launch_args,
             ],
             stdout=self._log,
             stderr=subprocess.STDOUT,

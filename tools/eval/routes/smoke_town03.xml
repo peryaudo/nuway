@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<routes>
+  <route id="short03" town="Town03" protocol="smoke">
+    <waypoints>
+      <position x="81.27" y="-22.72" z="0.96"/>
+      <position x="83.03" y="-72.56" z="8.00"/>
+      <position x="84.81" y="-122.98" z="8.00"/>
+    </waypoints>
+  </route>
+</routes>

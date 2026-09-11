@@ -311,7 +311,8 @@ nuway/
 │   │   │   ├── report.py                  # results.csv (schema in M1 §3.10), report.md, incident renders
 │   │   │   └── chase_writer.py            # M1; /nuway/viz/chase_cam -> chase/*.jpg (docs/02 §8.3)
 │   │   ├── routes/                        # route XMLs (leaderboard format): dev_* (M0: dev_town01/03/05, 10 routes >= 1.5 km
-│   │   │                                  #   from route_gen), mapping_*, collect_long_*
+│   │   │                                  #   from route_gen), smoke_town03 (M1: one 105 m Town03 route, protocol="smoke",
+│   │   │                                  #   for the integration tests), mapping_*, collect_long_*
 │   │   ├── run_routes.py                  # entry point: --routes m1|full, --weathers, --seed, --resume, --render, crash recovery (also --replay, M6)
 │   │   ├── setup_leaderboard.sh           # M1: clones leaderboard + scenario_runner into external/ at the pinned commits
 │   │   ├── run_leaderboard.sh             # M1: one stack + one evaluator invocation per route (M1 §3.12)
@@ -335,7 +336,8 @@ nuway/
 │
 ├── tests/                                 # cross-cutting integration tests
 │   ├── fixtures/                          # gen_*.py generators (CLI, may print) + small committed CSV/JSON fixtures
-│   └── integration/
+│   └── integration/                       # geometry parity, bringup profile, and the M1 CARLA tests (slow, carla):
+│       └── m1_stack.py                    #   shared helper: test profile, stack launch, smoke-route drive for test_m1_*.py
 ├── .github/workflows/                     # CI: format, tidy, sanitizer, ruff, mypy, pytest (see docs/03 §7.4)
 ├── .clang-format                          # BasedOnStyle: Google (see docs/03)
 ├── .clang-tidy                            # google-* + naming checks, warnings are errors (see docs/03)

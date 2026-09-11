@@ -19,7 +19,10 @@ dev = [
   "types-pyyaml",
   "types-setuptools>=84.0.0.20260812",
 ]
-carla = ["carla==0.9.16"]
+carla = [
+    "carla==0.9.16",
+    "pillow>=12.3.0",
+]
 infer = ["nuway-ml[torch]"]       # run learned profiles (M3+) without training tooling
 train = ["hydra-core", "wandb", "nuway-ml[torch]"]   # config management and run/metric logging (03 §9.7)
 viz = ["matplotlib", "rosbags", "jupyterlab"]        # headless rendering (02_interfaces.md §8); never imported by runtime nodes

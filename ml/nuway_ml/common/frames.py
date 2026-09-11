@@ -35,3 +35,5 @@ TOPIC_CONTROL_COMMAND = "/nuway/control/command"
 TOPIC_CONTROL_DEBUG = "/nuway/control/debug"
 TOPIC_DIAG_PREFIX = "/nuway/diag/"
 TOPIC_CAMERA_INFO_FMT = "/nuway/sensors/{cam}/camera_info"
+TOPIC_VIZ_CHASE_CAM = "/nuway/viz/chase_cam"  # eval.chase_cam only (docs/02 §8.3)
+CHASE_CAM_ID = "cam_chase"  # the viz-only rig entry behind the chase camera

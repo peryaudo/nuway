@@ -43,6 +43,10 @@ PROFILE_PARAMS: dict[str, tuple[tuple[str, str], ...]] = {
         ("carla.traffic.hybrid_physics", "carla.traffic.hybrid_physics"),
         ("sensors", "sensors"),
         ("vehicle", "vehicle"),
+        (
+            "eval.chase_cam",
+            "spawn_viz_only_sensors",
+        ),  # the cam_chase rig entry (docs/02 §8.3)
     ),
     "control_adapter": (("vehicle", "vehicle"),),
     "map_server_node": (("carla.town", "town"),),

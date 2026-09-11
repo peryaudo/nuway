@@ -178,6 +178,7 @@ class Harness:
             wall_timeout_s=args.wall_timeout_s,
             record=self.eval.record and not args.no_record,
             record_sensors=self.eval.record_sensors,
+            chase_cam=self.eval.chase_cam,
         )
         self.render = args.render or self.eval.render
         if not self.limits.record:

@@ -1310,6 +1310,7 @@ dependencies = [
 [package.dev-dependencies]
 carla = [
     { name = "carla" },
+    { name = "pillow" },
 ]
 dev = [
     { name = "clang-format" },
@@ -1347,7 +1348,10 @@ viz = [
 requires-dist = [{ name = "nuway-ml", editable = "ml" }]
 
 [package.metadata.requires-dev]
-carla = [{ name = "carla", specifier = "==0.9.16" }]
+carla = [
+    { name = "carla", specifier = "==0.9.16" },
+    { name = "pillow", specifier = ">=12.3.0" },
+]
 dev = [
     { name = "clang-format", specifier = ">=18" },
     { name = "clang-tidy", specifier = ">=18" },

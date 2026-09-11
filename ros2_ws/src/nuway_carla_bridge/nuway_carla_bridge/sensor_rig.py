@@ -28,15 +28,23 @@ spawns the sensors the driving stack consumes and nothing more.
 
 from __future__ import annotations
 
+import io
 from typing import TYPE_CHECKING
 
 import carla
+import numpy as np
 from geometry_msgs.msg import TransformStamped
+from PIL import Image
 from rclpy.node import Node
-from sensor_msgs.msg import CameraInfo
+from sensor_msgs.msg import CameraInfo, CompressedImage
 from tf2_ros import StaticTransformBroadcaster
 
-from nuway_ml.common.frames import FRAME_BASE_LINK, TOPIC_CAMERA_INFO_FMT
+from nuway_ml.common.frames import (
+    CHASE_CAM_ID,
+    FRAME_BASE_LINK,
+    TOPIC_CAMERA_INFO_FMT,
+    TOPIC_VIZ_CHASE_CAM,
+)
 from nuway_ml.common.rig import (
     Rig,
     SensorSpec,
@@ -44,11 +52,25 @@ from nuway_ml.common.rig import (
     intrinsics,
     sensor_in_base_link,
 )
+from nuway_ml.common.tick import tick_index, tick_stamp
 from nuway_rclpy.ros_conv import transform_from_se3
 from nuway_rclpy.ros_qos import qos
 
 if TYPE_CHECKING:
     from rclpy.publisher import Publisher
+
+CHASE_JPEG_QUALITY = 80
+
+
+def encode_jpeg(raw_bgra: bytes, width: int, height: int) -> bytes:
+    """JPEG-encode a CARLA RGB camera frame (its ``raw_data`` is BGRA, row-major)."""
+    pixels = np.frombuffer(raw_bgra, dtype=np.uint8).reshape(height, width, 4)
+    rgb = pixels[:, :, 2::-1]  # BGRA -> RGB
+    buf = io.BytesIO()
+    Image.fromarray(np.ascontiguousarray(rgb)).save(
+        buf, format="JPEG", quality=CHASE_JPEG_QUALITY
+    )
+    return buf.getvalue()
 
 
 class SensorRig:
@@ -81,6 +103,7 @@ class SensorRig:
         self._actors: list[carla.Actor] = []
         self._tf_broadcaster = StaticTransformBroadcaster(node)
         self._pub_camera_info: dict[str, Publisher] = {}
+        self._pub_chase: Publisher | None = None
 
     @property
     def actors(self) -> list[carla.Actor]:
@@ -112,10 +135,42 @@ class SensorRig:
             actor = self._world.spawn_actor(bp, transform, attach_to=self._hero)
             if not spec.viz_only:
                 actor.enable_for_ros()
+            elif spec.id == CHASE_CAM_ID:
+                self._listen_chase(actor)
             self._actors.append(actor)
             self._node.get_logger().info(f"spawned {spec.type} as {spec.id}")
         self._publish_static_tf()
         self._publish_camera_info()
+
+    def _listen_chase(self, actor: carla.Actor) -> None:
+        """Publish the chase camera through a ``listen()`` callback (docs/02 §8.3).
+
+        The one sensor read through the Python API rather than
+        ``enable_for_ros()``: it is a witness for the eval renders, not an
+        input, so it goes out JPEG-compressed on the viz QoS at the rig's
+        ``sensor_tick`` (every 5th tick) instead of as a raw native image.
+        The callback runs on the CARLA client thread; publishing from there
+        is safe because the executor never touches this publisher.
+        """
+        self._pub_chase = self._node.create_publisher(
+            CompressedImage, TOPIC_VIZ_CHASE_CAM, qos("viz")
+        )
+
+        def on_image(image: carla.Image) -> None:
+            if self._pub_chase is None:
+                return
+            msg = CompressedImage()
+            sec, nanosec = tick_stamp(tick_index(float(image.timestamp)))
+            msg.header.stamp.sec = sec
+            msg.header.stamp.nanosec = nanosec
+            msg.header.frame_id = CHASE_CAM_ID
+            msg.format = "jpeg"
+            msg.data = encode_jpeg(
+                bytes(image.raw_data), int(image.width), int(image.height)
+            )
+            self._pub_chase.publish(msg)
+
+        actor.listen(on_image)
 
     def _publish_static_tf(self) -> None:
         """Latched base_link -> <sensor> for every spawned, non-viz sensor."""

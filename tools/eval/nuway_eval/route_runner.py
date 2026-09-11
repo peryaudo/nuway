@@ -58,6 +58,7 @@ from rclpy.qos import (
 )
 
 from nuway_eval.carla_probe import CarlaProbe, vehicle_speeds_near
+from nuway_eval.chase_writer import ChaseWriter
 from nuway_eval.driving_score import ScoringConfig
 from nuway_eval.infractions import InfractionTracker, TickObservation
 from nuway_eval.report import RouteResult, percentile
@@ -178,6 +179,7 @@ class RunLimits:
     wall_timeout_s: float = 1800.0
     record: bool = True
     record_sensors: bool = False
+    chase_cam: bool = False  # write <route>/chase/*.jpg from /nuway/viz/chase_cam
 
 
 @dataclass(frozen=True, slots=True)
@@ -190,6 +192,7 @@ class EvalConfig:
     record_sensors: bool = False
     scoring: str = "configs/eval/scoring_lb20.yaml"
     traffic_seed: int = 0
+    chase_cam: bool = False
     render: str = "incidents"  # off | incidents | full (docs/02 §8)
     render_stride: int = 10
     incident_window: tuple[int, int] = (40, 20)
@@ -210,6 +213,7 @@ class EvalConfig:
             record_sensors=bool(ev.get("record_sensors", False)),
             scoring=str(ev.get("scoring", "configs/eval/scoring_lb20.yaml")),
             traffic_seed=int(traffic.get("seed", 0)),
+            chase_cam=bool(ev.get("chase_cam", False)),
             render=str(ev.get("render", "incidents")),
             render_stride=int(ev.get("render_stride", 10)),
             incident_window=(int(window[0]), int(window[1])),
@@ -487,12 +491,15 @@ class RouteRunnerNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (0
         route_dir.mkdir(parents=True, exist_ok=True)
         wall0 = time.monotonic()
         recorder = _Recorder(route_dir, limits) if limits.record else None
+        chase: ChaseWriter | None = None
         try:
             if recorder is not None:
                 recorder.start()
             if not self.reset_to(run, wait_s=200.0):
                 result.status = "reset_failed"
                 return result
+            if limits.chase_cam:
+                chase = ChaseWriter(self, route_dir, self._episode_k)
             if not self.set_weather(run.weather):
                 self.get_logger().warning(f"weather {run.weather} not applied")
             if self._probe is not None and not self._probe.attach():
@@ -501,6 +508,8 @@ class RouteRunnerNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (0
             self._loop(run, limits, config, result, wall0)
         finally:
             result.wall_time_s = time.monotonic() - wall0
+            if chase is not None:
+                self.get_logger().info(f"chase camera: {chase.stop()} frames")
             if recorder is not None:
                 result.bag_path = recorder.stop()
         self._fill(result)

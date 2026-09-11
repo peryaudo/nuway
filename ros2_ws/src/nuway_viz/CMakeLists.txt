@@ -4,6 +4,7 @@ project(nuway_viz LANGUAGES CXX)
 find_package(ament_cmake REQUIRED)
 find_package(nuway_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(sensor_msgs REQUIRED)
 find_package(visualization_msgs REQUIRED)
 find_package(nuway_common REQUIRED)
 find_package(nuway_msgs REQUIRED)
@@ -17,6 +18,7 @@ target_link_libraries(
     marker_node
     PRIVATE
         rclcpp::rclcpp
+        ${sensor_msgs_TARGETS}
         ${visualization_msgs_TARGETS}
         nuway_common::nuway_common_ros
         ${nuway_msgs_TARGETS}

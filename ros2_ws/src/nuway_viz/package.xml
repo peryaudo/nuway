@@ -11,6 +11,7 @@
   <buildtool_depend>nuway_cmake</buildtool_depend>
 
   <depend>rclcpp</depend>
+  <depend>sensor_msgs</depend>
   <depend>visualization_msgs</depend>
   <depend>nuway_common</depend>
   <depend>nuway_msgs</depend>

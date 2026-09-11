@@ -150,6 +150,26 @@ TEST(CandidateRefinerTest, SlowLeadBoundsTheSpeedProfile) {
   EXPECT_GT(c.frenet.back().s, 50.0);
 }
 
+TEST(CandidateRefinerTest, LeadInsideTheMarginClosesTheBoxWithoutASolve) {
+  // A lead 5 m ahead moving at 4 m/s: its inflated rear (5 - 7.35 m) is
+  // behind the ego, so no speed profile can stay behind it. The refiner
+  // reports the closed box instead of burning the QP budget.
+  const RouteLine route = Straight();
+  SceneInput in;
+  in.route = &route;
+  in.agents = {Car(4, 25.0, 0.0, 4.0)};
+  in.predictions = ConstVel(in.agents);
+  const FrenetState ego = Ego(20.0, 10.0);
+  Candidate c = CentreCandidate(in, ego, 10.0);
+  CandidateRefiner refiner{RefinerOptions{}, LatticeLimits{},
+                           CollisionOptions{}};
+  const RefineOutcome out = refiner.Refine(in, ego, &c);
+  EXPECT_FALSE(out.refined());
+  EXPECT_EQ(out.message.rfind("speed box closed", 0), 0U) << out.message;
+  EXPECT_EQ(out.speed_iterations, 0);
+  EXPECT_TRUE(c.qp_relaxed);
+}
+
 TEST(CandidateRefinerTest, ExhaustedBudgetKeepsTheLatticeShape) {
   const RouteLine route = Straight();
   SceneInput in;

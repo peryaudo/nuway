@@ -249,8 +249,17 @@ struct PiecewiseJerkQp::Impl {
       return v.empty() ? none : v[static_cast<std::size_t>(i)];
     };
     for (int i = 0; i < n; ++i) {
-      lower[r] = Bound(at(p.x_lower, i, -kInf));
-      upper[r] = Bound(at(p.x_upper, i, kInf));
+      double lo = Bound(at(p.x_lower, i, -kInf));
+      double hi = Bound(at(p.x_upper, i, kInf));
+      if (lo > hi) {
+        // A box that closed entirely (a lead already inside the ego's
+        // margin): OSQP rejects l > u on a row outright, so the row
+        // becomes the box's midpoint and the slack, which enters this row
+        // on both sides, carries the violation like any other.
+        lo = hi = 0.5 * (lo + hi);
+      }
+      lower[r] = lo;
+      upper[r] = hi;
       ++r;
     }
     for (int i = 0; i < n; ++i) {

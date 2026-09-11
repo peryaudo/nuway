@@ -147,6 +147,21 @@ TEST(PiecewiseJerkQpTest, ExhaustedBudgetFailsAndInfeasibleBoxRelaxes) {
   }
   ExpectKinematics(relaxed, 0.1);
 
+  // A box closed entirely (x_upper below x_lower): OSQP refuses l > u on
+  // a row, so the row collapses to the midpoint and the slack carries it.
+  // Metres of slack need tens of thousands of iterations at the fixed rho
+  // (27670 here), which is why the refiner never submits such a box; the
+  // QP only has to fail cleanly, without OSQP's update error, and keep
+  // its workspace usable for the next call.
+  PiecewiseJerkProblem closed = SpeedProblem();
+  for (std::size_t i = 0; i < 20; ++i) {
+    closed.x_upper[i] = closed.x_lower[i] - 2.0;
+  }
+  const PiecewiseJerkSolution collapsed = qp.Solve(closed);
+  EXPECT_EQ(collapsed.outcome, QpOutcome::kFailed);
+  EXPECT_EQ(collapsed.status, "max_iter_reached");
+  EXPECT_EQ(qp.Solve(SpeedProblem()).outcome, QpOutcome::kSolved);
+
   PiecewiseJerkProblem bad;
   bad.n = 1;
   EXPECT_EQ(qp.Solve(bad).outcome, QpOutcome::kFailed);

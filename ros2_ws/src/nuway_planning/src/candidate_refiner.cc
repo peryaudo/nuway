@@ -343,6 +343,19 @@ RefineOutcome CandidateRefiner::Refine(const SceneInput& in,
   q.dx_lower[0] = std::min(q.dx_lower[0], ego.s_dot);
   q.ddx_upper[0] = std::max(q.ddx_upper[0], ego.s_ddot);
   q.ddx_lower[0] = std::min(q.ddx_lower[0], ego.s_ddot);
+  // A box closed behind the ego (an agent's inflated rear already at or
+  // behind ego.s, e.g. a lead that stopped inside the margin) admits no
+  // profile: the slack would have to carry metres, which costs tens of
+  // thousands of iterations at the fixed rho. The candidate keeps its
+  // lattice shape and the collision check decides its fate.
+  for (std::size_t i = 0; i < frenet.size(); ++i) {
+    if (q.x_upper[i] < q.x_lower[i]) {
+      out.message =
+          "speed box closed at " + std::to_string(c->trajectory[i].t) + " s";
+      c->qp_relaxed = true;
+      return out;
+    }
+  }
   const PiecewiseJerkSolution sol = speed_qp_.Solve(q);
   out.speed = sol.outcome;
   out.speed_iterations = sol.iterations;

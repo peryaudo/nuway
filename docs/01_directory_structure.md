@@ -302,19 +302,20 @@ nuway/
 │   │   └── verify_tl_association.py       # M4
 │   ├── eval/
 │   │   ├── nuway_eval/                    # THE harness package (rclpy; imported by the scripts below, never by ml/ or ros2_ws)
-│   │   │   ├── route_runner.py            # one stack per town, second non-ticking CARLA client, resume. M0 v0: reset +
-│   │   │   │                              #   waypoints per route, lateral error from ControlDebug, odom/debug CSVs per route
-│   │   │   ├── infractions.py
-│   │   │   ├── driving_score.py
+│   │   │   ├── route_runner.py            # one stack per town, second non-ticking CARLA client (carla_probe.py), the
+│   │   │   │                              #   per-tick scoring loop, MCAP recorder; writes <route>_<weather>_<seed>/
+│   │   │   ├── carla_probe.py             # the harness's read-only client: collision sensor, stop lines, trigger volumes
+│   │   │   ├── infractions.py             # the Leaderboard 2.0 criteria as pure tick-driven detectors (M1 §3.10)
+│   │   │   ├── driving_score.py           # scoring config (configs/eval/scoring_*.yaml) and the LB 2.0 formula
 │   │   │   ├── report.py                  # results.csv (schema in M1 §3.10), report.md, incident renders
 │   │   │   └── chase_writer.py            # M1; /nuway/viz/chase_cam -> chase/*.jpg (docs/02 §8.3)
 │   │   ├── routes/                        # route XMLs (leaderboard format): dev_* (M0: dev_town01/03/05, 10 routes >= 1.5 km
 │   │   │                                  #   from route_gen), mapping_*, collect_long_*
-│   │   ├── run_routes.py                  # entry point for evaluation harness (also --replay, M6)
+│   │   ├── run_routes.py                  # entry point: --routes m1|full, --weathers, --seed, --resume, crash recovery (also --replay, M6)
 │   │   ├── setup_leaderboard.sh           # M1: clones leaderboard + scenario_runner into external/ at the pinned commits
 │   │   ├── run_leaderboard.sh             # M1: one stack + one evaluator invocation per route (M1 §3.12)
 │   │   ├── eval_localization.py           # M5
-│   │   └── compare_runs.py
+│   │   └── compare_runs.py                # two run dirs: results rows within tolerance, first command tick outside the spread
 │   ├── lint/                              # format_cpp.sh, tidy_cpp.sh, lint_py.sh, merge_compile_commands.py, header guard check (M0)
 │   └── viz/                               # M1; headless renderers (docs/02 §8); no ROS env needed
 │       ├── render_bag.py                  # MCAP -> frames/, sheets/, incidents/ PNGs

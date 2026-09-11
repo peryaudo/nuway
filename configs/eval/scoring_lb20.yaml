@@ -1,0 +1,31 @@
+# configs/eval/scoring_lb20.yaml — Leaderboard 2.0 scoring coefficients (M1 §3.10).
+# driving_score = 100 * route_completion * (1 - outside_lanes_frac) * prod(penalty[kind] ** n[kind]),
+# except min_speed, the Leaderboard's percentage event: each failed checkpoint multiplies by
+# 1 - (1 - penalty) * (1 - pct / 100), pct being the ego's mean speed over the traffic's.
+# A route deviation, a blocked agent or a timeout ends the route, so they truncate the
+# completion instead of carrying a coefficient. An `lb21` variant would be a sibling file.
+name: lb20
+penalties:
+  collision_pedestrian: 0.50
+  collision_vehicle: 0.60
+  collision_layout: 0.65
+  red_light: 0.70
+  stop_sign: 0.80
+  min_speed: 0.70
+ending:                      # route-ending conditions (the Leaderboard's blocked / timeout / deviation)
+  blocked_speed_mps: 0.1     # agent blocked: slower than this ...
+  blocked_s: 90.0            # ... for this long (sim seconds)
+  route_deviation_m: 30.0    # farther than this from the reference line
+  timeout_speed_mps: 5.0     # budget = route_length / timeout_speed_mps * timeout_factor + timeout_base_s
+  timeout_factor: 2.0
+  timeout_base_s: 60.0
+detectors:
+  collision_cooldown_s: 2.0  # one collision per other actor per cooldown
+  stop_sign_speed_mps: 0.2   # honoured = slower than this inside the trigger volume
+  # Port of the Leaderboard 2.0 MinimumSpeedRouteTest (its RATIO and checkpoints): the route
+  # is cut into `checkpoints` equal segments; one whose ego mean speed is below `ratio` times
+  # the mean speed of the vehicles within `radius_m` (the Leaderboard's background activity)
+  # fails with the percentage. The last checkpoint counts only past 95 % of the route.
+  min_speed_ratio: 1.0
+  min_speed_radius_m: 50.0
+  min_speed_checkpoints: 1

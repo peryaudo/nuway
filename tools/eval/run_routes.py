@@ -33,6 +33,8 @@ from nuway_eval.report import (
     FINAL_STATUSES,
     RouteResult,
     read_results,
+    render_full,
+    render_incidents,
     write_report,
     write_results,
 )
@@ -99,6 +101,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="a stack is already running (single town)",
     )
     p.add_argument("--no-record", action="store_true", help="skip the MCAP recording")
+    p.add_argument(
+        "--render",
+        choices=("off", "incidents", "full"),
+        default=None,
+        help="override the profile's eval.render (docs/02 §8)",
+    )
     p.add_argument("--wall-timeout-s", type=float, default=1800.0)
     p.add_argument("--goal-radius-m", type=float, default=5.0)
     p.add_argument("--route-ids", nargs="*", default=None, help="subset of route ids")
@@ -171,6 +179,9 @@ class Harness:
             record=self.eval.record and not args.no_record,
             record_sensors=self.eval.record_sensors,
         )
+        self.render = args.render or self.eval.render
+        if not self.limits.record:
+            self.render = "off"  # nothing to render without a bag
         self.node: RouteRunnerNode | None = None
         self.probe: CarlaProbe | None = None
         self.stack: StackProcess | None = None
@@ -181,6 +192,16 @@ class Harness:
             if r.key == run.key and r.status in FINAL_STATUSES and not r.crashed:
                 return True
         return False
+
+    def render_outputs(self, result: RouteResult) -> None:
+        """Incident sheets (and the full route when asked) from the run's bag."""
+        if self.render == "off" or not result.bag_path:
+            return
+        sheets = render_incidents(self.out_dir, result, self.eval.incident_window)
+        if sheets:
+            print(f"  {len(sheets)} incident sheets")
+        if self.render == "full":
+            render_full(self.out_dir, result, self.eval.render_stride)
 
     def record(self, result: RouteResult) -> None:
         """Replace or append the row and rewrite the files."""
@@ -271,6 +292,7 @@ class Harness:
                     print(f"  rerunning {run.dir_name} after the crash")
                     result = self.drive_one(run)
                     result.crashed = result.crashed or result.status == "crashed"
+                self.render_outputs(result)
                 self.record(result)
                 print(
                     f"  {result.status}: completion {result.completion:.3f}, "

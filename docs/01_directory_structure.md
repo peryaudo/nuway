@@ -312,7 +312,7 @@ nuway/
 │   │   │   └── chase_writer.py            # M1; /nuway/viz/chase_cam -> chase/*.jpg (docs/02 §8.3)
 │   │   ├── routes/                        # route XMLs (leaderboard format): dev_* (M0: dev_town01/03/05, 10 routes >= 1.5 km
 │   │   │                                  #   from route_gen), mapping_*, collect_long_*
-│   │   ├── run_routes.py                  # entry point: --routes m1|full, --weathers, --seed, --resume, crash recovery (also --replay, M6)
+│   │   ├── run_routes.py                  # entry point: --routes m1|full, --weathers, --seed, --resume, --render, crash recovery (also --replay, M6)
 │   │   ├── setup_leaderboard.sh           # M1: clones leaderboard + scenario_runner into external/ at the pinned commits
 │   │   ├── run_leaderboard.sh             # M1: one stack + one evaluator invocation per route (M1 §3.12)
 │   │   ├── eval_localization.py           # M5

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import itertools
 from pathlib import Path
 
 from nuway_eval.driving_score import InfractionCounts, ScoringConfig
@@ -9,8 +10,10 @@ from nuway_eval.report import (
     KEY_COLUMNS,
     RESULT_COLUMNS,
     RouteResult,
+    coalesce_incidents,
     percentile,
     read_results,
+    render_incidents,
     write_report,
     write_results,
 )
@@ -76,6 +79,76 @@ def test_report_lists_scores_and_incident_sheets(tmp_path: Path) -> None:
         in text
     )
     assert "sheet_not_an_incident" not in text
+
+
+def test_incidents_coalesce_within_the_window_and_cap_per_kind() -> None:
+    events = [
+        (100, "safety_intervention"),
+        (105, "safety_intervention"),
+        (121, "safety_intervention"),
+    ]
+    events += [(100, "red_light"), (3000, "mpc_failure")]
+    kept, dropped = coalesce_incidents(events, window_after=20)
+    assert kept == [
+        (100, "red_light"),
+        (100, "safety_intervention"),
+        (121, "safety_intervention"),
+        (3000, "mpc_failure"),
+    ]
+    assert dropped == {"safety_intervention": 1}
+    flapping = [(k, "safety_intervention") for k in range(0, 10000, 50)]
+    kept, dropped = coalesce_incidents(flapping, window_after=20, cap=20)
+    assert len(kept) == 20
+    assert dropped == {"safety_intervention": 180}
+
+
+def test_render_incidents_calls_render_bag_once_per_route(tmp_path: Path) -> None:
+    cfg = ScoringConfig.load(ROOT / "configs/eval/scoring_lb20.yaml")
+    r = RouteResult("dev03_00", "Town03", "ClearNoon", 0, run_id="r")
+    r.status = "completed"
+    r.bag_path = "dev03_00_ClearNoon_0/run.mcap"
+    (tmp_path / r.run_dir_name).mkdir(parents=True)
+    counts = InfractionCounts()
+    counts.add(120, "red_light")
+    r.incidents = [(400, "safety_intervention"), (402, "safety_intervention")]
+    r.apply_counts(counts, cfg)
+    assert r.incidents == [
+        (120, "red_light"),
+        (400, "safety_intervention"),
+        (402, "safety_intervention"),
+    ]
+    calls: list[list[str]] = []
+
+    def fake_run(cmd: list[str]) -> None:
+        calls.append(cmd)
+        out = Path(cmd[cmd.index("--out") + 1]) / "incidents"
+        out.mkdir(parents=True, exist_ok=True)
+        for flag, item in itertools.pairwise(cmd):
+            if flag == "--incident":
+                tick, _, kind = item.partition(":")
+                (out / f"{int(tick):06d}_{kind}.png").write_bytes(b"")
+
+    sheets = render_incidents(tmp_path, r, (40, 20), run=fake_run)
+    assert len(calls) == 1
+    assert calls[0][1].endswith("tools/viz/render_bag.py")
+    assert calls[0][calls[0].index("--window") + 1] == "40:20"
+    assert [p.name for p in sheets] == [
+        "000120_red_light.png",
+        "000400_safety_intervention.png",
+    ]
+    assert all(p.exists() for p in sheets)
+    summary = (tmp_path / r.run_dir_name / "incidents" / "summary.txt").read_text()
+    assert "safety_intervention: 1 rendered, 1 more" in summary
+    text = write_report([r], tmp_path, cfg).read_text()
+    assert "[2 sheets](#dev03_00_clearnoon_0)" in text
+    assert "- red_light: 1 rendered, 0 more" in text
+    # Without a bag or without events nothing is rendered.
+    assert (
+        render_incidents(
+            tmp_path, RouteResult("x", "Town03", "ClearNoon", 0), (40, 20), run=fake_run
+        )
+        == []
+    )
 
 
 def test_percentile_is_nearest_rank() -> None:

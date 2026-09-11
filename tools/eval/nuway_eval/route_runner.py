@@ -110,6 +110,33 @@ RECORD_REGEX = (
 SENSOR_REGEX = r"^/carla/hero/.*"
 
 
+# The input names a diag message may call degraded, for the `degraded_<source>`
+# incident kind (docs/02 §8.2); a message naming none falls back to the node.
+DEGRADABLE_SOURCES = (
+    "fallback_samples",
+    "samples",
+    "agents",
+    "occupancy",
+    "behavior",
+    "pose",
+    "ego_odom",
+    "vehicle_state",
+    "safe_trajectory",
+    "trajectory",
+    "reference_line",
+    "traffic_lights",
+)
+
+
+def degraded_source(node: str, message: str) -> str:
+    """Return the degraded input a diag message names, else the node's name."""
+    text = message.lower()
+    for source in DEGRADABLE_SOURCES:
+        if source in text:
+            return source
+    return node
+
+
 def _qos(name: str) -> QoSProfile:
     p = QOS[name]
     return QoSProfile(
@@ -163,6 +190,9 @@ class EvalConfig:
     record_sensors: bool = False
     scoring: str = "configs/eval/scoring_lb20.yaml"
     traffic_seed: int = 0
+    render: str = "incidents"  # off | incidents | full (docs/02 §8)
+    render_stride: int = 10
+    incident_window: tuple[int, int] = (40, 20)
 
     @classmethod
     def from_profile(cls, profile: dict[str, Any]) -> EvalConfig:
@@ -170,6 +200,9 @@ class EvalConfig:
         ev = profile.get("eval", {}) or {}
         carla_cfg = profile.get("carla", {}) or {}
         traffic = carla_cfg.get("traffic", {}) or {}
+        window = list(ev.get("incident_window", (40, 20)) or (40, 20))
+        if len(window) != 2:
+            window = [40, 20]
         return cls(
             host=str(carla_cfg.get("host", "localhost")),
             port=int(carla_cfg.get("port", 2000)),
@@ -177,6 +210,9 @@ class EvalConfig:
             record_sensors=bool(ev.get("record_sensors", False)),
             scoring=str(ev.get("scoring", "configs/eval/scoring_lb20.yaml")),
             traffic_seed=int(traffic.get("seed", 0)),
+            render=str(ev.get("render", "incidents")),
+            render_stride=int(ev.get("render_stride", 10)),
+            incident_window=(int(window[0]), int(window[1])),
         )
 
 
@@ -195,6 +231,9 @@ class _Trace:
     timeouts: int = 0
     first_timeout_tick: int = -1
     degraded: list[str] = field(default_factory=list)
+    events: list[tuple[int, str]] = field(
+        default_factory=list
+    )  # (tick, kind) of docs/02 §8.2
     agents: dict[int, dict[str, float]] = field(default_factory=dict)
     visible_ids: set[int] = field(default_factory=set)
 
@@ -338,6 +377,7 @@ class RouteRunnerNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (0
         if k < self._episode_k:
             return
         self._trace.timeouts += 1
+        self._trace.events.append((k, "tick_timeout"))
         if self._trace.first_timeout_tick < 0:
             self._trace.first_timeout_tick = k - self._episode_k
 
@@ -345,18 +385,25 @@ class RouteRunnerNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (0
         if tick_index(msg.header.stamp) < self._episode_k:
             return
         warn = int(msg.status) != NodeDiag.STATUS_OK
+        k = tick_index(msg.header.stamp)
         if name == "planner_node":
             self._trace.planner_ms.append(float(msg.cycle_ms))
         elif name == "safety_layer_node" and warn:
             self._trace.safety_interventions += 1
+            if msg.message.startswith("intervened"):
+                self._trace.events.append((k, "safety_intervention"))
         elif name == "mpc_node" and warn:
             self._trace.mpc_failures += 1
+            self._trace.events.append((k, "mpc_failure"))
         # A degradation is latched by a tick timeout (docs/02 §2); the safety
         # layer's one-tick "missing" note at the episode start is not one.
         if self._trace.timeouts > 0 and "degraded" in msg.message:
             tag = f"{name}:{msg.message.split(';')[-1].strip()[:40]}"
             if tag not in self._trace.degraded:
                 self._trace.degraded.append(tag)
+                self._trace.events.append(
+                    (k, f"degraded_{degraded_source(name, msg.message)}")
+                )
 
     # ---------------------------------------------------------------- driver
     def _spin_until(self, done: Callable[[], bool], wait_s: float) -> bool:
@@ -624,6 +671,7 @@ class RouteRunnerNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (0
         result.first_timeout_tick = tr.first_timeout_tick
         result.degraded_sources = ";".join(tr.degraded)
         result.non_deterministic = tr.timeouts > 0
+        result.incidents = sorted({*result.incidents, *tr.events})
 
     def _write_trace(self, route_dir: Path) -> None:
         tr = self._trace

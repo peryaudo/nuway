@@ -167,8 +167,8 @@ PredictionSet ConstVel(const std::vector<AgentState>& agents, int samples,
       for (int t = 0; t < 16; ++t) {
         const double dt = 0.5 * (t + 1);
         set.xy.push_back(a.pose.x + (f * a.vx_mps * dt));
-        set.xy.push_back(a.pose.y);
-        set.yaw.push_back(0.0);
+        set.xy.push_back(a.pose.y + (f * a.vy_mps * dt));
+        set.yaw.push_back(a.pose.yaw);
       }
     }
   }
@@ -204,6 +204,53 @@ TEST(CollisionCheckerTest, StaticObstacleAheadCollidesAtTheRightTime) {
       checker.Check(Straight(10.0), agents, PredictionSet{});
   EXPECT_TRUE(absent.collides());
   EXPECT_NEAR(absent.min_ttc_s, 3.5, 1e-12);
+}
+
+TEST(CollisionCheckerTest, SameLaneFollowersAreSkipped) {
+  const CollisionChecker checker{CollisionOptions{}};
+  // A faster car 10 m behind in the lane: its prediction reaches the ego's
+  // rear within 2 s, but it is the follower's gap to keep.
+  const std::vector<AgentState> behind = {Car(1, -10.0, 0.0, 15.0)};
+  const Trajectory ego = Straight(10.0);
+  EXPECT_TRUE(checker.IsFollower(ego, behind[0]));
+  EXPECT_FALSE(checker.Check(ego, behind, ConstVel(behind, 1, 1.0)).collides());
+  // The same car in the next lane is not a follower: a lane change into it
+  // must still be caught.
+  std::vector<AgentState> beside = behind;
+  beside[0].pose.y = 3.5;
+  EXPECT_FALSE(checker.IsFollower(ego, beside[0]));
+  // Nor is an oncoming car behind the ego (heading flipped), nor one
+  // whose box centre is level with the ego's rear bumper.
+  std::vector<AgentState> oncoming = behind;
+  oncoming[0].pose.yaw = kPi;
+  EXPECT_FALSE(checker.IsFollower(ego, oncoming[0]));
+  std::vector<AgentState> level = behind;
+  level[0].pose.x = -1.0;
+  EXPECT_FALSE(checker.IsFollower(ego, level[0]));
+  // A car behind in the next lane that cuts into the ego's lane (heading
+  // 20 degrees toward it) is not a follower at t = 0, but its prediction
+  // meets the ego's rear: a rear-end, not a collision of the ego's.
+  std::vector<AgentState> merging = behind;
+  merging[0].pose = SE2{-8.0, 3.5, -0.35};
+  merging[0].vx_mps = 15.0 * std::cos(-0.35);
+  merging[0].vy_mps = 15.0 * std::sin(-0.35);
+  EXPECT_FALSE(checker.IsFollower(ego, merging[0]));
+  EXPECT_FALSE(
+      checker.Check(ego, merging, ConstVel(merging, 1, 1.0)).collides());
+  // The same car ahead of the ego, cutting in, is the ego's problem.
+  std::vector<AgentState> cutting = merging;
+  cutting[0].pose = SE2{12.0, 3.5, -0.35};
+  cutting[0].vx_mps = 5.0 * std::cos(-0.35);
+  cutting[0].vy_mps = 5.0 * std::sin(-0.35);
+  EXPECT_TRUE(
+      checker.Check(ego, cutting, ConstVel(cutting, 1, 1.0)).collides());
+  // The option turns the rule off.
+  CollisionOptions strict;
+  strict.ignore_followers = false;
+  const CollisionChecker all{strict};
+  EXPECT_FALSE(all.IsFollower(ego, behind[0]));
+  EXPECT_TRUE(all.Check(ego, behind, ConstVel(behind, 1, 1.0)).collides());
+  EXPECT_TRUE(all.Check(ego, merging, ConstVel(merging, 1, 1.0)).collides());
 }
 
 TEST(CollisionCheckerTest, SampleWeightsAndMovingAgents) {

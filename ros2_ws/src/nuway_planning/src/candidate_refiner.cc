@@ -1,6 +1,7 @@
 #include "nuway_planning/candidate_refiner.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <optional>
@@ -70,7 +71,8 @@ double LatticeDAt(const Candidate& c, double s) {
 }
 
 // Rebuilds the candidate's Cartesian samples from its Frenet samples.
-void RebuildTrajectory(const RouteLine& route, Candidate* c) {
+void RebuildTrajectory(const RouteLine& route, const LatticeLimits& limits,
+                       Candidate* c) {
   for (std::size_t i = 0; i < c->frenet.size(); ++i) {
     const CartesianState cart = route.line().ToCartesianState(c->frenet[i]);
     nuway_common::TrajectoryPoint& p = c->trajectory[i];
@@ -78,8 +80,10 @@ void RebuildTrajectory(const RouteLine& route, Candidate* c) {
     p.y = cart.y;
     p.yaw = cart.yaw;
     p.v = cart.v;
-    p.a = cart.a;
-    p.kappa = cart.kappa;
+    // The QP holds its bounds only to tolerance (eps 1e-2): clip the
+    // overshoot here so the safety layer's limits step does not count it.
+    p.a = std::clamp(cart.a, limits.a_min_mps2, limits.a_max_mps2);
+    p.kappa = std::clamp(cart.kappa, -limits.kappa_phys, limits.kappa_phys);
   }
 }
 
@@ -115,6 +119,7 @@ CandidateRefiner::CandidateRefiner(RefinerOptions options, LatticeLimits limits,
     : options_(options),
       limits_(limits),
       collision_(collision),
+      checker_(collision),
       path_qp_(options.qp),
       speed_qp_(options.qp) {}
 
@@ -183,7 +188,11 @@ RefineOutcome CandidateRefiner::Refine(const SceneInput& in,
     // path passes them, over the s interval their footprint (plus the
     // ego's own length and the margins) occupies.
     for (const AgentState& agent : in.agents) {
-      if (agent.speed_mps() >= options_.static_speed_mps) {
+      if (agent.speed_mps() >= options_.static_speed_mps ||
+          checker_.IsFollower(c->trajectory, agent)) {
+        // A stopped follower's inflated box reaches past the first knot
+        // (a lead that closed up behind the ego at a queue) and would
+        // relax every path QP, leaving the injected stop the only choice.
         continue;
       }
       const std::optional<nuway_common::FrenetPoint> f =
@@ -220,7 +229,11 @@ RefineOutcome CandidateRefiner::Refine(const SceneInput& in,
         }
       }
     }
+    const auto t0 = std::chrono::steady_clock::now();
     const PiecewiseJerkSolution sol = path_qp_.Solve(p);
+    out.solve_ms += std::chrono::duration<double, std::milli>(
+                        std::chrono::steady_clock::now() - t0)
+                        .count();
     out.path = sol.outcome;
     out.path_iterations = sol.iterations;
     if (sol.outcome == QpOutcome::kFailed) {
@@ -280,24 +293,72 @@ RefineOutcome CandidateRefiner::Refine(const SceneInput& in,
     index.push_back(in.predictions.IndexOf(agent.id));
   }
   const int samples = std::max(1, in.predictions.num_samples);
+  const double horizon_s = c->trajectory.empty() ? 0.0 : c->trajectory.back().t;
+  const double ego_x = c->trajectory.empty() ? 0.0 : c->trajectory.front().x;
+  const double ego_y = c->trajectory.empty() ? 0.0 : c->trajectory.front().y;
   for (std::size_t a = 0; a < in.agents.size(); ++a) {
     const AgentState& agent = in.agents[a];
-    if (agent.speed_mps() < options_.static_speed_mps) {
-      continue;  // bounded laterally by the path QP
+    if (checker_.IsFollower(c->trajectory, agent)) {
+      continue;  // a follower keeps its own gap
     }
-    for (int s = 0; s < samples; ++s) {
+    // A static agent is bounded laterally by the path QP above; where the
+    // path still runs through it (a stopped lead in a single lane) the
+    // box below bounds s too, else the speed QP, tracking the decision's
+    // target speed, would drive the profile into it (task 17: the refined
+    // top-K all collided behind a lead at a red light and the hard stop
+    // was selected at 8.6 m/s).
+    // Out of reach over the horizon (both boxes at full speed toward each
+    // other, plus the box extents): no knot can touch it, and the 81
+    // projections per agent are what a 50-vehicle town costs (task 17).
+    const double reach = (horizon_s * agent.speed_mps()) + (s_final - ego.s) +
+                         agent.length_m + limits_.ego_front_m + ego_rear +
+                         (2.0 * collision_.margin_lon_m) + half_width +
+                         collision_.margin_lat_m + collision_.agent_margin_m;
+    if (std::hypot(agent.pose.x - ego_x, agent.pose.y - ego_y) > reach) {
+      continue;
+    }
+    // A static agent sits at one pose for every knot and sample: project
+    // it once (81 projections per agent per candidate were the cost of a
+    // town with 50 parked and queued vehicles, task 17).
+    const bool static_agent = agent.speed_mps() < options_.static_speed_mps;
+    const std::optional<nuway_common::FrenetPoint> static_f =
+        static_agent ? route.Project(agent.pose.x, agent.pose.y, 20.0, ego.s,
+                                     40.0, s_final - ego.s + 60.0)
+                     : std::nullopt;
+    if (static_agent && !static_f.has_value()) {
+      continue;
+    }
+    const int agent_samples = static_agent ? 1 : samples;
+    for (int s = 0; s < agent_samples; ++s) {
       const int idx = s < in.predictions.num_samples ? index[a] : -1;
       // The homotopy is fixed where the box first touches the path: the
       // lattice profile behind it then stays behind (upper bounds), ahead
       // stays ahead (lower bounds). Deciding per knot would let a profile
       // that grazes a slower agent late in the horizon ask for both.
-      int side = 0;
+      // Boxes are built at every kProjectStride-th knot (0.5 s, the
+      // prediction's own step) and the knots between two built ones take
+      // the union of both: conservative, and a fifth of the projections
+      // (the moving agents within reach were the cycle's cost, task 17).
+      constexpr std::size_t kProjectStride = 5;
+      struct Box {
+        double s_lo = 0.0;
+        double s_hi = 0.0;
+        double s_agent = 0.0;
+        bool aligned = false;  // heading within the follower cone
+      };
+      std::vector<std::optional<Box>> boxes(frenet.size());
       for (std::size_t i = 0; i < frenet.size(); ++i) {
+        if (i % kProjectStride != 0 && i + 1 != frenet.size()) {
+          continue;
+        }
         const double t = c->trajectory[i].t;
         const nuway_common::SE2 pose =
-            AgentPoseAt(agent, in.predictions, idx, s, t);
+            static_agent ? agent.pose
+                         : AgentPoseAt(agent, in.predictions, idx, s, t);
         const std::optional<nuway_common::FrenetPoint> f =
-            route.Project(pose.x, pose.y, 20.0, frenet[i].s, 40.0, 60.0);
+            static_agent
+                ? static_f
+                : route.Project(pose.x, pose.y, 20.0, frenet[i].s, 40.0, 60.0);
         if (!f.has_value()) {
           continue;
         }
@@ -321,11 +382,43 @@ RefineOutcome CandidateRefiner::Refine(const SceneInput& in,
                                            collision_.margin_lat_m) {
           continue;  // beside the path at this time
         }
-        const double s_lo = f->s - along - collision_.agent_margin_m -
-                            limits_.ego_front_m - collision_.margin_lon_m;
-        const double s_hi = f->s + along + collision_.agent_margin_m +
-                            ego_rear + collision_.margin_lon_m;
+        Box box;
+        box.s_lo = f->s - along - collision_.agent_margin_m -
+                   limits_.ego_front_m - collision_.margin_lon_m;
+        box.s_hi = f->s + along + collision_.agent_margin_m + ego_rear +
+                   collision_.margin_lon_m;
+        box.s_agent = f->s;
+        box.aligned = std::cos(rel) > collision_.follower_cos_min;
+        boxes[i] = box;
+      }
+      // The homotopy is fixed where the box first touches the path: the
+      // lattice profile behind it then stays behind (upper bounds), ahead
+      // stays ahead (lower bounds). Deciding per knot would let a profile
+      // that grazes a slower agent late in the horizon ask for both.
+      int side = 0;
+      for (std::size_t i = 0; i < frenet.size(); ++i) {
+        const std::size_t i0 = (i / kProjectStride) * kProjectStride;
+        const std::size_t i1 = std::min(i0 + kProjectStride, frenet.size() - 1);
+        const std::optional<Box>& b0 = boxes[i0];
+        const std::optional<Box>& b1 = boxes[i1];
+        if (!b0.has_value() && !b1.has_value()) {
+          continue;
+        }
+        const Box& first = b0.has_value() ? *b0 : *b1;
+        double s_lo = first.s_lo;
+        double s_hi = first.s_hi;
+        if (b0.has_value() && b1.has_value()) {
+          s_lo = std::min(b0->s_lo, b1->s_lo);
+          s_hi = std::max(b0->s_hi, b1->s_hi);
+        }
         if (side == 0) {
+          // The rear-end exemption of the collision checker: a box that
+          // first meets the path from behind the ego, heading along it,
+          // is a follower's (a car turning in behind the ego) and bounds
+          // nothing; else the profile's side of the box is fixed here.
+          if (first.s_agent < frenet[i].s && first.aligned) {
+            break;
+          }
           side = frenet[i].s < s_hi ? -1 : 1;
         }
         if (side < 0) {
@@ -356,7 +449,11 @@ RefineOutcome CandidateRefiner::Refine(const SceneInput& in,
       return out;
     }
   }
+  const auto t0 = std::chrono::steady_clock::now();
   const PiecewiseJerkSolution sol = speed_qp_.Solve(q);
+  out.solve_ms += std::chrono::duration<double, std::milli>(
+                      std::chrono::steady_clock::now() - t0)
+                      .count();
   out.speed = sol.outcome;
   out.speed_iterations = sol.iterations;
   if (sol.outcome == QpOutcome::kFailed) {
@@ -376,7 +473,7 @@ RefineOutcome CandidateRefiner::Refine(const SceneInput& in,
     }
   }
   c->frenet = std::move(frenet);
-  RebuildTrajectory(route, c);
+  RebuildTrajectory(route, limits_, c);
   c->refined = true;
   c->qp_relaxed =
       out.path == QpOutcome::kRelaxed || out.speed == QpOutcome::kRelaxed;

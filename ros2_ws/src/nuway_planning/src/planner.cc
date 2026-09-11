@@ -1,7 +1,9 @@
 #include "nuway_planning/planner.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstddef>
+#include <cstdio>
 #include <map>
 #include <numeric>
 #include <optional>
@@ -26,6 +28,26 @@ void Planner::Reset() {
   previous_.reset();
 }
 
+namespace {
+
+// Wall-clock laps for the cycle breakdown (steady clock, milliseconds).
+class Stopwatch {
+ public:
+  Stopwatch() : last_(std::chrono::steady_clock::now()) {}
+  double Lap() {
+    const auto now = std::chrono::steady_clock::now();
+    const double ms =
+        std::chrono::duration<double, std::milli>(now - last_).count();
+    last_ = now;
+    return ms;
+  }
+
+ private:
+  std::chrono::steady_clock::time_point last_;
+};
+
+}  // namespace
+
 PlanResult Planner::Plan(const SceneInput& in,
                          const std::optional<BehaviorOutput>& decision) {
   PlanResult out;
@@ -36,8 +58,15 @@ PlanResult Planner::Plan(const SceneInput& in,
     return out;
   }
   const RouteLine& route = *in.route;
+  // The profiles continue from the measured acceleration; one past the caps
+  // (CARLA's differenced velocity spikes at a gear change) would start
+  // every candidate outside the "accel" filter and reject the whole lattice
+  // for that tick (task 17), so it is clamped to the limits first.
+  EgoObs ego_obs = in.ego;
+  ego_obs.ax_mps2 = std::clamp(ego_obs.ax_mps2, options_.limits.a_min_mps2,
+                               options_.limits.a_max_mps2);
   const std::optional<nuway_common::FrenetState> ego = EgoFrenetState(
-      in.ego, route, options_.lattice, options_.limits.wheelbase_m, s_hint_);
+      ego_obs, route, options_.lattice, options_.limits.wheelbase_m, s_hint_);
   if (!ego.has_value()) {
     out.no_input = true;
     out.message = "ego off the route line";
@@ -50,14 +79,15 @@ PlanResult Planner::Plan(const SceneInput& in,
 
   // 1. Sample: the decision's lattice, or the injected pair alone.
   out.used_decision = decision.has_value() && decision->reason != "no_input";
+  Stopwatch watch;
   std::vector<Candidate> set = out.used_decision
                                    ? sampler_.Sample(in, *ego, *decision)
                                    : sampler_.SampleInjected(in, *ego, 0);
   out.sampled = static_cast<int>(set.size());
-
-  // 2. Filter: kinematics and bounds, then collision (normal candidates
-  // only; the injected pair is scored but never rejected, §3.3).
+  // 2. Filter: kinematics and bounds (the injected pair is scored but never
+  // rejected, §3.3), then collision, normal candidates only.
   sampler_.Filter(route, &set);
+  out.sample_ms = watch.Lap();
   std::vector<CollisionResult> collisions(set.size());
   for (std::size_t i = 0; i < set.size(); ++i) {
     Candidate& c = set[i];
@@ -69,6 +99,7 @@ PlanResult Planner::Plan(const SceneInput& in,
       c.reject = "collision";
     }
   }
+  out.check_ms = watch.Lap();
 
   // 3. Score everything that survived (the pre-QP rule cost).
   SelectorContext ctx;
@@ -107,9 +138,13 @@ PlanResult Planner::Plan(const SceneInput& in,
   const std::size_t k = std::min(
       feasible.size(), static_cast<std::size_t>(std::max(0, options_.top_k)));
   std::string qp_messages;
+  watch.Lap();  // the scoring above counts with the check
   for (std::size_t r = 0; r < k; ++r) {
     Candidate& c = set[feasible[r]];
     const RefineOutcome outcome = refiner_.Refine(in, *ego, &c);
+    out.path_iterations += outcome.path_iterations;
+    out.speed_iterations += outcome.speed_iterations;
+    out.solve_ms += outcome.solve_ms;
     if (outcome.refined()) {
       ++out.refined;
       collisions[feasible[r]] =
@@ -135,6 +170,7 @@ PlanResult Planner::Plan(const SceneInput& in,
     }
     selector_.Score(collisions[feasible[r]], ctx, &c);
   }
+  out.refine_ms = watch.Lap();
 
   // 5. Select among the refined and the injected; assemble the published
   // list: those first by cost, then the best of the rest.
@@ -194,6 +230,14 @@ PlanResult Planner::Plan(const SceneInput& in,
     out.message += "; qp failed: " + qp_messages;
   }
   out.message += reject_summary;
+  out.select_ms = watch.Lap();
+  char timing[128];
+  std::snprintf(timing, sizeof(timing),
+                "; t[ms] sample %.1f check %.1f refine %.1f (solve %.1f) "
+                "select %.1f; qp iters path %d speed %d",
+                out.sample_ms, out.check_ms, out.refine_ms, out.solve_ms,
+                out.select_ms, out.path_iterations, out.speed_iterations);
+  out.message += timing;
   return out;
 }
 

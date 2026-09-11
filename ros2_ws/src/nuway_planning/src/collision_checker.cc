@@ -16,6 +16,7 @@ using nuway_common::AgentState;
 using nuway_common::PredictionSet;
 using nuway_common::SE2;
 using nuway_common::Trajectory;
+using nuway_common::TrajectoryPoint;
 
 // Half the diagonal: the radius of the circle bounding the box, for the
 // cheap rejection before the SAT.
@@ -144,6 +145,39 @@ OrientedBox CollisionChecker::EgoBoxAt(const Trajectory& trajectory, double t,
   return box;
 }
 
+bool CollisionChecker::IsFollower(const Trajectory& trajectory,
+                                  const AgentState& agent) const {
+  if (!options_.ignore_followers || trajectory.empty()) {
+    return false;
+  }
+  // The agent's box centre in the ego frame of the first point (base_link,
+  // x forward): behind the rear bumper, inside the lane corridor, aligned.
+  const TrajectoryPoint& p = trajectory.front();
+  const double c = std::cos(p.yaw);
+  const double s = std::sin(p.yaw);
+  const double dx = agent.pose.x - p.x;
+  const double dy = agent.pose.y - p.y;
+  const double lon = (c * dx) + (s * dy);
+  const double lat = (-s * dx) + (c * dy);
+  const double rear_m =
+      options_.ego_center_offset_m - (0.5 * options_.ego_length_m);
+  const double heading_cos = std::cos(agent.pose.yaw - p.yaw);
+  return lon < rear_m && std::abs(lat) < options_.follower_lat_m &&
+         heading_cos > options_.follower_cos_min;
+}
+
+bool CollisionChecker::IsRearEnd(const OrientedBox& ego,
+                                 const OrientedBox& agent) const {
+  if (!options_.ignore_followers) {
+    return false;
+  }
+  const Eigen::Vector2d d = agent.center - ego.center;
+  const double lon =
+      (std::cos(ego.yaw_rad) * d.x()) + (std::sin(ego.yaw_rad) * d.y());
+  return lon < 0.0 &&
+         std::cos(agent.yaw_rad - ego.yaw_rad) > options_.follower_cos_min;
+}
+
 CollisionResult CollisionChecker::Check(
     const Trajectory& trajectory, const std::vector<AgentState>& agents,
     const PredictionSet& predictions) const {
@@ -173,8 +207,30 @@ CollisionResult CollisionChecker::Check(
   // Agent index in the set, -1 when absent (static at the observed pose).
   std::vector<int> index;
   index.reserve(agents.size());
+  std::vector<bool> skip;
+  skip.reserve(agents.size());
+  // Reach test: the farthest point of the trajectory from its start plus
+  // what the agent can cover over the horizon and both boxes' extents; an
+  // agent farther than that is skipped outright (a town with 50 vehicles
+  // would otherwise cost every candidate 17 x 50 box tests, task 17).
+  double sweep = 0.0;
+  for (const TrajectoryPoint& p : trajectory) {
+    sweep = std::max(sweep, std::hypot(p.x - trajectory.front().x,
+                                       p.y - trajectory.front().y));
+  }
+  const double ego_extent =
+      options_.ego_center_offset_m + (0.5 * options_.ego_length_m) +
+      options_.margin_lon_m + (0.5 * options_.ego_width_m) +
+      options_.margin_lat_m;
   for (const AgentState& agent : agents) {
     index.push_back(predictions.IndexOf(agent.id));
+    const double reach = sweep + ego_extent +
+                         (options_.horizon_s * agent.speed_mps()) +
+                         (0.5 * std::hypot(agent.length_m, agent.width_m)) +
+                         options_.agent_margin_m;
+    const double dist = std::hypot(agent.pose.x - trajectory.front().x,
+                                   agent.pose.y - trajectory.front().y);
+    skip.push_back(dist > reach || IsFollower(trajectory, agent));
   }
   double colliding_weight = 0.0;
   for (int s = 0; s < samples; ++s) {
@@ -184,6 +240,9 @@ CollisionResult CollisionChecker::Check(
       const OrientedBox ego = EgoBoxAt(trajectory, t, true);
       const OrientedBox ego_raw = EgoBoxAt(trajectory, t, false);
       for (std::size_t a = 0; a < agents.size(); ++a) {
+        if (skip[a]) {
+          continue;
+        }
         const bool in_set = index[a] >= 0 && s < predictions.num_samples;
         const OrientedBox box =
             AgentBoxAt(agents[a], predictions, in_set ? index[a] : -1, s, t,
@@ -196,7 +255,7 @@ CollisionResult CollisionChecker::Check(
           result.min_distance_m[k] =
               std::min(result.min_distance_m[k], DiscDistance(ego_raw, raw));
         }
-        if (BoxesOverlap(ego, box)) {
+        if (BoxesOverlap(ego, box) && !IsRearEnd(ego, box)) {
           sample_collides = true;
           result.min_ttc_s = std::min(result.min_ttc_s, t);
         }

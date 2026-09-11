@@ -172,6 +172,7 @@ class BehaviorFsmNode final : public rclcpp::Node {
         d("crossing_angle_rad", o.crossing_angle_rad, "crossing angle");
     o.yield_stop_back_m =
         d("yield_stop_back_m", o.yield_stop_back_m, "yield stop back");
+    o.yield_hold_s = d("yield_hold_s", o.yield_hold_s, "yield hysteresis");
     o.speed.a_lat_max_mps2 =
         d("a_lat_max_mps2", o.speed.a_lat_max_mps2, "lateral accel bound");
     o.speed.plan_decel_mps2 =

@@ -11,7 +11,7 @@ behavior_fsm_node:
     abort_gap_m: 8.0                # ... unless a target-lane agent gets this close
     follow_range_m: 60.0            # lead search ahead
     lane_slack_m: 0.5               # lane band: half width + slack
-    idm_s0_m: 2.0                   # IDM jam distance (M1 §3.2)
+    idm_s0_m: 4.0                   # IDM jam distance; above the safety layer's 2.4 m standoff (task 17)
     idm_t_s: 1.5                    # IDM time headway
     idm_a_mps2: 1.5                 # IDM max acceleration
     idm_b_mps2: 2.5                 # IDM comfortable deceleration
@@ -31,6 +31,7 @@ behavior_fsm_node:
     yield_time_margin_s: 1.5        # the agent must clear this long before us
     crossing_angle_rad: 0.5         # heading off the line by more: crossing traffic
     yield_stop_back_m: 3.0          # stop_s = s_conflict - this
+    yield_hold_s: 1.0               # a yield holds its stop at least this long (task 17)
     a_lat_max_mps2: 2.0             # curvature speed bound sqrt(a_lat_max / |kappa|)
     plan_decel_mps2: 2.0            # braking assumed on the approach to a bound
     curvature_horizon_m: 60.0       # floor of the speed-profile look-ahead
@@ -44,7 +45,7 @@ behavior_fsm_node:
 planner_node:
   ros__parameters:
     vehicle: configs/vehicle/lincoln_mkz_2020.yaml  # kappa_phys, footprint, limits (profile: vehicle)
-    top_k: 8                        # candidates refined by the QPs (M1 §3.5)
+    top_k: 3                        # candidates refined by the QPs (8 in M1 §3.5; 3 for the 15 ms budget, task 17)
     publish_max_candidates: 32      # candidates in /nuway/planning/candidates (viz)
     rule_selector:                  # the cost table of M1 §3.6
       w_collision: 1000.0
@@ -57,12 +58,14 @@ planner_node:
       w_rule: 500.0
       w_consistency: 3.0
       w_qp_relaxed: 30.0
-    collision:
-      margin_lon_m: 1.0             # ego inflation front and rear (M1 §3.4)
-      margin_lat_m: 0.4             # ego inflation each side
+    collision:                      # the safety layer's margins (task 17): a plan it would veto is never selected
+      margin_lon_m: 2.0             # ego inflation front and rear
+      margin_lat_m: 0.3             # ego inflation each side: 0.3 + 0.2 lets a 3.9 m truck pass in the next lane
       agent_margin_m: 0.2           # agent inflation all round
     lattice:
       a_gentle_mps2: 1.5            # the injected gentle stop (M1 §3.3)
+      idm_s0_m: 4.0                 # gap-keeping candidate: s0 + T v_lead (matches the FSM)
+      idm_t_s: 1.5
       ds_speed_factor_s: 3.0        # path length ds = max(ds, factor * v)
       curvature_cap_factor: 0.9     # keep targets aim at this fraction of a_lat_max through the bends they reach
       projection_max_dist_m: 5.0    # farther off the line: no-input output
@@ -75,17 +78,19 @@ planner_node:
       w_a: 5.0                      # speed: acceleration
       w_j: 10.0                     # speed: jerk
       w_s: 0.1                      # speed: lattice s(t) tracking
-      max_iter: 2000                # fixed OSQP budget (M1 §5)
+      max_iter: 150                 # fixed OSQP budget (M1 §5; 2000 in the library: at eps 1e-2 a solve converges in < 40 iterations at p90 and one past 150 is the ill-conditioned case, task 17)
       rho: 1.0                      # fixed ADMM step (adaptive_rho off, M1 §5)
+      eps_abs: 1.0e-2               # tolerances (1e-4 in the library; a refined shape needs no more, task 17)
+      eps_rel: 1.0e-2
       slack_weight: 10000.0         # bound relaxation weight
-      static_speed_mps: 0.5         # slower agents bound the path, faster the speed
+      static_speed_mps: 0.5         # slower agents bound the path laterally (and s where the path still runs through them), faster ones the speed
 
 safety_layer_node:
   ros__parameters:
     vehicle: configs/vehicle/lincoln_mkz_2020.yaml  # footprint, limits, kappa_phys (profile: vehicle)
-    margin_lon_m: 2.0               # twice the planner's (M1 §3.7 step 2)
-    margin_lat_m: 0.8
-    agent_margin_m: 0.4
+    margin_lon_m: 2.0               # M1 §3.7 step 2 (the planner uses the same since task 17)
+    margin_lat_m: 0.3               # 0.8 in §3.7 vetoed every oncoming truck in the next lane (task 17)
+    agent_margin_m: 0.2
     collision_horizon_s: 3.0        # the check covers the first seconds
     occupancy_threshold: 0.6        # `occupied` above this is a hit (step 4)
     occupancy_horizon_s: 3.0

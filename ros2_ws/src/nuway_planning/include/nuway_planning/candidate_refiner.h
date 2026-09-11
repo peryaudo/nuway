@@ -28,15 +28,16 @@ namespace nuway_planning {
 
 struct RefinerOptions {
   double path_ds_m = 1.0;
-  double w_d = 1.0;               // path: tracking of the lattice d
-  double w_dd = 50.0;             // path: d'' (curvature) penalty
-  double w_ddd = 500.0;           // path: d''' penalty
-  double w_end = 10.0;            // path: end offset tracking
-  double w_v = 1.0;               // speed: tracking of the target speed
-  double w_a = 5.0;               // speed: acceleration penalty
-  double w_j = 10.0;              // speed: jerk penalty
-  double w_s = 0.1;               // speed: tracking of the lattice s(t)
-  double static_speed_mps = 0.5;  // slower agents bound the path laterally
+  double w_d = 1.0;      // path: tracking of the lattice d
+  double w_dd = 50.0;    // path: d'' (curvature) penalty
+  double w_ddd = 500.0;  // path: d''' penalty
+  double w_end = 10.0;   // path: end offset tracking
+  double w_v = 1.0;      // speed: tracking of the target speed
+  double w_a = 5.0;      // speed: acceleration penalty
+  double w_j = 10.0;     // speed: jerk penalty
+  double w_s = 0.1;      // speed: tracking of the lattice s(t)
+  double static_speed_mps =
+      0.5;  // slower agents bound the path laterally (and s through them)
   double jerk_max_mps3 = 5.0;
   double min_curvature_budget = 0.02;  // floor of kappa_phys - |kappa_ref|
   QpSettings qp;
@@ -49,6 +50,7 @@ struct RefineOutcome {
   bool path_skipped = false;  // too short a candidate for a path QP
   int path_iterations = 0;    // OSQP iterations (the task 17 tuning note)
   int speed_iterations = 0;
+  double solve_ms = 0.0;  // wall clock inside the two OSQP solves
   std::string message;
 
   bool refined() const { return speed != QpOutcome::kFailed; }
@@ -78,6 +80,7 @@ class CandidateRefiner {
   RefinerOptions options_;
   LatticeLimits limits_;
   CollisionOptions collision_;
+  CollisionChecker checker_;  // the follower rule of the boxes (task 17)
   PiecewiseJerkQp path_qp_;
   PiecewiseJerkQp speed_qp_;
 };

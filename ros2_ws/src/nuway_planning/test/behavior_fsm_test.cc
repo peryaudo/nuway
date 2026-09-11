@@ -234,10 +234,21 @@ TEST(BehaviorFsmTest, CrossingAgentAheadMeansYield) {
   EXPECT_NEAR(out.stop_s, 47.0, 0.6);  // conflict at ~50, minus 3
   EXPECT_EQ(out.reason, "yield:agent9");
   // The same car far ahead in time (already past the lane at t = 0.5 s
-  // after starting below the lane): no conflict.
+  // after starting below the lane): no conflict, but the yield is held for
+  // yield_hold_s at the same stop before the decision returns to free.
   in.agents = {Car(9, 50.0, -8.0, -kPi / 2.0, 6.0)};
   in.predictions = Predict(in.agents);
+  const BehaviorOutput held = fsm.Step(in);
+  EXPECT_EQ(held.longitudinal, Longitudinal::kYield);
+  EXPECT_NEAR(held.stop_s, out.stop_s, 1e-9);
+  EXPECT_EQ(held.reason, "yield:agent9(held)");
+  for (int i = 0; i < 8; ++i) {  // dt 0.1 s: ages 0.2 .. 0.9 s
+    EXPECT_EQ(fsm.Step(in).longitudinal, Longitudinal::kYield);
+  }
   EXPECT_EQ(fsm.Step(in).longitudinal, Longitudinal::kFree);
+  // A fresh machine sees no conflict at all.
+  BehaviorFsm fresh{BehaviorFsmOptions{}};
+  EXPECT_EQ(fresh.Step(in).longitudinal, Longitudinal::kFree);
 }
 
 TEST(BehaviorFsmTest, RouteOnTheNeighbourLaneRequestsAChange) {

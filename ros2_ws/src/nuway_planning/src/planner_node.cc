@@ -180,6 +180,9 @@ class PlannerNode final : public rclcpp::Node {
                                    o.collision.agent_margin_m, "agent margin");
     o.lattice.a_gentle_mps2 =
         d("lattice.a_gentle_mps2", o.lattice.a_gentle_mps2, "gentle stop");
+    o.lattice.idm_s0_m =
+        d("lattice.idm_s0_m", o.lattice.idm_s0_m, "IDM jam gap");
+    o.lattice.idm_t_s = d("lattice.idm_t_s", o.lattice.idm_t_s, "IDM headway");
     o.lattice.ds_speed_factor_s = d("lattice.ds_speed_factor_s",
                                     o.lattice.ds_speed_factor_s, "ds factor");
     o.lattice.curvature_cap_factor =
@@ -200,6 +203,8 @@ class PlannerNode final : public rclcpp::Node {
     r.qp.max_iter = nuway_common::DeclareParam<int>(
         this, "qp.max_iter", r.qp.max_iter, "OSQP iteration budget");
     r.qp.rho = d("qp.rho", r.qp.rho, "OSQP rho");
+    r.qp.eps_abs = d("qp.eps_abs", r.qp.eps_abs, "OSQP absolute tolerance");
+    r.qp.eps_rel = d("qp.eps_rel", r.qp.eps_rel, "OSQP relative tolerance");
     r.qp.slack_weight = d("qp.slack_weight", r.qp.slack_weight, "slack weight");
     r.static_speed_mps =
         d("qp.static_speed_mps", r.static_speed_mps, "static agent speed");

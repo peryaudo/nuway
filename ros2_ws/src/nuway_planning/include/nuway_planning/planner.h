@@ -49,6 +49,16 @@ struct PlanResult {
   int qp_relaxed = 0;  // refined through slack
   double ego_s = 0.0;
   double ego_d = 0.0;
+  // The cycle breakdown of the task 17 tuning note (milliseconds): the
+  // lattice sample + filter, every collision check, the K refinements (two
+  // QPs each plus the re-check), the scoring/selection/assembly.
+  int path_iterations = 0;   // OSQP iterations summed over the path QPs
+  int speed_iterations = 0;  // and the speed QPs
+  double solve_ms = 0.0;     // wall clock inside the OSQP solves (of refine_ms)
+  double sample_ms = 0.0;
+  double check_ms = 0.0;
+  double refine_ms = 0.0;
+  double select_ms = 0.0;
   std::string message;
 
   const Candidate* selected() const {

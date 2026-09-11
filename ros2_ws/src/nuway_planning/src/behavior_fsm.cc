@@ -35,6 +35,9 @@ void BehaviorFsm::Reset() {
   honoured_signs_.clear();
   dwelling_sign_ = 0;
   dwell_age_s_ = 0.0;
+  yield_age_s_ = 0.0;
+  yield_stop_s_.reset();
+  yield_reason_.clear();
 }
 
 std::uint32_t BehaviorFsm::EgoLane(const SceneInput& in, double s) const {
@@ -393,6 +396,9 @@ std::optional<double> BehaviorFsm::ConflictAhead(const SceneInput& in,
       if (t_agent > t_ego + options_.yield_time_margin_s) {
         continue;  // we clear the region before the agent gets there
       }
+      if (t_agent < t_ego - options_.yield_time_margin_s) {
+        continue;  // the agent is through the region before we arrive
+      }
       if (!best.has_value() || f->s < *best) {
         best = f->s;
         *reason = "yield:agent" + std::to_string(agent.id);
@@ -495,8 +501,24 @@ BehaviorOutput BehaviorFsm::Step(const SceneInput& in) {
     return out;
   }
   std::string yield_why;
-  const std::optional<double> conflict =
+  std::optional<double> conflict =
       ConflictAhead(in, s, v, half_width, &yield_why);
+  if (conflict.has_value()) {
+    yield_age_s_ = 0.0;
+    yield_stop_s_ = std::max(s, *conflict - options_.yield_stop_back_m);
+    yield_reason_ = yield_why;
+  } else if (yield_stop_s_.has_value()) {
+    // Hysteresis: hold the last yield until it has aged out or is behind.
+    yield_age_s_ += in.dt_s;
+    // The epsilon keeps ten 0.1 s ticks from summing to 0.999... s.
+    if (yield_age_s_ + 1e-9 < options_.yield_hold_s &&
+        *yield_stop_s_ >= s - 1.0) {
+      conflict = *yield_stop_s_ + options_.yield_stop_back_m;
+      yield_why = yield_reason_ + "(held)";
+    } else {
+      yield_stop_s_.reset();
+    }
+  }
   if (conflict.has_value()) {
     out.longitudinal = Longitudinal::kYield;
     out.stop_s = std::max(s, *conflict - options_.yield_stop_back_m);

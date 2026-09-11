@@ -54,6 +54,19 @@ struct CollisionOptions {
   // of the vehicle YAML, since the CARLA box is centred on the actor
   // origin.
   double ego_center_offset_m = 1.389;
+  // Rear-end exemption (task 17). A same-lane follower (behind the ego at
+  // t = 0, within follower_lat_m of the ego's axis, heading within
+  // acos(follower_cos_min) of the ego's) is skipped outright, and any
+  // overlap in which the agent's centre is behind the ego box's centre with
+  // its heading within the same cone is not a collision: the prediction of
+  // a faster car behind, or of one turning into the lane behind the ego,
+  // runs into the ego's rear, which no ego plan can avoid, and the follower
+  // keeps its own gap (the Traffic Manager does). A car in the next lane
+  // that the ego would change into is still caught: it hits the ego's
+  // flank ahead of the centre.
+  bool ignore_followers = true;
+  double follower_lat_m = 1.75;
+  double follower_cos_min = 0.25;
 
   static CollisionOptions FromVehicleModel(
       const nuway_control::VehicleModel& m);
@@ -78,6 +91,15 @@ struct CollisionResult {
 class CollisionChecker {
  public:
   explicit CollisionChecker(CollisionOptions options);
+
+  // Whether `agent` is a same-lane follower of the ego at the trajectory's
+  // first point (see CollisionOptions::ignore_followers).
+  bool IsFollower(const nuway_common::Trajectory& trajectory,
+                  const nuway_common::AgentState& agent) const;
+
+  // Whether an overlap of `ego` with `agent` is the agent running into the
+  // ego's rear (see CollisionOptions::ignore_followers).
+  bool IsRearEnd(const OrientedBox& ego, const OrientedBox& agent) const;
 
   // Checks one candidate trajectory (rear-axle poses over t) against the
   // agents and their predictions. An agent absent from the prediction set

@@ -20,6 +20,11 @@ using nuway_common::Trajectory;
 using nuway_common::TrajectoryPoint;
 
 constexpr double kEps = 1e-9;
+// Overshoots below these are the planner's own arithmetic (a hard stop's
+// -6.0012 after the Frenet-to-Cartesian rebuild, a QP at tolerance), clamped
+// without counting as an intervention (task 17).
+constexpr double kAccelTolerance = 2e-2;
+constexpr double kKappaTolerance = 1e-3;
 
 }  // namespace
 
@@ -188,7 +193,8 @@ bool SafetyLayer::EnforceLimits(Trajectory* traj) const {
     const double a = std::clamp(p.a, options_.a_min_mps2, options_.a_max_mps2);
     const double kappa =
         std::clamp(p.kappa, -options_.kappa_phys, options_.kappa_phys);
-    if (std::abs(a - p.a) > kEps || std::abs(kappa - p.kappa) > kEps) {
+    if (std::abs(a - p.a) > kAccelTolerance ||
+        std::abs(kappa - p.kappa) > kKappaTolerance) {
       clipped = true;
     }
     p.a = a;

@@ -100,6 +100,7 @@ struct BehaviorFsmOptions {
   double yield_time_margin_s = 1.5;  // agent must be clear this long before us
   double crossing_angle_rad = 0.5;   // heading off the line by more: crossing
   double yield_stop_back_m = 3.0;    // stop_s = s_conflict - this
+  double yield_hold_s = 1.0;  // a yield is kept at least this long (hysteresis)
   // Speed profile and projection.
   SpeedProfileOptions speed;
   double projection_max_dist_m = 5.0;
@@ -187,6 +188,12 @@ class BehaviorFsm {
   std::set<std::uint32_t> honoured_signs_;
   std::uint32_t dwelling_sign_ = 0;
   double dwell_age_s_ = 0.0;
+  // The yield latch: once a conflict is seen the decision holds its stop_s
+  // for yield_hold_s, so a crossing agent flickering at the edge of the
+  // prediction horizon does not flip free / yield every tick (task 17).
+  double yield_age_s_ = 0.0;
+  std::optional<double> yield_stop_s_;
+  std::string yield_reason_;
 };
 
 }  // namespace nuway_planning

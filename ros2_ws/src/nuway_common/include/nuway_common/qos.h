@@ -30,6 +30,12 @@ inline rclcpp::QoS Event() {
   return rclcpp::QoS(rclcpp::KeepLast(10)).reliable().transient_local();
 }
 
+// /clock: reliable, volatile, keep_last 1 (the publisher's profile; a node
+// subscribes only for the all-inputs-degraded case of docs/02 §2).
+inline rclcpp::QoS Clock() {
+  return rclcpp::QoS(rclcpp::KeepLast(1)).reliable().durability_volatile();
+}
+
 // /nuway/diag/**: reliable, volatile, keep_last 10.
 inline rclcpp::QoS Diag() {
   return rclcpp::QoS(rclcpp::KeepLast(10)).reliable().durability_volatile();

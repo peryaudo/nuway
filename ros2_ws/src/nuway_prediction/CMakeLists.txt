@@ -8,6 +8,7 @@ find_package(rclcpp REQUIRED)
 find_package(nuway_common REQUIRED)
 find_package(nuway_map REQUIRED)
 find_package(nuway_msgs REQUIRED)
+find_package(rosgraph_msgs REQUIRED)
 
 # Library: no rclcpp. Position independent because nuway_py binds it for
 # the M6 expert.
@@ -35,6 +36,7 @@ target_link_libraries(
         nuway_prediction_lib
         rclcpp::rclcpp
         ${nuway_msgs_TARGETS}
+        ${rosgraph_msgs_TARGETS}
         nuway_common::nuway_common_ros
 )
 nuway_target_defaults(const_vel_node)

@@ -15,6 +15,7 @@
   <depend>nuway_common</depend>
   <depend>nuway_map</depend>
   <depend>nuway_msgs</depend>
+  <depend>rosgraph_msgs</depend>
 
   <test_depend>ament_cmake_gtest</test_depend>
 

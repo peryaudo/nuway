@@ -9,6 +9,7 @@ find_package(nuway_common REQUIRED)
 find_package(nuway_control REQUIRED)
 find_package(nuway_map REQUIRED)
 find_package(nuway_msgs REQUIRED)
+find_package(rosgraph_msgs REQUIRED)
 find_package(osqp_eigen_vendor REQUIRED)
 
 # Library: no rclcpp. Position independent because nuway_py binds it for
@@ -54,6 +55,7 @@ foreach(node behavior_fsm_node planner_node safety_layer_node)
             nuway_planning_lib
             rclcpp::rclcpp
             ${nuway_msgs_TARGETS}
+            ${rosgraph_msgs_TARGETS}
             nuway_common::nuway_common_ros
     )
     nuway_target_defaults(${node})

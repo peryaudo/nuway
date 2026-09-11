@@ -93,6 +93,14 @@ class TickBarrier {
   }
 
   void Degrade(const std::string& input) { degraded_[input] = true; }
+
+  // True when no input is left to wait for: the node then acts on /clock
+  // (docs/02 §2 Degradation), since nothing else will arrive for a tick.
+  bool AllDegraded() const {
+    return std::all_of(
+        inputs_.begin(), inputs_.end(),
+        [this](const std::string& name) { return degraded_.at(name); });
+  }
   bool IsDegraded(const std::string& input) const {
     return degraded_.at(input);
   }

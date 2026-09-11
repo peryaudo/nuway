@@ -16,6 +16,7 @@
   <depend>nuway_control</depend>
   <depend>nuway_map</depend>
   <depend>nuway_msgs</depend>
+  <depend>rosgraph_msgs</depend>
   <depend>osqp_eigen_vendor</depend>
 
   <test_depend>ament_cmake_gtest</test_depend>

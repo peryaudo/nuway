@@ -21,6 +21,7 @@
 #include <vector>
 
 #include <rclcpp/rclcpp.hpp>
+#include <rosgraph_msgs/msg/clock.hpp>
 
 #include <nuway_common/agents.h>
 #include <nuway_common/diag.h>
@@ -122,6 +123,9 @@ class BehaviorFsmNode final : public rclcpp::Node {
         [this](const nuway_msgs::msg::TickTimeout& msg) {
           OnTickTimeout(msg);
         });
+    sub_clock_ = create_subscription<rosgraph_msgs::msg::Clock>(
+        nuway_common::kTopicClock, nuway_common::qos::Clock(),
+        [this](const rosgraph_msgs::msg::Clock& msg) { OnClock(msg); });
   }
 
  private:
@@ -289,6 +293,17 @@ class BehaviorFsmNode final : public rclcpp::Node {
     RCLCPP_INFO(get_logger(), "reset: episode %u", msg.episode_id);
   }
 
+  // With every per-tick input degraded nothing arrives for a tick, so the
+  // tick itself is the trigger (docs/02 §2 Degradation); Run() answers a
+  // tick once, which also absorbs CARLA's duplicate /clock.
+  void OnClock(const rosgraph_msgs::msg::Clock& msg) {
+    const std::int64_t k = nuway_common::TickIndex(msg.clock);
+    if (!Accepts(k) || !barrier_.AllDegraded()) {
+      return;
+    }
+    Run(k);
+  }
+
   void OnTickTimeout(const nuway_msgs::msg::TickTimeout& msg) {
     const std::int64_t k = nuway_common::TickIndex(msg.header.stamp);
     if (!Accepts(k)) {
@@ -403,6 +418,7 @@ class BehaviorFsmNode final : public rclcpp::Node {
   rclcpp::Subscription<nuway_msgs::msg::ResetEvent>::SharedPtr sub_reset_;
   rclcpp::Subscription<nuway_msgs::msg::TickTimeout>::SharedPtr
       sub_tick_timeout_;
+  rclcpp::Subscription<rosgraph_msgs::msg::Clock>::SharedPtr sub_clock_;
 };
 
 }  // namespace

@@ -35,7 +35,11 @@ def test_committed_profiles_load_and_map() -> None:
     m1 = bp.load_profile(ROOT / "configs/profiles/m1_classical.yaml")
     assert bp.controller(m1) == "mpc"
     assert bp.prediction_source(m1) == "const_vel"
-    assert bp.node_params(m1, "world_manager", None, ROOT)["carla.traffic.seed"] == 0
+    wm_m1 = bp.node_params(m1, "world_manager", None, ROOT)
+    assert wm_m1["carla.traffic.seed"] == 0
+    assert wm_m1["carla.traffic.n_vehicles"] == 50
+    assert wm_m1["carla.traffic.n_walkers"] == 30
+    assert wm_m1["carla.traffic.hybrid_physics"] is False
     assert bp.node_params(m1, "mpc_node", None, ROOT)["vehicle"].endswith(
         "lincoln_mkz_2020.yaml"
     )

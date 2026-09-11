@@ -176,7 +176,7 @@ Semantic LiDAR and depth cameras are **never** subscribed by a learned node. In 
 ### 3.10 Services (`nuway_msgs/srv`)
 | Service | Type | Server | Notes |
 |---------|------|--------|-------|
-| `/nuway/sim/reset` | `nuway_msgs/Reset` | world_manager | respawn hero at a pose (or spawn index), clear traffic, publish `ResetEvent`, then tick once |
+| `/nuway/sim/reset` | `nuway_msgs/Reset` | world_manager | respawn hero at a pose (or spawn index), clear and respawn traffic with the seed, settle the hero for 1 s of untracked frames (brake on, wheels straight; no `/clock`, before the `ResetEvent` stamp), publish `ResetEvent`, then tick once |
 | `/nuway/sim/set_weather` | `nuway_msgs/SetWeather` | world_manager | preset name |
 | `/nuway/map/nearest_lane` | `nuway_msgs/NearestLane` | map_server | for tools and tests; runtime nodes use the `LaneGraph` library directly. Drivable lanes only (never a shoulder or parking lane) |
 

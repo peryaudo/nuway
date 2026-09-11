@@ -7,15 +7,16 @@ Responsibilities (``M0_bringup.md`` §2.1, ``docs/02_interfaces.md`` §2):
    export ``data/maps/<town>/map.xodr`` once, set synchronous mode and the
    Traffic Manager to sync;
 2. spawn the hero and the rig (``sensor_rig``), publish ``/tf_static`` and
-   ``camera_info``;
+   ``camera_info``; spawn the profile's seeded traffic (``traffic``, M1);
 3. own the tick loop in **lockstep**: ``world.tick()``, publish ``/clock`` and
    the GT topics (``gt_publisher``), then block until a ``ControlCommand``
    whose tick index equals this tick arrives, or the wall-clock timeout
    elapses, in which case ``/nuway/sim/tick_timeout`` is published and the
    loop ticks anyway (the only wall-clock-triggered event in the stack);
 4. serve ``/nuway/sim/reset`` and ``/nuway/sim/set_weather``; a reset moves the
-   hero, publishes ``ResetEvent`` before the first tick of the new episode and
-   then ticks once through the normal gate with the startup timeout;
+   hero, respawns the traffic with the route's seed, publishes ``ResetEvent``
+   before the first tick of the new episode and then ticks once through the
+   normal gate with the startup timeout;
 5. destroy every spawned actor on shutdown.
 
 State across ticks: the episode id, the last command tick and the modules'
@@ -92,6 +93,7 @@ from rosgraph_msgs.msg import Clock
 
 from nuway_carla_bridge.gt_publisher import GtParams, GtPublisher
 from nuway_carla_bridge.sensor_rig import SensorRig
+from nuway_carla_bridge.traffic import TrafficParams, TrafficSpawner
 from nuway_ml.common.carla_conv import (
     location_from_ros,
     rotation_from_ros,
@@ -118,6 +120,9 @@ from nuway_rclpy.ros_qos import CLOCK_QOS, qos
 NODE_NAME = "world_manager"
 HERO_ROLE = "hero"  # role_name / ros_name of the ego: topics are /carla/hero/**
 RESET_DROP_MARGIN_M = 0.15  # teleport slightly above the ground and let physics settle
+RESET_SETTLE_TICKS = (
+    20  # untracked frames after the teleport: the drop lands, the wheels straighten
+)
 GENERATED_MAP_NAME = (
     "OpenDriveMap"  # CARLA's name for every generate_opendrive_world() map
 )
@@ -196,6 +201,19 @@ class WorldManagerNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (
         )
 
         self._hero, self._spawn_pose = self._spawn_hero(int(p["spawn_index"]))
+        self._traffic_seed = int(p["carla.traffic.seed"])
+        self._traffic = TrafficSpawner(
+            self._client,
+            self._world,
+            self._traffic_manager,
+            TrafficParams(
+                n_vehicles=int(p["carla.traffic.n_vehicles"]),
+                n_walkers=int(p["carla.traffic.n_walkers"]),
+                tm_port=int(p["carla.traffic.tm_port"]),
+                hybrid_physics=bool(p["carla.traffic.hybrid_physics"]),
+            ),
+            self.get_logger(),
+        )
         self._sensor_rig = SensorRig(
             self,
             self._world,
@@ -207,6 +225,13 @@ class WorldManagerNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (
         )
         try:
             self._sensor_rig.spawn()
+            self._traffic.spawn(
+                self._traffic_seed,
+                (
+                    float(self._hero_spawn_location.x),
+                    float(self._hero_spawn_location.y),
+                ),
+            )
             self._gt = GtPublisher(
                 self,
                 self._world,
@@ -285,8 +310,11 @@ class WorldManagerNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (
             "carla.lockstep_timeout_s": 2.0,
             "carla.lockstep_startup_timeout_s": 120.0,
             "carla.realtime_factor": 0.0,
-            "carla.traffic.tm_port": 8000,
+            "carla.traffic.n_vehicles": 0,
+            "carla.traffic.n_walkers": 0,
             "carla.traffic.seed": 0,
+            "carla.traffic.tm_port": 8000,
+            "carla.traffic.hybrid_physics": False,
             "sensors": "configs/sensors/rig_dev.json",
             "vehicle": "configs/vehicle/lincoln_mkz_2020.yaml",
             "spawn_index": 0,
@@ -385,6 +413,7 @@ class WorldManagerNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (
         spawn_points = self._world.get_map().get_spawn_points()
         transform = spawn_points[spawn_index % len(spawn_points)]
         hero = self._world.spawn_actor(bp, transform)
+        self._hero_spawn_location = transform.location
         self.get_logger().info(
             f"spawned {self._rig.vehicle} as hero at spawn point {spawn_index}"
         )
@@ -527,6 +556,7 @@ class WorldManagerNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (
         wall_start = time.monotonic()
         self._last_tick_wall = wall_start
         self._world.tick()
+        self._traffic.after_tick()
         snapshot = self._world.get_snapshot()
         elapsed_s = float(snapshot.timestamp.elapsed_seconds)
         frame = int(snapshot.frame)
@@ -642,10 +672,11 @@ class WorldManagerNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (
         pose, converted to the actor origin and lifted a little so the car
         settles onto the road instead of intersecting it. The physics body is
         recreated (see the comment below), the car is brought to rest with
-        the brake on, the episode id is incremented, the GT ring buffers and
-        the command gate are cleared, and ``ResetEvent`` goes out *before*
-        the first tick so every node has reset its state by the time that
-        tick's data arrives. The first tick then waits with the startup
+        the brake on and the traffic respawned, the car settles for
+        ``RESET_SETTLE_TICKS`` untracked frames, the episode id is
+        incremented, the GT ring buffers and the command gate are cleared,
+        and ``ResetEvent`` goes out *before* the first tick so every node
+        has reset its state by the time that tick's data arrives. The first tick then waits with the startup
         timeout, since the planner has to build a route first.
         """
         if request.spawn_index >= 0:
@@ -683,12 +714,45 @@ class WorldManagerNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (
         self._hero.set_simulate_physics(True)
         self._hero.set_target_velocity(carla.Vector3D(0.0, 0.0, 0.0))
         self._hero.set_target_angular_velocity(carla.Vector3D(0.0, 0.0, 0.0))
+        # LibCarla sends apply_control() only when the control differs from
+        # the last one *this client* applied, so the plain brake-and-straight
+        # control of every reset after the first was never sent and the
+        # control adapter's last native message (the previous episode's
+        # steer) stayed on the axle: the second episode of a route started
+        # with its wheels 10 degrees off. The hand-brake variant first
+        # guarantees a change, so the real one goes out on the next call.
+        self._hero.apply_control(
+            carla.VehicleControl(throttle=0.0, brake=1.0, steer=0.0, hand_brake=True)
+        )
         self._hero.apply_control(
             carla.VehicleControl(throttle=0.0, brake=1.0, steer=0.0)
         )
-        if request.traffic_seed >= 0:
-            self._traffic_manager.set_random_device_seed(int(request.traffic_seed))
-        # TODO(M1): clear_traffic and respawn traffic with the seed.
+        # Traffic is respawned from this node's own bookkeeping so route N+1
+        # never sees route N's actors (M1 §3.9); the seed is the profile's
+        # unless the caller sets one, which is how the harness seeds a route.
+        seed = (
+            int(request.traffic_seed)
+            if request.traffic_seed >= 0
+            else self._traffic_seed
+        )
+        if request.clear_traffic:
+            self._traffic.clear()
+            # Every light back to its initial phase: two episodes of a route
+            # in one server otherwise meet different lights at the same
+            # ticks, which is the largest reproducible source of spread.
+            self._world.reset_all_traffic_lights()
+            self._traffic.spawn(seed, (float(loc.x), float(loc.y)))
+        # Settle before the episode starts: the teleport drops the car
+        # RESET_DROP_MARGIN_M onto the road (it bounced at -0.1 m/s on the
+        # first tick) and the wheels need frames to straighten, so two
+        # episodes started from different histories moved apart from their
+        # first tick. These frames carry no /clock and lie before the
+        # ResetEvent stamp, so no node sees them; the traffic already runs
+        # through them, identically for one seed.
+        for _ in range(RESET_SETTLE_TICKS):
+            self._world.tick()
+            self._traffic.after_tick()
+        self._last_frame = int(self._world.get_snapshot().frame)
         self._episode_id += 1
         self._gt.reset()
         with self._cmd_cond:
@@ -738,7 +802,11 @@ class WorldManagerNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (
             self.get_logger().warning(f"restoring async mode failed: {err}")
 
     def _destroy_actors(self) -> None:
-        """Destroy the rig (if spawned) and the hero."""
+        """Destroy the traffic, the rig (if spawned) and the hero."""
+        try:
+            self._traffic.clear()
+        except RuntimeError as err:
+            self.get_logger().warning(f"destroying traffic failed: {err}")
         self._sensor_rig.destroy()
         try:
             if self._hero.is_alive:

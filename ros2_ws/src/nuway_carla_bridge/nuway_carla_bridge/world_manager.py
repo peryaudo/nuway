@@ -74,6 +74,7 @@ rear axle on the ground (``VehicleGeometry.base_link_in_actor``), hence the
 
 from __future__ import annotations
 
+import signal
 import sys
 import threading
 import time
@@ -359,11 +360,32 @@ class WorldManagerNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (
         elif town not in world.get_map().name:
             self.get_logger().info(f"loading {town} (current: {world.get_map().name})")
             world = self._client.load_world(town)
+        self._sweep_stale_actors(world)
         if no_rendering:
             settings = world.get_settings()
             settings.no_rendering_mode = True
             world.apply_settings(settings)
         return world
+
+    def _sweep_stale_actors(self, world: carla.World) -> None:
+        """Destroy the vehicles, walkers and sensors a previous session left behind.
+
+        A reused world keeps whatever a stack that died without its
+        ``shutdown`` had spawned: a second hero standing at the spawn point,
+        its traffic, its rig. This stack owns the world (no other client
+        spawns into it, ``docs/00`` §2.2), so anything of those kinds is stale.
+        """
+        stale = [
+            a
+            for a in world.get_actors()
+            if a.type_id.split(".")[0] in ("controller", "sensor", "vehicle", "walker")
+        ]
+        if not stale:
+            return
+        self.get_logger().warning(
+            f"destroying {len(stale)} actors left by a previous session"
+        )
+        self._client.apply_batch([carla.command.DestroyActor(a) for a in stale])
 
     def _export_opendrive(self) -> None:
         """Write the town's OpenDRIVE to ``data/maps/<town>/map.xodr`` once.
@@ -840,6 +862,9 @@ def main(args: list[str] | None = None) -> int:
         rclpy.logging.get_logger(NODE_NAME).error(f"fatal: {err}")
         return 1
     finally:
+        # A second Ctrl-C (a terminal, or `ros2 launch` forwarding one while
+        # the group was signalled too) must not cut the actor teardown short.
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
         if node is not None:
             node.shutdown()
             node.destroy_node()

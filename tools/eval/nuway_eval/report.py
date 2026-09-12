@@ -118,6 +118,9 @@ class RouteResult:
     bag_path: str = ""
     # Not a CSV column: every (tick, kind) event the route produced, for §8.2.
     incidents: list[tuple[int, str]] = field(default_factory=list)
+    # Not a CSV column: the other actor of every counted collision, (tick,
+    # kind, blueprint, speed m/s, visible), printed on the incident line.
+    collisions: list[tuple[int, str, str, float, bool]] = field(default_factory=list)
 
     @property
     def key(self) -> tuple[str, str, str, int]:
@@ -137,6 +140,7 @@ class RouteResult:
         self.min_speed_pct = counts.min_speed_pct
         self.route_deviation = counts.route_deviation
         self.incidents = sorted({*self.incidents, *counts.incidents})
+        self.collisions = list(counts.collisions)
         self.blocked = counts.blocked
         self.timeout = counts.timeout
         self.driving_score = driving_score(self.completion, counts, config)
@@ -309,6 +313,16 @@ def render_full(
     )
 
 
+def _collision_note(result: RouteResult, tick: int, kind: str) -> str:
+    """Describe the other actor of a collision sheet: speed and visibility (M1 criteria)."""
+    notes = []
+    for t, k, other_type, speed, visible in result.collisions:
+        if k == kind and t == tick:
+            seen = "visible" if visible else "not visible"
+            notes.append(f"`{other_type}` at {speed:.1f} m/s, {seen}")
+    return f" — other actor {'; '.join(notes)}" if notes else ""
+
+
 def incident_links(run_dir: Path, result: RouteResult) -> list[tuple[int, str, str]]:
     """``(tick, kind, relative path)`` of every rendered incident sheet of a route."""
     inc_dir = run_dir / result.run_dir_name / "incidents"
@@ -460,7 +474,8 @@ def _incident_section(results: Sequence[RouteResult], out_dir: Path) -> list[str
         any_incident = True
         lines += [f"### {r.run_dir_name}", ""]
         lines += [
-            f"- tick {tick} `{kind}`: [sheet]({path})" for tick, kind, path in links
+            f"- tick {tick} `{kind}`: [sheet]({path}){_collision_note(r, tick, kind)}"
+            for tick, kind, path in links
         ]
         summary = out_dir / r.run_dir_name / "incidents" / "summary.txt"
         if summary.is_file():

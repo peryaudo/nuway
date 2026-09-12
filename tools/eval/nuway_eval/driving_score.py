@@ -98,6 +98,9 @@ class InfractionCounts:
     blocked: bool = False
     timeout: bool = False
     incidents: list[tuple[int, str]] = field(default_factory=list)  # (tick, kind)
+    # (tick, kind, other actor's blueprint, its speed in m/s, visible): one per
+    # counted collision, for the report's incident lines (M1 criteria).
+    collisions: list[tuple[int, str, str, float, bool]] = field(default_factory=list)
 
     def count(self, kind: str) -> int:
         """Occurrences of a penalty kind."""
@@ -107,6 +110,18 @@ class InfractionCounts:
         """Count one infraction of ``kind`` at ``tick``."""
         setattr(self, f"n_{kind}", self.count(kind) + 1)
         self.incidents.append((tick, kind))
+
+    def add_collision(
+        self,
+        tick: int,
+        kind: str,
+        other_type: str,
+        other_speed_mps: float,
+        visible: bool,
+    ) -> None:
+        """Count a collision and keep what the criteria ask about the other actor."""
+        self.add(tick, kind)
+        self.collisions.append((tick, kind, other_type, other_speed_mps, visible))
 
     def add_min_speed(self, tick: int, pct: float) -> None:
         """Record a failed min-speed checkpoint: ego speed as ``pct`` of the traffic's."""

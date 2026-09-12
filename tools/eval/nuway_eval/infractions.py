@@ -183,7 +183,9 @@ class InfractionTracker:
             if obs.t < until:
                 continue
             self._cooldowns[hit.other_id] = obs.t + self.config.collision_cooldown_s
-            self.counts.add(obs.k, hit.kind)
+            self.counts.add_collision(
+                obs.k, hit.kind, hit.other_type, hit.other_speed_mps, hit.visible
+            )
             fired.append(hit.kind)
         return fired
 

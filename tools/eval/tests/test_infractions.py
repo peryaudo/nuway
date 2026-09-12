@@ -57,6 +57,12 @@ def test_collisions_are_classed_and_deduplicated(cfg: ScoringConfig) -> None:
         "collision_layout",
     ]
     c = tr.counts
+    assert c.collisions == [
+        (0, "collision_vehicle", "vehicle.audi.a2", 3.0, True),
+        (0, "collision_pedestrian", "walker.pedestrian.0001", 1.0, True),
+        (41, "collision_vehicle", "vehicle.audi.a2", 3.0, True),
+        (41, "collision_layout", "static.prop.streetsign", 0.0, False),
+    ]
     assert (c.n_collision_vehicle, c.n_collision_pedestrian, c.n_collision_layout) == (
         2,
         1,

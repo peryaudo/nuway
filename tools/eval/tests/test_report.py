@@ -67,6 +67,8 @@ def test_report_lists_scores_and_incident_sheets(tmp_path: Path) -> None:
     inc = tmp_path / a.run_dir_name / "incidents"
     inc.mkdir(parents=True)
     (inc / "000120_red_light.png").write_bytes(b"")
+    (inc / "000300_collision_vehicle.png").write_bytes(b"")
+    a.collisions = [(300, "collision_vehicle", "vehicle.audi.a2", 5.6, True)]
     (inc / "sheet_not_an_incident.png").write_bytes(b"")
     path = write_report([a, b], tmp_path, cfg)
     text = path.read_text()
@@ -76,6 +78,11 @@ def test_report_lists_scores_and_incident_sheets(tmp_path: Path) -> None:
     assert "[mcap](dev03_00_ClearNoon_0/run.mcap)" in text
     assert (
         "tick 120 `red_light`: [sheet](dev03_00_ClearNoon_0/incidents/000120_red_light.png)"
+        in text
+    )
+    assert (
+        "tick 300 `collision_vehicle`: [sheet](dev03_00_ClearNoon_0/incidents/"
+        "000300_collision_vehicle.png) — other actor `vehicle.audi.a2` at 5.6 m/s, visible"
         in text
     )
     assert "sheet_not_an_incident" not in text

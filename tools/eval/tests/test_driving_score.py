@@ -22,7 +22,7 @@ def test_lb20_config_loads_every_kind() -> None:
     assert set(PENALTY_KINDS) <= set(cfg.penalties)
     assert cfg.penalties["collision_pedestrian"] == 0.5
     assert cfg.route_timeout_s(1000.0) == pytest.approx(1000.0 / 5.0 * 2.0 + 60.0)
-    assert cfg.blocked_s == 90.0
+    assert cfg.blocked_s == 180.0
 
 
 def test_score_multiplies_penalties_and_scales_by_outside_lanes() -> None:

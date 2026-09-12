@@ -14,7 +14,7 @@ penalties:
   min_speed: 0.70
 ending:                      # route-ending conditions (the Leaderboard's blocked / timeout / deviation)
   blocked_speed_mps: 0.1     # agent blocked: slower than this ...
-  blocked_s: 90.0            # ... for this long (sim seconds)
+  blocked_s: 180.0           # ... for this long (sim seconds; the Leaderboard 2.0 AgentBlockedTest value)
   route_deviation_m: 30.0    # farther than this from the reference line
   timeout_speed_mps: 5.0     # budget = route_length / timeout_speed_mps * timeout_factor + timeout_base_s
   timeout_factor: 2.0

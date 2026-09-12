@@ -36,7 +36,7 @@ class ScoringConfig:
     name: str
     penalties: Mapping[str, float]
     blocked_speed_mps: float = 0.1
-    blocked_s: float = 90.0
+    blocked_s: float = 180.0  # the Leaderboard 2.0 AgentBlockedTest max_time
     route_deviation_m: float = 30.0
     timeout_speed_mps: float = 5.0
     timeout_factor: float = 2.0

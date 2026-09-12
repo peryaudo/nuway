@@ -45,7 +45,14 @@ struct LatticeLimits {
 
 struct LatticeOptions {
   std::vector<double> d_offsets_m = {-1.0, -0.5, 0.0, 0.5, 1.0};
-  std::vector<double> ds_set_m = {20.0, 35.0, 50.0};
+  // Path lengths; the 8 m entry is the low-speed recovery length: an ego
+  // whose heading is well off the line's (after understeering through an
+  // R ~ 2.5 m junction corner at 1 m/s) needs a path that settles within a
+  // couple of car lengths, and the 20 m quintic from its d' leaves the band
+  // before it turns back, so the band filter rejected every moving
+  // candidate and the car stood still (task 17, protocol v2). From 6.7 m/s
+  // on the speed scaling merges it with the 20 m entry.
+  std::vector<double> ds_set_m = {8.0, 20.0, 35.0, 50.0};
   double ds_speed_factor_s = 3.0;  // ds = max(ds, factor * v)
   // The keep targets are capped by the curvature speed of the stretch the
   // candidate covers, aiming at this fraction of a_lat_max so that the

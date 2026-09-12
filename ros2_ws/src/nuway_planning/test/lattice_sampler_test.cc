@@ -156,6 +156,38 @@ TEST(LatticeSamplerTest, FeasibleCandidatesRespectTheLimits) {
   }
 }
 
+TEST(LatticeSamplerTest, AnEgoHeadedOffTheLineAtLowSpeedKeepsARecoveryPath) {
+  // An ego 0.64 m left of the line, heading 27 degrees off it (d' = 0.5)
+  // at 1 m/s: the way out of an R ~ 2.5 m junction corner the controller
+  // understeered through. A 20 m quintic from that slope swings out past
+  // the 1.75 m band before it turns back, so only the short recovery
+  // length keeps a moving candidate; without it the car stood still.
+  const RouteLine route = Straight(300.0);
+  SceneInput in;
+  in.route = &route;
+  FrenetState ego = Ego(20.0, 1.0, 0.64);
+  ego.d_prime = 0.5;
+  const LatticeSampler sampler{LatticeOptions{}, LatticeLimits{}};
+  std::vector<Candidate> set =
+      sampler.Sample(in, ego, Decision(Longitudinal::kFree, 2.9));
+  sampler.Filter(route, &set);
+  std::size_t moving = 0;
+  for (const Candidate& c : set) {
+    if (c.injected || !c.feasible()) {
+      continue;
+    }
+    double v_max = 0.0;
+    for (const nuway_common::TrajectoryPoint& p : c.trajectory) {
+      v_max = std::max(v_max, p.v);
+    }
+    if (v_max > 1.5) {
+      ++moving;
+      EXPECT_LE(c.s_f_m - ego.s, 8.0 + 1e-9);
+    }
+  }
+  EXPECT_GT(moving, 0U);
+}
+
 TEST(LatticeSamplerTest, AnEgoOutsideTheBandKeepsTheCandidatesThatReturn) {
   // The bounds are +-1.75 m; an ego at d = 1.9 m starts 0.15 m beyond them
   // (a corner the controller cut too wide). Candidates that come back in,
@@ -287,11 +319,12 @@ TEST(LatticeSamplerTest, PathEndIsClippedAtTheLineEnd) {
   SceneInput in;
   in.route = &route;
   const LatticeSampler sampler{LatticeOptions{}, LatticeLimits{}};
-  // 30 m from the end at 5 m/s: ds = {20, 35, 50} -> s_f = {90, 100, 100},
-  // the duplicate dropped: 5 x 2 paths.
+  // 30 m from the end at 5 m/s: ds = {15, 20, 35, 50} (the 8 m entry
+  // scaled by 3 s of speed) -> s_f = {85, 90, 100, 100}, the duplicate
+  // dropped: 5 x 3 paths.
   const std::vector<Candidate> set =
       sampler.Sample(in, Ego(70.0, 5.0), Decision(Longitudinal::kFree, 5.0));
-  EXPECT_EQ(set.size(), (10U * 12U) + 2U);
+  EXPECT_EQ(set.size(), (15U * 12U) + 2U);
   for (const Candidate& c : set) {
     EXPECT_LE(c.s_f_m, 100.0 + 1e-9);
     EXPECT_LE(c.frenet.back().s, 100.0 + 1e-9);

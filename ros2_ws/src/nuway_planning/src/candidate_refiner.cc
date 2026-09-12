@@ -196,8 +196,8 @@ RefineOutcome CandidateRefiner::Refine(const SceneInput& in,
         continue;
       }
       const std::optional<nuway_common::FrenetPoint> f =
-          route.Project(agent.pose.x, agent.pose.y, 20.0, ego.s, 20.0,
-                        s_final - ego.s + 20.0);
+          route.ProjectNear(agent.pose.x, agent.pose.y, 20.0, ego.s, 20.0,
+                            s_final - ego.s + 20.0);
       if (!f.has_value()) {
         continue;
       }
@@ -322,8 +322,8 @@ RefineOutcome CandidateRefiner::Refine(const SceneInput& in,
     // town with 50 parked and queued vehicles, task 17).
     const bool static_agent = agent.speed_mps() < options_.static_speed_mps;
     const std::optional<nuway_common::FrenetPoint> static_f =
-        static_agent ? route.Project(agent.pose.x, agent.pose.y, 20.0, ego.s,
-                                     40.0, s_final - ego.s + 60.0)
+        static_agent ? route.ProjectNear(agent.pose.x, agent.pose.y, 20.0,
+                                         ego.s, 40.0, s_final - ego.s + 60.0)
                      : std::nullopt;
     if (static_agent && !static_f.has_value()) {
       continue;
@@ -356,9 +356,9 @@ RefineOutcome CandidateRefiner::Refine(const SceneInput& in,
             static_agent ? agent.pose
                          : AgentPoseAt(agent, in.predictions, idx, s, t);
         const std::optional<nuway_common::FrenetPoint> f =
-            static_agent
-                ? static_f
-                : route.Project(pose.x, pose.y, 20.0, frenet[i].s, 40.0, 60.0);
+            static_agent ? static_f
+                         : route.ProjectNear(pose.x, pose.y, 20.0, frenet[i].s,
+                                             40.0, 60.0);
         if (!f.has_value()) {
           continue;
         }

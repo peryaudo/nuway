@@ -35,6 +35,26 @@ RouteLine Straight() {
                    {13.9}, {3.5}, {3.5}, 250.0);
 }
 
+// A 150 m straight east, a 20 m radius half turn and 150 m back west: the
+// return leg runs 40 m north of the outbound one, the way a protocol route
+// loops back through its own junctions.
+RouteLine Hairpin() {
+  nuway_common::Vector2dList points;
+  for (int i = 0; i < 300; ++i) {
+    points.emplace_back(0.5 * i, 0.0);
+  }
+  for (int i = 0; i <= 125; ++i) {
+    const double theta = 0.5 * i / 20.0;
+    points.emplace_back(150.0 + (20.0 * std::sin(theta)),
+                        20.0 * (1.0 - std::cos(theta)));
+  }
+  for (int i = 1; i <= 300; ++i) {
+    points.emplace_back(150.0 - (0.5 * i), 40.0);
+  }
+  return RouteLine(nuway_common::ReferenceLine::FromPoints(points), {1U},
+                   {13.9}, {3.5}, {3.5}, std::nullopt);
+}
+
 FrenetState Ego(double s, double v) {
   FrenetState f;
   f.s = s;
@@ -168,6 +188,48 @@ TEST(CandidateRefinerTest, LeadInsideTheMarginClosesTheBoxWithoutASolve) {
   EXPECT_EQ(out.message.rfind("speed box closed", 0), 0U) << out.message;
   EXPECT_EQ(out.speed_iterations, 0);
   EXPECT_TRUE(c.qp_relaxed);
+}
+
+TEST(CandidateRefinerTest, AnAgentOffThisLegOfTheRouteBoundsNothing) {
+  // A car crossing the outbound leg 5 m behind the ego and driving north
+  // onto the return leg. Its box at t = 0 is behind the ego (the profile
+  // stays ahead of it); from 2.5 s on its pose is beyond the projection
+  // window of the leg the ego is on, and the global fallback of
+  // RouteLine::Project used to place it on the return leg, 350 m ahead in
+  // arc length, as a lower bound no profile could meet (protocol v2:
+  // refined profiles at 40 m/s and a car that never left a straight).
+  const RouteLine route = Hairpin();
+  SceneInput in;
+  in.route = &route;
+  AgentState car = Car(4, 15.0, 0.0, 0.0);
+  car.pose.yaw = M_PI / 2.0;
+  car.vy_mps = 8.0;
+  in.agents = {car};
+  nuway_common::PredictionSet set;
+  set.num_samples = 1;
+  set.num_timesteps = 16;
+  set.dt_s = 0.5;
+  set.sample_weight = {1.0};
+  set.agent_ids = {4};
+  for (int t = 0; t < 16; ++t) {
+    set.xy.push_back(15.0);
+    set.xy.push_back(8.0 * 0.5 * (t + 1));
+    set.yaw.push_back(M_PI / 2.0);
+  }
+  in.predictions = set;
+  const FrenetState ego = Ego(20.0, 10.0);
+  Candidate c = CentreCandidate(in, ego, 10.0);
+  ASSERT_EQ(c.trajectory.size(), 81U);
+  const double s_lattice_end = c.frenet.back().s;
+  CandidateRefiner refiner{RefinerOptions{}, LatticeLimits{},
+                           CollisionOptions{}};
+  const RefineOutcome out = refiner.Refine(in, ego, &c);
+  EXPECT_TRUE(out.refined()) << out.message;
+  EXPECT_FALSE(c.qp_relaxed) << out.message;
+  EXPECT_NEAR(c.frenet.back().s, s_lattice_end, 1.0);
+  for (const nuway_common::TrajectoryPoint& p : c.trajectory) {
+    EXPECT_LE(p.v, 10.5);
+  }
 }
 
 TEST(CandidateRefinerTest, ExhaustedBudgetKeepsTheLatticeShape) {

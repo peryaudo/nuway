@@ -90,5 +90,13 @@ TEST(RouteLineTest, ProjectUsesTheHintAndFallsBackGlobally) {
       route.Project(50.0, 30.0, 5.0, std::nullopt, 0.0, 0.0).has_value());
 }
 
+TEST(RouteLineTest, ProjectNearNeverLeavesTheWindow) {
+  const RouteLine route = Straight();
+  EXPECT_NEAR(ProjectedS(route.ProjectNear(50.2, 0.3, 5.0, 48.0, 10.0, 50.0)),
+              50.2, 1e-9);
+  // The same far hint: no global fallback, the point is off this leg.
+  EXPECT_FALSE(route.ProjectNear(50.2, 0.3, 5.0, 190.0, 5.0, 5.0).has_value());
+}
+
 }  // namespace
 }  // namespace nuway_planning

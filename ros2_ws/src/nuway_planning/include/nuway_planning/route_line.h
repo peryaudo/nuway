@@ -85,6 +85,18 @@ class RouteLine {
                                                    std::optional<double> s_hint,
                                                    double back_m,
                                                    double ahead_m) const;
+  // The windowed search alone, for anything that is not the ego: an agent,
+  // a predicted pose or a stop line the window does not reach is not on
+  // this leg of the route, whatever later leg passes near it. Project's
+  // global fallback is for the ego after a reset or a teleport; a protocol
+  // route loops back through its own junctions, and the fallback put a car
+  // three blocks away onto a later leg, an S-T box at a bogus arc length
+  // that closed the speed window at a green light (task 17, protocol v2).
+  std::optional<nuway_common::FrenetPoint> ProjectNear(double x, double y,
+                                                       double max_dist,
+                                                       double s_hint,
+                                                       double back_m,
+                                                       double ahead_m) const;
 
  private:
   std::size_t SampleIndexAt(double s) const;

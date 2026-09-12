@@ -146,4 +146,10 @@ std::optional<nuway_common::FrenetPoint> RouteLine::Project(
   return line_.ToFrenet(x, y, max_dist);
 }
 
+std::optional<nuway_common::FrenetPoint> RouteLine::ProjectNear(
+    double x, double y, double max_dist, double s_hint, double back_m,
+    double ahead_m) const {
+  return line_.ToFrenetNear(x, y, max_dist, s_hint, back_m, ahead_m);
+}
+
 }  // namespace nuway_planning

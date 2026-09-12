@@ -79,7 +79,7 @@ const AgentState* BehaviorFsm::FindLead(const SceneInput& in, double s_ego,
   const AgentState* best = nullptr;
   double best_s = std::numeric_limits<double>::infinity();
   for (const AgentState& agent : in.agents) {
-    const std::optional<nuway_common::FrenetPoint> f = in.route->Project(
+    const std::optional<nuway_common::FrenetPoint> f = in.route->ProjectNear(
         agent.pose.x, agent.pose.y, options_.follow_range_m, s_ego,
         options_.projection_back_m, options_.follow_range_m + 10.0);
     if (!f.has_value()) {
@@ -117,7 +117,7 @@ bool BehaviorFsm::GapClear(const SceneInput& in, double s_ego, double d_lane,
       }
     }
     for (const SE2& pose : poses) {
-      const std::optional<nuway_common::FrenetPoint> f = in.route->Project(
+      const std::optional<nuway_common::FrenetPoint> f = in.route->ProjectNear(
           pose.x, pose.y, half_width + options_.lane_slack_m + 5.0, s_ego,
           back_m + 10.0, ahead_m + 10.0);
       if (!f.has_value()) {
@@ -263,8 +263,8 @@ std::optional<double> BehaviorFsm::StopLineAhead(const SceneInput& in,
       continue;
     }
     const std::optional<nuway_common::FrenetPoint> f =
-        in.route->Project(light.stop_line.x(), light.stop_line.y(), 6.0, s_ego,
-                          options_.projection_back_m, 300.0);
+        in.route->ProjectNear(light.stop_line.x(), light.stop_line.y(), 6.0,
+                              s_ego, options_.projection_back_m, 300.0);
     if (!f.has_value() || f->s < s_ego - options_.passed_line_m ||
         f->s - s_ego > 300.0) {
       yellow_latch_.erase(light.id);
@@ -316,8 +316,8 @@ std::optional<double> BehaviorFsm::StopLineAhead(const SceneInput& in,
         continue;
       }
       const std::optional<nuway_common::FrenetPoint> f =
-          in.route->Project(sign.stop_line.x(), sign.stop_line.y(), 6.0, s_ego,
-                            options_.projection_back_m, 300.0);
+          in.route->ProjectNear(sign.stop_line.x(), sign.stop_line.y(), 6.0,
+                                s_ego, options_.projection_back_m, 300.0);
       if (!f.has_value() || f->s < s_ego - options_.passed_line_m) {
         continue;
       }
@@ -378,7 +378,7 @@ std::optional<double> BehaviorFsm::ConflictAhead(const SceneInput& in,
       }
     }
     for (const auto& [t_agent, pose] : poses) {
-      const std::optional<nuway_common::FrenetPoint> f = in.route->Project(
+      const std::optional<nuway_common::FrenetPoint> f = in.route->ProjectNear(
           pose.x, pose.y, half_width + options_.yield_margin_m + 3.0, s_ego,
           options_.projection_back_m, options_.yield_lookahead_m + 10.0);
       if (!f.has_value()) {
@@ -479,10 +479,11 @@ BehaviorOutput BehaviorFsm::Step(const SceneInput& in) {
         lead = own;
       } else {
         const std::optional<nuway_common::FrenetPoint> f_lead =
-            in.route->Project(lead->pose.x, lead->pose.y, 100.0, s, 10.0,
-                              100.0);
+            in.route->ProjectNear(lead->pose.x, lead->pose.y, 100.0, s, 10.0,
+                                  100.0);
         const std::optional<nuway_common::FrenetPoint> f_own =
-            in.route->Project(own->pose.x, own->pose.y, 100.0, s, 10.0, 100.0);
+            in.route->ProjectNear(own->pose.x, own->pose.y, 100.0, s, 10.0,
+                                  100.0);
         if (f_lead.has_value() && f_own.has_value() && f_own->s < f_lead->s) {
           lead = own;
         }
@@ -537,8 +538,8 @@ BehaviorOutput BehaviorFsm::Step(const SceneInput& in) {
   if (lead != nullptr) {
     out.longitudinal = Longitudinal::kFollow;
     out.lead_agent_id = lead->id;
-    const std::optional<nuway_common::FrenetPoint> lf =
-        in.route->Project(lead->pose.x, lead->pose.y, 100.0, s, 10.0, 100.0);
+    const std::optional<nuway_common::FrenetPoint> lf = in.route->ProjectNear(
+        lead->pose.x, lead->pose.y, 100.0, s, 10.0, 100.0);
     const double gap = lf.has_value() ? (lf->s - (0.5 * lead->length_m)) -
                                             (s + options_.ego_front_m)
                                       : options_.follow_range_m;

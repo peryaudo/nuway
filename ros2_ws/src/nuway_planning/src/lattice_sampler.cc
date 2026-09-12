@@ -158,8 +158,8 @@ std::optional<LeadOnLine> ProjectLead(const SceneInput& in,
     if (agent.id != lead_id) {
       continue;
     }
-    const std::optional<nuway_common::FrenetPoint> f =
-        in.route->Project(agent.pose.x, agent.pose.y, 10.0, ego.s, 10.0, 200.0);
+    const std::optional<nuway_common::FrenetPoint> f = in.route->ProjectNear(
+        agent.pose.x, agent.pose.y, 10.0, ego.s, 10.0, 200.0);
     if (!f.has_value()) {
       return std::nullopt;
     }

@@ -231,7 +231,11 @@ TEST(BehaviorFsmTest, CrossingAgentAheadMeansYield) {
   in.predictions = Predict(in.agents);
   const BehaviorOutput out = fsm.Step(in);
   EXPECT_EQ(out.longitudinal, Longitudinal::kYield);
-  EXPECT_NEAR(out.stop_s, 47.0, 0.6);  // conflict at ~50, minus 3
+  // The car's body reaches the route at x ~ 49 (half its 2 m width before
+  // its centre line at 50); the rear axle stops 3 m plus the 3.9 m bumper
+  // short of that, so the nose stands 3 m from the crossing body.
+  const BehaviorFsmOptions defaults;
+  EXPECT_NEAR(out.stop_s, 49.0 - 3.0 - defaults.ego_front_m, 0.6);
   EXPECT_EQ(out.reason, "yield:agent9");
   // The same car far ahead in time (already past the lane at t = 0.5 s
   // after starting below the lane): no conflict, but the yield is held for

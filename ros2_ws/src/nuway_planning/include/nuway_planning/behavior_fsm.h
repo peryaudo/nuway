@@ -101,7 +101,8 @@ struct BehaviorFsmOptions {
   double yield_min_speed_mps = 0.3;  // slower agents are not crossing (the
                                      // collision check handles a standing one)
   double crossing_angle_rad = 0.5;   // heading off the line by more: crossing
-  double yield_stop_back_m = 3.0;    // stop_s = s_conflict - this
+  double yield_stop_back_m = 3.0;    // front bumper stops this short of
+                                     // the conflict region
   double yield_hold_s = 1.0;  // a yield is kept at least this long (hysteresis)
   // Speed profile and projection.
   SpeedProfileOptions speed;
@@ -170,10 +171,14 @@ class BehaviorFsm {
   // Dilemma-zone rule for a light seen yellow (M1 §3.2), latched per light.
   bool YellowMeansStop(const TrafficLightObs& light, double d_stop, double v);
   // The nearest predicted crossing of the ego corridor before the ego gets
-  // there; nullopt when none.
+  // there (the arc length where the crossing body first reaches the route);
+  // nullopt when none.
   std::optional<double> ConflictAhead(const SceneInput& in, double s_ego,
                                       double v, double half_width,
                                       std::string* reason) const;
+  // The rear-axle stop that keeps the bumper yield_stop_back_m short of
+  // conflict_s, never behind s_ego.
+  double YieldStop(double conflict_s, double s_ego) const;
   // IDM desired speed behind `lead` (target = v + a_idm horizon).
   double IdmTargetSpeed(double v, double gap_m, double v_lead,
                         double v_limit) const;

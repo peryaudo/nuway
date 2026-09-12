@@ -351,6 +351,13 @@ std::optional<double> BehaviorFsm::StopLineAhead(const SceneInput& in,
   return best;
 }
 
+// Where the rear axle stops so that the front bumper stands
+// yield_stop_back_m short of the conflict region (never behind the ego).
+double BehaviorFsm::YieldStop(double conflict_s, double s_ego) const {
+  return std::max(
+      s_ego, conflict_s - options_.yield_stop_back_m - options_.ego_front_m);
+}
+
 std::optional<double> BehaviorFsm::ConflictAhead(const SceneInput& in,
                                                  double s_ego, double v,
                                                  double half_width,
@@ -384,18 +391,27 @@ std::optional<double> BehaviorFsm::ConflictAhead(const SceneInput& in,
       if (!f.has_value()) {
         continue;
       }
-      const double ds = f->s - s_ego;
-      if (ds < 1.0 || ds > options_.yield_lookahead_m) {
-        continue;
-      }
       if (std::abs(f->d) > half_width + options_.yield_margin_m) {
         continue;
       }
       const double heading = in.route->line().HeadingAt(f->s);
+      const double dyaw = nuway_common::WrapAngle(pose.yaw - heading);
       const bool crossing =
-          pedestrian || std::abs(nuway_common::WrapAngle(pose.yaw - heading)) >
-                            options_.crossing_angle_rad;
+          pedestrian || std::abs(dyaw) > options_.crossing_angle_rad;
       if (!crossing) {
+        continue;
+      }
+      // The conflict region starts where the agent's *body* first reaches
+      // along the route, not at its centre: the box's extent along the
+      // line is its length and width projected onto the heading
+      // difference. Stopping 3 m before the centre put the ego's nose
+      // inside a turning car's path (task 17, protocol v5 check).
+      const double half_extent =
+          0.5 * ((agent.length_m * std::abs(std::cos(dyaw))) +
+                 (agent.width_m * std::abs(std::sin(dyaw))));
+      const double region_s = f->s - half_extent;
+      const double ds = region_s - s_ego;
+      if (ds < 1.0 || ds > options_.yield_lookahead_m) {
         continue;
       }
       const double t_ego = ds / std::max(v, 1.0);
@@ -405,8 +421,8 @@ std::optional<double> BehaviorFsm::ConflictAhead(const SceneInput& in,
       if (t_agent < t_ego - options_.yield_time_margin_s) {
         continue;  // the agent is through the region before we arrive
       }
-      if (!best.has_value() || f->s < *best) {
-        best = f->s;
+      if (!best.has_value() || region_s < *best) {
+        best = region_s;
         *reason = "yield:agent" + std::to_string(agent.id);
       }
     }
@@ -512,7 +528,7 @@ BehaviorOutput BehaviorFsm::Step(const SceneInput& in) {
       ConflictAhead(in, s, v, half_width, &yield_why);
   if (conflict.has_value()) {
     yield_age_s_ = 0.0;
-    yield_stop_s_ = std::max(s, *conflict - options_.yield_stop_back_m);
+    yield_stop_s_ = YieldStop(*conflict, s);
     yield_reason_ = yield_why;
   } else if (yield_stop_s_.has_value()) {
     // Hysteresis: hold the last yield until it has aged out or is behind.
@@ -520,7 +536,8 @@ BehaviorOutput BehaviorFsm::Step(const SceneInput& in) {
     // The epsilon keeps ten 0.1 s ticks from summing to 0.999... s.
     if (yield_age_s_ + 1e-9 < options_.yield_hold_s &&
         *yield_stop_s_ >= s - 1.0) {
-      conflict = *yield_stop_s_ + options_.yield_stop_back_m;
+      conflict =
+          *yield_stop_s_ + options_.yield_stop_back_m + options_.ego_front_m;
       yield_why = yield_reason_ + "(held)";
     } else {
       yield_stop_s_.reset();
@@ -528,7 +545,7 @@ BehaviorOutput BehaviorFsm::Step(const SceneInput& in) {
   }
   if (conflict.has_value()) {
     out.longitudinal = Longitudinal::kYield;
-    out.stop_s = std::max(s, *conflict - options_.yield_stop_back_m);
+    out.stop_s = YieldStop(*conflict, s);
     const double remaining = std::max(0.0, out.stop_s - s);
     out.target_speed_mps =
         std::min(v_bound, std::sqrt(2.0 * options_.a_comf_mps2 * remaining));

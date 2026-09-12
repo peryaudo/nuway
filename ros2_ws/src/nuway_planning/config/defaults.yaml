@@ -31,7 +31,7 @@ behavior_fsm_node:
     yield_time_margin_s: 1.5        # the agent must clear this long before us
     yield_min_speed_mps: 0.3        # slower agents are not crossing; a standing one is the collision check's (task 17)
     crossing_angle_rad: 0.5         # heading off the line by more: crossing traffic
-    yield_stop_back_m: 3.0          # stop_s = s_conflict - this
+    yield_stop_back_m: 3.0          # the front bumper stops this short of the conflict region
     yield_hold_s: 1.0               # a yield holds its stop at least this long (task 17)
     a_lat_max_mps2: 2.0             # curvature speed bound sqrt(a_lat_max / |kappa|)
     plan_decel_mps2: 2.0            # braking assumed on the approach to a bound

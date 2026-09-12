@@ -36,6 +36,7 @@ from typing import Any
 import numpy as np
 import rclpy
 import yaml
+from builtin_interfaces.msg import Time as TimeMsg
 from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import Odometry
 from nav_msgs.msg import Path as PathMsg
@@ -289,6 +290,7 @@ class RouteRunnerNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (0
         self._weather_client = self.create_client(SetWeather, "/nuway/sim/set_weather")
         self._episode_k = -1
         self._episode_id = -1
+        self._episode_stamp = TimeMsg()
         self._trace = _Trace()
         self._line: PyReferenceLine | None = None
         self._line_left: np.ndarray | None = None
@@ -303,6 +305,7 @@ class RouteRunnerNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (0
             return
         self._episode_id = int(msg.episode_id)
         self._episode_k = tick_index(msg.header.stamp)
+        self._episode_stamp = msg.header.stamp
         self._trace = _Trace()
         self._line = None
         self._pending = []
@@ -459,10 +462,19 @@ class RouteRunnerNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (0
         return bool(result is not None and result.ok)
 
     def publish_waypoints(self, route: RouteSpec) -> None:
-        """Publish the whole route, unstamped (accepted for any episode, docs/02 §3.3)."""
+        """Publish the whole route, stamped with the episode's ``ResetEvent``.
+
+        The stamp is what lets ``route_planner_node`` drop this route at the
+        *next* reset: an unstamped route survives every reset ("accepted for
+        any episode"), so the first pose of the following episode was
+        planned through the previous route's waypoints and that stale line
+        set ``route_length_m`` and the timeout budget (protocol v5,
+        ``dev03_02`` ClearNoon: 1173 m of a 1612 m route, a timeout at 99 %).
+        """
         payload = path_payload(route.waypoints)
         msg = PathMsg()
         msg.header.frame_id = payload["frame_id"]
+        msg.header.stamp = self._episode_stamp
         for pose in payload["poses"]:
             ps = PoseStamped()
             ps.header.frame_id = payload["frame_id"]

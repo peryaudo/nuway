@@ -232,6 +232,63 @@ TEST(CandidateRefinerTest, AnAgentOffThisLegOfTheRouteBoundsNothing) {
   }
 }
 
+TEST(CandidateRefinerTest, AQueuedCarBehindAYawedEgoDoesNotBoundThePath) {
+  // A car stopped 5 m behind the ego, 1.84 m to its right: not a follower
+  // (the follower cone is 1.75 m wide, and a yawed ego in a queue sees the
+  // car straight behind it that far off its axis), so it is a static agent
+  // of the path QP, and its inflated s interval (7.35 m ahead of its
+  // front) reaches past the ego's first knot. Bounding that knot 2.4 m
+  // left of the car would fix the ego's own d outside the bound and relax
+  // every path QP; the raw footprints bound nothing ahead of the ego.
+  const RouteLine route = Straight();
+  SceneInput in;
+  in.route = &route;
+  in.agents = {Car(4, 15.0, -2.5, 0.0)};
+  in.predictions = ConstVel(in.agents);
+  FrenetState ego = Ego(20.0, 5.0);
+  ego.d = -0.66;
+  Candidate c = CentreCandidate(in, ego, 5.0);
+  ASSERT_EQ(c.trajectory.size(), 81U);
+  CandidateRefiner refiner{RefinerOptions{}, LatticeLimits{},
+                           CollisionOptions{}};
+  const RefineOutcome out = refiner.Refine(in, ego, &c);
+  EXPECT_EQ(out.path, QpOutcome::kSolved) << out.message;
+  EXPECT_TRUE(out.refined()) << out.message;
+  EXPECT_FALSE(c.qp_relaxed) << out.message;
+}
+
+TEST(CandidateRefinerTest,
+     AStoppedCarAcrossTheLaneAheadIsPassedOnRawFootprints) {
+  // A car stopped across the lane 6.5 m ahead, its near side 1.3 m left
+  // of the line: 0.38 m clear of the ego's flank, 0.12 m short of the
+  // tuned margins. The inflated box reached 0.5 m behind the ego's s and closed
+  // the speed window at t = 0 for every top-K candidate, while the
+  // collision check had passed them on raw footprints (the inflated boxes
+  // already overlapped); on raw footprints the car is beside the path and
+  // bounds nothing, and the ego may creep past it.
+  const RouteLine route = Straight();
+  SceneInput in;
+  in.route = &route;
+  AgentState car = Car(4, 26.5, 4.0, 0.0);
+  car.pose.yaw = M_PI / 2.0;
+  car.length_m = 5.4;
+  car.width_m = 1.8;
+  in.agents = {car};
+  in.predictions = ConstVel(in.agents);
+  const FrenetState ego = Ego(20.0, 1.0);
+  Candidate c = CentreCandidate(in, ego, 1.0);
+  ASSERT_EQ(c.trajectory.size(), 81U);
+  const double s_lattice_end = c.frenet.back().s;
+  CollisionOptions collision;  // the tuned margins of M1 §3.4 (task 17)
+  collision.margin_lon_m = 2.0;
+  collision.margin_lat_m = 0.3;
+  CandidateRefiner refiner{RefinerOptions{}, LatticeLimits{}, collision};
+  const RefineOutcome out = refiner.Refine(in, ego, &c);
+  EXPECT_TRUE(out.refined()) << out.message;
+  EXPECT_FALSE(c.qp_relaxed) << out.message;
+  EXPECT_NEAR(c.frenet.back().s, s_lattice_end, 0.5);
+}
+
 TEST(CandidateRefinerTest, ExhaustedBudgetKeepsTheLatticeShape) {
   const RouteLine route = Straight();
   SceneInput in;

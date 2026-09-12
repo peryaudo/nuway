@@ -52,6 +52,25 @@ struct LateralProfile {
 
 // The candidate's lattice d at arc length s, from its Frenet samples
 // (monotone in s while moving; held where the candidate has stopped).
+// The inflation an agent's box gets: the configured margins, or none when
+// the inflated box already covers the ego at the start (its s interval
+// holds ego.s and it overlaps the path laterally), the collision checker's
+// raw-footprint rule of M1 §3.4 carried into the QPs.
+struct Margins {
+  double agent = 0.0;
+  double lon = 0.0;
+  double lat = 0.0;
+};
+
+Margins MarginsFor(double s_lo_inflated, double s_hi_inflated,
+                   bool overlaps_laterally, double ego_s,
+                   const Margins& configured) {
+  if (s_lo_inflated <= ego_s && ego_s <= s_hi_inflated && overlaps_laterally) {
+    return Margins{};
+  }
+  return configured;
+}
+
 double LatticeDAt(const Candidate& c, double s) {
   const std::vector<FrenetState>& f = c.frenet;
   if (f.empty()) {
@@ -139,6 +158,8 @@ RefineOutcome CandidateRefiner::Refine(const SceneInput& in,
   const RouteLine& route = *in.route;
   const double half_width = 0.5 * limits_.width_m;
   const double ego_rear = collision_.ego_length_m - limits_.ego_front_m;
+  const Margins configured{collision_.agent_margin_m, collision_.margin_lon_m,
+                           collision_.margin_lat_m};
   if (c->frenet.size() != c->trajectory.size() || c->frenet.empty()) {
     out.message = "malformed candidate";
     return out;
@@ -209,13 +230,24 @@ RefineOutcome CandidateRefiner::Refine(const SceneInput& in,
                            (0.5 * agent.width_m * std::abs(std::sin(rel)));
       const double across = (0.5 * agent.length_m * std::abs(std::sin(rel))) +
                             (0.5 * agent.width_m * std::abs(std::cos(rel)));
-      const double s_lo = f->s - along - collision_.agent_margin_m -
-                          limits_.ego_front_m - collision_.margin_lon_m;
-      const double s_hi = f->s + along + collision_.agent_margin_m + ego_rear +
-                          collision_.margin_lon_m;
+      // The collision checker's rule (M1 §3.4): an agent whose inflated box
+      // already covers the ego at the start bounds on the raw footprints,
+      // since no path can restore a margin the ego does not have. A car
+      // queued 1.85 m off the axis of a yawed ego (not a follower by 0.1 m)
+      // would otherwise fix the first knot outside its own bound and relax
+      // every path QP at a green light (task 17, protocol v3).
+      const Margins m = MarginsFor(
+          f->s - along - collision_.agent_margin_m - limits_.ego_front_m -
+              collision_.margin_lon_m,
+          f->s + along + collision_.agent_margin_m + ego_rear +
+              collision_.margin_lon_m,
+          std::abs(ego.d - f->d) < across + collision_.agent_margin_m +
+                                       half_width + collision_.margin_lat_m,
+          ego.s, configured);
+      const double s_lo = f->s - along - m.agent - limits_.ego_front_m - m.lon;
+      const double s_hi = f->s + along + m.agent + ego_rear + m.lon;
       const bool pass_left = LatticeDAt(*c, f->s) >= f->d;
-      const double clearance = across + collision_.agent_margin_m + half_width +
-                               collision_.margin_lat_m;
+      const double clearance = across + m.agent + half_width + m.lat;
       for (int i = 0; i < n_path; ++i) {
         const double s = ego.s + (i * options_.path_ds_m);
         if (s < s_lo || s > s_hi) {
@@ -321,12 +353,53 @@ RefineOutcome CandidateRefiner::Refine(const SceneInput& in,
     // it once (81 projections per agent per candidate were the cost of a
     // town with 50 parked and queued vehicles, task 17).
     const bool static_agent = agent.speed_mps() < options_.static_speed_mps;
-    const std::optional<nuway_common::FrenetPoint> static_f =
-        static_agent ? route.ProjectNear(agent.pose.x, agent.pose.y, 20.0,
-                                         ego.s, 40.0, s_final - ego.s + 60.0)
-                     : std::nullopt;
-    if (static_agent && !static_f.has_value()) {
-      continue;
+    nuway_common::FrenetPoint static_f;
+    if (static_agent) {
+      const std::optional<nuway_common::FrenetPoint> f =
+          route.ProjectNear(agent.pose.x, agent.pose.y, 20.0, ego.s, 40.0,
+                            s_final - ego.s + 60.0);
+      if (!f.has_value()) {
+        continue;
+      }
+      static_f = *f;
+    }
+    // Same raw-footprint rule as above, decided once per agent from its
+    // observed pose: a car stopped across the lane 8 m ahead, its inflated
+    // box reaching 0.9 m behind the ego's s, closed the window at t = 0 for
+    // every top-K candidate the collision check had passed on raw
+    // footprints, and the injected stop held the car in a junction (task
+    // 17, protocol v3).
+    Margins m = configured;
+    {
+      std::optional<nuway_common::FrenetPoint> f0;
+      if (static_agent) {
+        f0 = static_f;
+      } else {
+        f0 = route.ProjectNear(agent.pose.x, agent.pose.y, 20.0, ego.s, 40.0,
+                               60.0);
+      }
+      if (f0.has_value()) {
+        const double heading = route.line().HeadingAt(f0->s);
+        const double rel =
+            std::abs(nuway_common::WrapAngle(agent.pose.yaw - heading));
+        const double along = (0.5 * agent.length_m * std::abs(std::cos(rel))) +
+                             (0.5 * agent.width_m * std::abs(std::sin(rel)));
+        const double across = (0.5 * agent.length_m * std::abs(std::sin(rel))) +
+                              (0.5 * agent.width_m * std::abs(std::cos(rel)));
+        double d_path = 0.0;
+        double unused_p = 0.0;
+        double unused_pp = 0.0;
+        if (out.path_skipped) {
+          d_path = LatticeDAt(*c, f0->s);
+        } else {
+          profile.At(f0->s, &d_path, &unused_p, &unused_pp);
+        }
+        m = MarginsFor(
+            f0->s - along - m.agent - limits_.ego_front_m - m.lon,
+            f0->s + along + m.agent + ego_rear + m.lon,
+            std::abs(f0->d - d_path) < across + m.agent + half_width + m.lat,
+            ego.s, configured);
+      }
     }
     const int agent_samples = static_agent ? 1 : samples;
     for (int s = 0; s < agent_samples; ++s) {
@@ -355,10 +428,12 @@ RefineOutcome CandidateRefiner::Refine(const SceneInput& in,
         const nuway_common::SE2 pose =
             static_agent ? agent.pose
                          : AgentPoseAt(agent, in.predictions, idx, s, t);
-        const std::optional<nuway_common::FrenetPoint> f =
-            static_agent ? static_f
-                         : route.ProjectNear(pose.x, pose.y, 20.0, frenet[i].s,
-                                             40.0, 60.0);
+        std::optional<nuway_common::FrenetPoint> f;
+        if (static_agent) {
+          f = static_f;
+        } else {
+          f = route.ProjectNear(pose.x, pose.y, 20.0, frenet[i].s, 40.0, 60.0);
+        }
         if (!f.has_value()) {
           continue;
         }
@@ -377,16 +452,12 @@ RefineOutcome CandidateRefiner::Refine(const SceneInput& in,
                              (0.5 * agent.width_m * std::abs(std::sin(rel)));
         const double across = (0.5 * agent.length_m * std::abs(std::sin(rel))) +
                               (0.5 * agent.width_m * std::abs(std::cos(rel)));
-        if (std::abs(f->d - d_path) >= across + collision_.agent_margin_m +
-                                           half_width +
-                                           collision_.margin_lat_m) {
+        if (std::abs(f->d - d_path) >= across + m.agent + half_width + m.lat) {
           continue;  // beside the path at this time
         }
         Box box;
-        box.s_lo = f->s - along - collision_.agent_margin_m -
-                   limits_.ego_front_m - collision_.margin_lon_m;
-        box.s_hi = f->s + along + collision_.agent_margin_m + ego_rear +
-                   collision_.margin_lon_m;
+        box.s_lo = f->s - along - m.agent - limits_.ego_front_m - m.lon;
+        box.s_hi = f->s + along + m.agent + ego_rear + m.lon;
         box.s_agent = f->s;
         box.aligned = std::cos(rel) > collision_.follower_cos_min;
         boxes[i] = box;

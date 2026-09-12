@@ -5,9 +5,10 @@ and writes ``configs/vehicle/lincoln_mkz_2020.yaml`` (geometry fields of the
 existing file are kept) plus residual plots under ``data/sysid/``:
 
 * ``a = f(v, throttle)`` and ``a = g(v, brake)`` as 2-D lookup tables (v bins of
-  1 m/s, pedal bins of 0.1) with linear interpolation, ``a_coast(v)`` as the binned
-  coast curve; bins no run reached are extrapolated from the nearest reached bin
-  along the drag curve. The inverse ``u = h(v, a_des)`` is ``LongitudinalMap.inverse``
+  1 m/s, pedal bins of 0.1) with linear interpolation, ``a_coast(v)`` as a
+  quadratic fitted with the gearbox downshift bursts trimmed (``fit_coast``);
+  bins no run reached are extrapolated from the nearest reached bin along the
+  drag curve. The inverse ``u = h(v, a_des)`` is ``LongitudinalMap.inverse``
   (monotone row inversion), so the tables are made monotone in the pedal;
 * ``tau_throttle`` from the standstill step responses (time to 63 % of the plateau);
 * wheelbase ``L`` and understeer gradient ``K`` jointly from
@@ -195,12 +196,26 @@ def fill_nearest(column: Array) -> Array:
     return out
 
 
-def fit_coast(runs: list[Run], v_bins: Array = V_BINS) -> Array:
-    """Binned mean coast acceleration per v bin (<= 0), nearest-filled.
+# The gearbox spikes are one-sided: a downshift never makes the car
+# decelerate less than the drag, so a sample this far below the fit is a
+# transient, not drag.
+COAST_TRIM_MPS2 = 1.0
+COAST_TRIM_ROUNDS = 6
 
-    A polynomial extrapolates badly: CARLA's engine braking is strongest at
-    low speed and steps with the automatic gearbox, so the curve is kept as
-    the table the message carries.
+
+def fit_coast(runs: list[Run], v_bins: Array = V_BINS) -> Array:
+    """Coast acceleration per v bin (<= 0): a quadratic with the downshifts trimmed.
+
+    CARLA's automatic gearbox shifts down while the car coasts, and each
+    downshift is a 0.3-0.5 s burst of engine braking at -5 to -9 m/s^2 that
+    the car crosses a whole 1 m/s bin in (two to four samples per run). A
+    binned mean therefore read -6.8 m/s^2 at 6 m/s where the sustained drag
+    is about -2, and a pedal inverse pivoting on that curve mapped a -5 m/s^2
+    brake request to throttle (M1 task 17, the dev03_02 truck collision). The
+    sustained drag is smooth in v, so it is fitted as a0 + a1 v + a2 v^2 by
+    least squares, discarding the samples more than COAST_TRIM_MPS2 *below*
+    the fit (a downshift only ever adds deceleration) and refitting; the fit
+    is then sampled at the bins so the message still carries a table.
     """
     v = (
         np.concatenate([r.v[r.t >= STEP_SKIP_S] for r in runs])
@@ -213,10 +228,17 @@ def fit_coast(runs: list[Run], v_bins: Array = V_BINS) -> Array:
         else np.array([])
     )
     keep = v > 0.3  # the stopped tail is not drag
-    means, _ = bin_means(v[keep], a[keep], v_bins)
-    if np.all(np.isnan(means)):
+    v, a = v[keep], a[keep]
+    if len(v) < 3:
         return -(0.1 + 0.005 * v_bins + 0.0006 * v_bins * v_bins)  # the M0 placeholder
-    return np.minimum(0.0, fill_nearest(means))
+    design = np.stack([np.ones_like(v), v, v * v], axis=1)
+    inlier = np.ones(len(v), dtype=bool)
+    coeffs = np.zeros(3)
+    for _ in range(COAST_TRIM_ROUNDS):
+        coeffs, _, _, _ = np.linalg.lstsq(design[inlier], a[inlier], rcond=None)
+        inlier = (a - design @ coeffs) > -COAST_TRIM_MPS2
+    bins = np.stack([np.ones_like(v_bins), v_bins, v_bins * v_bins], axis=1)
+    return np.minimum(0.0, bins @ coeffs)
 
 
 def coast_at(coast: Array, v: Array | float, v_bins: Array = V_BINS) -> Array:
@@ -477,9 +499,19 @@ VEHICLE_HEADER = """# configs/vehicle/lincoln_mkz_2020.yaml — ego vehicle mode
 """
 
 
+# The limits block is hand-maintained (the fit keeps it); its comment goes
+# back in above it, since yaml.safe_dump drops comments.
+LIMITS_COMMENT = """# limits: what the planner and controllers may command. kappa_max is a comfort figure kept
+#   for reference only: planning and control bound curvature by the physical
+#   tan(max_steer_angle) / wheelbase (~0.96 rad/m), because the Town03 junction corners have
+#   R = 2.4 m (kappa = 0.42) and a 0.18 bound would stop the car at each one (M1 §3.3).
+"""
+
+
 def write_vehicle_yaml(path: Path, data: dict[str, Any]) -> None:
-    """Write the YAML with the fixed header comment."""
+    """Write the YAML with the fixed header comment and the limits comment."""
     body = yaml.safe_dump(data, sort_keys=False, width=120, default_flow_style=None)
+    body = body.replace("\nlimits:", "\n" + LIMITS_COMMENT + "limits:", 1)
     path.write_text(VEHICLE_HEADER + body)
 
 

@@ -41,7 +41,12 @@ class ScoringConfig:
     timeout_speed_mps: float = 5.0
     timeout_factor: float = 2.0
     timeout_base_s: float = 60.0
-    collision_cooldown_s: float = 2.0
+    # The Leaderboard's CollisionTest folding: a hit with the same other actor
+    # within collision_same_actor_s of the last counted one, or any hit while
+    # the hero is still within collision_radius_m of where the last one was
+    # counted, is the same collision.
+    collision_same_actor_s: float = 5.0
+    collision_radius_m: float = 5.0
     stop_sign_speed_mps: float = 0.2
     min_speed_ratio: float = 1.0
     min_speed_radius_m: float = 50.0
@@ -100,7 +105,9 @@ class InfractionCounts:
     incidents: list[tuple[int, str]] = field(default_factory=list)  # (tick, kind)
     # (tick, kind, other actor's blueprint, its speed in m/s, visible): one per
     # counted collision, for the report's incident lines (M1 criteria).
-    collisions: list[tuple[int, str, str, float, bool]] = field(default_factory=list)
+    collisions: list[tuple[int, str, str, float, bool, float]] = field(
+        default_factory=list
+    )
 
     def count(self, kind: str) -> int:
         """Occurrences of a penalty kind."""
@@ -118,10 +125,14 @@ class InfractionCounts:
         other_type: str,
         other_speed_mps: float,
         visible: bool,
+        *,
+        ego_speed_mps: float,
     ) -> None:
-        """Count a collision and keep what the criteria ask about the other actor."""
+        """Count a collision and keep what the criteria ask about both actors at impact."""
         self.add(tick, kind)
-        self.collisions.append((tick, kind, other_type, other_speed_mps, visible))
+        self.collisions.append(
+            (tick, kind, other_type, other_speed_mps, visible, ego_speed_mps)
+        )
 
     def add_min_speed(self, tick: int, pct: float) -> None:
         """Record a failed min-speed checkpoint: ego speed as ``pct`` of the traffic's."""

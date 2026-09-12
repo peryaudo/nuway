@@ -47,25 +47,25 @@ def test_collisions_are_classed_and_deduplicated(cfg: ScoringConfig) -> None:
     car = CollisionEvent(7, "vehicle.audi.a2", 3.0, True)
     walker = CollisionEvent(9, "walker.pedestrian.0001", 1.0, True)
     pole = CollisionEvent(3, "static.prop.streetsign", 0.0, False)
+    # The Leaderboard's folding: the second hit of the car is the same actor, the
+    # walker's hit happens where the car's was counted.
     assert tr.update(_obs(0, 0.0, collisions=[car, car, walker])) == [
         "collision_vehicle",
-        "collision_pedestrian",
     ]
-    assert tr.update(_obs(10, 0.5, collisions=[car])) == []  # 0.5 s later: cooldown
-    assert tr.update(_obs(41, 2.0, collisions=[car, pole])) == [
-        "collision_vehicle",
-        "collision_layout",
-    ]
+    assert tr.update(_obs(10, 0.5, collisions=[car])) == []  # 0.5 s later, 0.5 m on
+    # 6 m on: the location is forgotten, the car's id (2 s ago) is not.
+    assert tr.update(_obs(41, 6.0, collisions=[car, pole])) == ["collision_layout"]
+    # 6 s after the car was counted, 6 m from the pole: both forgotten.
+    assert tr.update(_obs(120, 12.0, collisions=[car])) == ["collision_vehicle"]
     c = tr.counts
     assert c.collisions == [
-        (0, "collision_vehicle", "vehicle.audi.a2", 3.0, True),
-        (0, "collision_pedestrian", "walker.pedestrian.0001", 1.0, True),
-        (41, "collision_vehicle", "vehicle.audi.a2", 3.0, True),
-        (41, "collision_layout", "static.prop.streetsign", 0.0, False),
+        (0, "collision_vehicle", "vehicle.audi.a2", 3.0, True, 5.0),
+        (41, "collision_layout", "static.prop.streetsign", 0.0, False, 5.0),
+        (120, "collision_vehicle", "vehicle.audi.a2", 3.0, True, 5.0),
     ]
     assert (c.n_collision_vehicle, c.n_collision_pedestrian, c.n_collision_layout) == (
         2,
-        1,
+        0,
         1,
     )
     assert c.incidents[0] == (0, "collision_vehicle")

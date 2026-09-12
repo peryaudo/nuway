@@ -119,8 +119,10 @@ class RouteResult:
     # Not a CSV column: every (tick, kind) event the route produced, for §8.2.
     incidents: list[tuple[int, str]] = field(default_factory=list)
     # Not a CSV column: the other actor of every counted collision, (tick,
-    # kind, blueprint, speed m/s, visible), printed on the incident line.
-    collisions: list[tuple[int, str, str, float, bool]] = field(default_factory=list)
+    # kind, blueprint, speed m/s, visible, ego speed m/s), printed on the incident line.
+    collisions: list[tuple[int, str, str, float, bool, float]] = field(
+        default_factory=list
+    )
 
     @property
     def key(self) -> tuple[str, str, str, int]:
@@ -314,12 +316,14 @@ def render_full(
 
 
 def _collision_note(result: RouteResult, tick: int, kind: str) -> str:
-    """Describe the other actor of a collision sheet: speed and visibility (M1 criteria)."""
+    """Describe a collision sheet: the other actor's speed and visibility, the ego's speed."""
     notes = []
-    for t, k, other_type, speed, visible in result.collisions:
+    for t, k, other_type, speed, visible, ego_speed in result.collisions:
         if k == kind and t == tick:
             seen = "visible" if visible else "not visible"
-            notes.append(f"`{other_type}` at {speed:.1f} m/s, {seen}")
+            notes.append(
+                f"`{other_type}` at {speed:.1f} m/s, {seen}; ego at {ego_speed:.1f} m/s"
+            )
     return f" — other actor {'; '.join(notes)}" if notes else ""
 
 

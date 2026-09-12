@@ -20,7 +20,11 @@ ending:                      # route-ending conditions (the Leaderboard's blocke
   timeout_factor: 2.0
   timeout_base_s: 60.0
 detectors:
-  collision_cooldown_s: 2.0  # one collision per other actor per cooldown
+  # The Leaderboard's CollisionTest folding: the last counted actor id is forgotten after
+  # collision_same_actor_s, the last counted location once the hero has moved collision_radius_m
+  # away; a hit with the remembered id or at the remembered location is the same collision.
+  collision_same_actor_s: 5.0
+  collision_radius_m: 5.0
   stop_sign_speed_mps: 0.2   # honoured = slower than this inside the trigger volume
   # Port of the Leaderboard 2.0 MinimumSpeedRouteTest (its RATIO and checkpoints): the route
   # is cut into `checkpoints` equal segments; one whose ego mean speed is below `ratio` times

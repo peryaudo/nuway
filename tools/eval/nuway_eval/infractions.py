@@ -124,6 +124,15 @@ class _SignState:
     honoured: bool = False
 
 
+@dataclass(frozen=True, slots=True)
+class _LastCollision:
+    """What the Leaderboard's CollisionTest remembers of the last counted hit."""
+
+    other_id: int | None  # forgotten after collision_same_actor_s
+    t: float
+    location: tuple[float, float] | None  # forgotten collision_radius_m away
+
+
 @dataclass
 class InfractionTracker:
     """Feeds ticks in order; ``counts`` is the running result."""
@@ -138,7 +147,7 @@ class InfractionTracker:
     _last: TickObservation | None = None
     _driven_m: float = 0.0
     _outside_m: float = 0.0
-    _cooldowns: dict[int, float] = field(default_factory=dict)  # other id -> until t
+    _last_collision: _LastCollision | None = None
     _lines: dict[int, _LineState] = field(default_factory=dict)
     _signs: dict[int, _SignState] = field(default_factory=dict)
     _slow_since: float | None = None
@@ -177,16 +186,43 @@ class InfractionTracker:
             self.counts.outside_lanes_frac = self._outside_m / self._driven_m
 
     def _collisions(self, obs: TickObservation) -> list[str]:
+        """Count the hits the Leaderboard's CollisionTest would count.
+
+        Its folding rules: the last counted actor id is forgotten after
+        collision_same_actor_s, the last counted location once the hero has
+        moved collision_radius_m away, and a hit with the remembered id or at
+        the remembered location is the same collision (a bus that stops
+        against a waiting ego counts once, not once per cooldown).
+        """
+        last = self._last_collision
+        if last is not None:
+            other_id = last.other_id
+            if obs.t - last.t > self.config.collision_same_actor_s:
+                other_id = None
+            location = last.location
+            if location is not None and (
+                math.hypot(obs.x - location[0], obs.y - location[1])
+                > self.config.collision_radius_m
+            ):
+                location = None
+            last = _LastCollision(other_id, last.t, location)
         fired: list[str] = []
         for hit in obs.collisions:
-            until = self._cooldowns.get(hit.other_id, -math.inf)
-            if obs.t < until:
+            if last is not None and last.other_id == hit.other_id:
                 continue
-            self._cooldowns[hit.other_id] = obs.t + self.config.collision_cooldown_s
+            if last is not None and last.location is not None:
+                continue
+            last = _LastCollision(hit.other_id, obs.t, (obs.x, obs.y))
             self.counts.add_collision(
-                obs.k, hit.kind, hit.other_type, hit.other_speed_mps, hit.visible
+                obs.k,
+                hit.kind,
+                hit.other_type,
+                hit.other_speed_mps,
+                hit.visible,
+                ego_speed_mps=obs.speed_mps,
             )
             fired.append(hit.kind)
+        self._last_collision = last
         return fired
 
     def _red_lights(self, obs: TickObservation) -> list[str]:

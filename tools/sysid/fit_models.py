@@ -505,6 +505,8 @@ LIMITS_COMMENT = """# limits: what the planner and controllers may command. kapp
 #   for reference only: planning and control bound curvature by the physical
 #   tan(max_steer_angle) / wheelbase (~0.96 rad/m), because the Town03 junction corners have
 #   R = 2.4 m (kappa = 0.42) and a 0.18 bound would stop the car at each one (M1 §3.3).
+#   jerk_brake_max is how fast the acceleration command may fall (the brake build-up, M1 §3.8);
+#   jerk_max bounds its rise.
 """
 
 

@@ -135,7 +135,7 @@ bbox_center_z: 0.75
 max_steer_angle: 1.22             # rad, from physics_control
 tau_steer: 0.12
 tau_throttle: 0.20
-limits: {a_max: 3.0, a_min: -6.0, jerk_max: 5.0, steer_rate_max: 1.2, kappa_max: 0.18}
+limits: {a_max: 3.0, a_min: -6.0, jerk_max: 5.0, jerk_brake_max: 15.0, steer_rate_max: 1.2, kappa_max: 0.18}  # jerk_brake_max: the fall rate of the accel command (M1 §3.8); defaults to jerk_max
 longitudinal_map:
   v_bins: [...]
   throttle_bins: [...]

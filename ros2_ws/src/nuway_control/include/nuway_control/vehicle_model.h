@@ -15,8 +15,9 @@
 //   wheelbase_fitted     bicycle-model wheelbase fitted from the steer
 //                        sweeps (yaw_rate = v tan(delta) / L), m
 //   understeer_gradient  K in yaw_rate (L + K v^2) = v tan(delta), s^2/m
-//   limits: {a_max, a_min, jerk_max, steer_rate_max, kappa_max}
-//                        bounds every controller clamps its command to
+//   limits: {a_max, a_min, jerk_max, jerk_brake_max, steer_rate_max,
+//                        kappa_max}: bounds every controller clamps its
+//                        command to (jerk_brake_max defaults to jerk_max)
 //   longitudinal_map     the sysid pedal tables (longitudinal_map.h)
 // `height`, `bbox_center_z`, `actor_origin_height` and the `sysid:` record
 // are read by the Python side (rig, collision footprint) and skipped here.
@@ -34,9 +35,16 @@ namespace nuway_control {
 // The `limits:` block: what the controllers may command, not what the
 // actuators can physically do (comfort and safety bounds).
 struct VehicleLimits {
-  double a_max_mps2 = 3.0;            // acceleration cap
-  double a_min_mps2 = -6.0;           // braking cap (negative)
-  double jerk_max_mps3 = 5.0;         // |da/dt| cap (used from M1)
+  double a_max_mps2 = 3.0;     // acceleration cap
+  double a_min_mps2 = -6.0;    // braking cap (negative)
+  double jerk_max_mps3 = 5.0;  // da/dt cap (used from M1)
+  // Cap on how fast the acceleration command may *fall*: braking builds up
+  // at this jerk, everything else (accelerating, releasing the brake) at
+  // jerk_max_mps3. A comfort jerk of 5 m/s^3 takes 1.2 s from 0 to a_min,
+  // which is most of the stopping distance at town speed when the car
+  // ahead brakes hard (M1 task 17); an emergency build-up of ~15 m/s^3 is
+  // what AEB systems use. Equal to jerk_max_mps3 when the YAML has no key.
+  double jerk_brake_max_mps3 = 5.0;
   double steer_rate_max_radps = 0.8;  // |d delta / dt| cap
   // Comfort curvature from the YAML; unused by planning and control, which
   // bound curvature by VehicleModel::PhysicalCurvatureMax() (M1 §3.3).

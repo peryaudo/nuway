@@ -341,7 +341,10 @@ struct Mpc::Impl {
     hessian.setFromTriplets(triplets.begin(), triplets.end());
     gradient = 2.0 * g;
     // Bounds: the input boxes, then the rates (k = 0 against u_prev).
-    const double da = model.limits.jerk_max_mps3 * options.dt_s;
+    // The acceleration rate is asymmetric: it may fall at the brake
+    // build-up jerk and rise at the comfort jerk (vehicle_model.h).
+    const double da_up = model.limits.jerk_max_mps3 * options.dt_s;
+    const double da_down = model.limits.jerk_brake_max_mps3 * options.dt_s;
     const double dd = model.limits.steer_rate_max_radps * options.dt_s;
     for (Index k = 0; k < n; ++k) {
       const Index i = kNu * k;
@@ -351,8 +354,8 @@ struct Mpc::Impl {
       upper[i + 1] = delta_max;
       const double a0 = k == 0 ? u_prev_value[kBicycleAccel] : 0.0;
       const double d0 = k == 0 ? u_prev_value[kBicycleDeltaCmd] : 0.0;
-      lower[nu + i] = a0 - da;
-      upper[nu + i] = a0 + da;
+      lower[nu + i] = a0 - da_down;
+      upper[nu + i] = a0 + da_up;
       lower[nu + i + 1] = d0 - dd;
       upper[nu + i + 1] = d0 + dd;
     }
@@ -414,12 +417,13 @@ struct Mpc::Impl {
 
   BicycleInput Clamp(const BicycleInput& u,
                      const BicycleInput& u_prev_value) const {
-    const double da = model.limits.jerk_max_mps3 * options.dt_s;
+    const double da_up = model.limits.jerk_max_mps3 * options.dt_s;
+    const double da_down = model.limits.jerk_brake_max_mps3 * options.dt_s;
     const double dd = model.limits.steer_rate_max_radps * options.dt_s;
     BicycleInput out;
     out[kBicycleAccel] = std::clamp(
-        std::clamp(u[kBicycleAccel], u_prev_value[kBicycleAccel] - da,
-                   u_prev_value[kBicycleAccel] + da),
+        std::clamp(u[kBicycleAccel], u_prev_value[kBicycleAccel] - da_down,
+                   u_prev_value[kBicycleAccel] + da_up),
         model.limits.a_min_mps2, model.limits.a_max_mps2);
     out[kBicycleDeltaCmd] = std::clamp(
         std::clamp(u[kBicycleDeltaCmd], u_prev_value[kBicycleDeltaCmd] - dd,

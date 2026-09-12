@@ -344,7 +344,8 @@ TEST(MpcTest, ExhaustedBudgetUsesTheClampedIterateThenEscalates) {
   Plant plant = PlantFor(model, path);
   plant.x[1] = 1.0;
   mpc.set_max_iter(1);
-  const double da = model.limits.jerk_max_mps3 * kDt;
+  const double da_up = model.limits.jerk_max_mps3 * kDt;
+  const double da_down = model.limits.jerk_brake_max_mps3 * kDt;
   const double dd = model.limits.steer_rate_max_radps * kDt;
   double prev_a = 0.0;
   double prev_d = plant.x[4];
@@ -359,7 +360,8 @@ TEST(MpcTest, ExhaustedBudgetUsesTheClampedIterateThenEscalates) {
     // Clamped to the boxes and to the rate limits against the last command.
     EXPECT_LE(out.accel_mps2, model.limits.a_max_mps2 + 1e-12);
     EXPECT_GE(out.accel_mps2, model.limits.a_min_mps2 - 1e-12);
-    EXPECT_LE(std::abs(out.accel_mps2 - prev_a), da + 1e-12);
+    EXPECT_LE(out.accel_mps2 - prev_a, da_up + 1e-12);
+    EXPECT_GE(out.accel_mps2 - prev_a, -da_down - 1e-12);
     EXPECT_LE(std::abs(out.steering_angle_rad - prev_d), dd + 1e-12);
     EXPECT_LE(std::abs(out.steering_angle_rad), model.max_steer_angle_rad);
     prev_a = out.accel_mps2;
@@ -535,4 +537,44 @@ TEST(MpcTest, AStopReferenceIsNeverChasedForward) {
 }
 
 }  // namespace
+
+// A stop reference behind a hard-braking lead: the acceleration command
+// falls at the brake build-up jerk (15 m/s^3 in the Lincoln YAML: a_min in
+// 0.4 s) and never rises faster than the comfort jerk. With the symmetric
+// 5 m/s^3 of the first draft the ramp alone took 1.2 s, most of the stopping
+// distance at town speed (M1 task 17).
+TEST(MpcTest, BrakingBuildsUpAtTheBrakeJerkAndReleasesAtTheComfortJerk) {
+  const VehicleModel model = Lincoln();
+  ASSERT_GT(model.limits.jerk_brake_max_mps3, model.limits.jerk_max_mps3);
+  Mpc mpc(model, MpcOptions{});
+  Path cruise;
+  cruise.v = 8.0;
+  Plant plant = PlantFor(model, cruise);
+  // Settle on the cruise first so the previous command is ~0.
+  Drive(&mpc, &plant, cruise, 40);
+  Path stop;
+  stop.v = 8.0;
+  stop.accel = model.limits.a_min_mps2;
+  stop.x0 = plant.x[0];
+  const double da_up = model.limits.jerk_max_mps3 * kDt;
+  const double da_down = model.limits.jerk_brake_max_mps3 * kDt;
+  double prev_a = 0.0;
+  double a_after_half_second = 0.0;
+  for (int k = 0; k < 20; ++k) {
+    const Trajectory traj = stop.Sample(k * kDt);
+    const MpcOutput out = mpc.Step(plant.Input(&traj));
+    ASSERT_TRUE(out.solver_ok) << out.status;
+    EXPECT_LE(out.accel_mps2 - prev_a, da_up + 1e-9);
+    EXPECT_GE(out.accel_mps2 - prev_a, -da_down - 1e-9);
+    prev_a = out.accel_mps2;
+    if (k == 9) {
+      a_after_half_second = out.accel_mps2;
+    }
+    plant.Apply(out, model.limits.a_min_mps2);
+  }
+  // Ten ticks in, the command is already at (or near) full braking; the
+  // comfort jerk would have allowed no more than -2.5 m/s^2 by then.
+  EXPECT_LT(a_after_half_second, -4.0);
+}
+
 }  // namespace nuway_control

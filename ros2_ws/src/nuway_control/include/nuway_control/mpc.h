@@ -38,7 +38,8 @@
 //   min sum_k e_k^T Q e_k + (u_k - u_ref_k)^T R (u_k - u_ref_k)
 //              + (u_k - u_{k-1})^T R_d (u_k - u_{k-1})
 //   s.t. a in [a_min, a_max], delta_cmd in [-delta_max, delta_max],
-//        |a_k - a_{k-1}| <= jerk_max dt, |delta_k - delta_{k-1}| <= rate dt,
+//        -jerk_brake_max dt <= a_k - a_{k-1} <= jerk_max dt,
+//        |delta_k - delta_{k-1}| <= rate dt,
 // with u_{-1} the last published command and the last knot weighted by
 // q_terminal_scale. The states are eliminated (condensed) through the
 // linear dynamics, leaving a dense QP over the 2N = 40 inputs with 4N box

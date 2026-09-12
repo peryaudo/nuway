@@ -209,6 +209,13 @@ CollisionResult CollisionChecker::Check(
   index.reserve(agents.size());
   std::vector<bool> skip;
   skip.reserve(agents.size());
+  // An agent whose inflated box already overlaps the inflated ego at t = 0
+  // is checked on the raw footprints: no candidate can restore a margin
+  // without moving, so only physical contact rejects and the ego may pull
+  // away from a corner it cut too tight (task 17 protocol).
+  std::vector<bool> raw_only;
+  raw_only.reserve(agents.size());
+  const OrientedBox ego_now = EgoBoxAt(trajectory, 0.0, true);
   // Reach test: the farthest point of the trajectory from its start plus
   // what the agent can cover over the horizon and both boxes' extents; an
   // agent farther than that is skipped outright (a town with 50 vehicles
@@ -231,6 +238,10 @@ CollisionResult CollisionChecker::Check(
     const double dist = std::hypot(agent.pose.x - trajectory.front().x,
                                    agent.pose.y - trajectory.front().y);
     skip.push_back(dist > reach || IsFollower(trajectory, agent));
+    raw_only.push_back(
+        !skip.back() &&
+        BoxesOverlap(ego_now, AgentBoxAt(agent, predictions, -1, 0, 0.0,
+                                         options_.agent_margin_m)));
   }
   double colliding_weight = 0.0;
   for (int s = 0; s < samples; ++s) {
@@ -247,15 +258,17 @@ CollisionResult CollisionChecker::Check(
         const OrientedBox box =
             AgentBoxAt(agents[a], predictions, in_set ? index[a] : -1, s, t,
                        options_.agent_margin_m);
+        OrientedBox raw = box;
+        raw.length_m = agents[a].length_m;
+        raw.width_m = agents[a].width_m;
         if (s == 0 || in_set) {
           // Static agents repeat across samples: measure them once.
-          OrientedBox raw = box;
-          raw.length_m = agents[a].length_m;
-          raw.width_m = agents[a].width_m;
           result.min_distance_m[k] =
               std::min(result.min_distance_m[k], DiscDistance(ego_raw, raw));
         }
-        if (BoxesOverlap(ego, box) && !IsRearEnd(ego, box)) {
+        const bool hit =
+            raw_only[a] ? BoxesOverlap(ego_raw, raw) : BoxesOverlap(ego, box);
+        if (hit && !IsRearEnd(ego, box)) {
           sample_collides = true;
           result.min_ttc_s = std::min(result.min_ttc_s, t);
         }

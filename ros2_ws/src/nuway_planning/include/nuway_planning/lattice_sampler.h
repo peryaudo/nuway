@@ -50,8 +50,10 @@ struct LatticeOptions {
   // The keep targets are capped by the curvature speed of the stretch the
   // candidate covers, aiming at this fraction of a_lat_max so that the
   // filter's bound is met with margin (the Town03 junction corners, task 9).
-  double curvature_cap_factor = 0.9;
-  double min_lateral_fit_m = 5.0;  // closer to the line end: hold d
+  double curvature_cap_factor = 0.5;  // keep targets aim at this fraction of
+                                      // a_lat_max through the bends they reach:
+                                      // 2 m/s^2, the FSM's own bound (task 17)
+  double min_lateral_fit_m = 5.0;     // closer to the line end: hold d
   std::vector<double> speed_offsets_mps = {-3.0, -1.5, 0.0, 1.5};
   std::vector<double> keep_horizons_s = {4.0, 6.0, 8.0};
   std::vector<double> stop_horizons_s = {3.0, 5.0, 7.0};

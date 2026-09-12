@@ -29,6 +29,7 @@ behavior_fsm_node:
     yield_lookahead_m: 60.0         # ... this far ahead on the route
     yield_margin_m: 0.5             # corridor half width slack
     yield_time_margin_s: 1.5        # the agent must clear this long before us
+    yield_min_speed_mps: 0.3        # slower agents are not crossing; a standing one is the collision check's (task 17)
     crossing_angle_rad: 0.5         # heading off the line by more: crossing traffic
     yield_stop_back_m: 3.0          # stop_s = s_conflict - this
     yield_hold_s: 1.0               # a yield holds its stop at least this long (task 17)
@@ -67,7 +68,7 @@ planner_node:
       idm_s0_m: 4.0                 # gap-keeping candidate: s0 + T v_lead (matches the FSM)
       idm_t_s: 1.5
       ds_speed_factor_s: 3.0        # path length ds = max(ds, factor * v)
-      curvature_cap_factor: 0.9     # keep targets aim at this fraction of a_lat_max through the bends they reach
+      curvature_cap_factor: 0.5     # keep targets aim at this fraction of a_lat_max through the bends they reach: 2 m/s^2, the FSM's own bound; at 0.9 a stop in a R = 2.4 m corner saturated the tyres (task 17)
       projection_max_dist_m: 5.0    # farther off the line: no-input output
     qp:                             # M1 §3.5
       w_d: 1.0                      # path: lattice d tracking

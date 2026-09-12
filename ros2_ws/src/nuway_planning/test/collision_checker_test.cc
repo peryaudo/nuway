@@ -274,5 +274,23 @@ TEST(CollisionCheckerTest, SampleWeightsAndMovingAgents) {
   EXPECT_EQ(none.times_s.size(), 17U);
 }
 
+TEST(CollisionCheckerTest, AMarginAlreadyViolatedRejectsOnlyContact) {
+  const CollisionChecker checker{CollisionOptions{}};
+  // A parked car whose inflated box (rear at 4.15 m) overlaps the ego's
+  // inflated front (4.835 m) while the raw footprints (4.35 vs 3.835 m)
+  // are 0.5 m apart: standing still is not a collision, driving on is.
+  const std::vector<AgentState> parked = {Car(1, 6.6, 0.0, 0.0)};
+  const PredictionSet still = ConstVel(parked, 1, 1.0);
+  EXPECT_FALSE(checker.Check(Straight(0.0), parked, still).collides());
+  EXPECT_TRUE(checker.Check(Straight(2.0), parked, still).collides());
+  // Half a metre farther the margin holds at t = 0 and the plain rule
+  // applies: the same drive collides on the inflated boxes.
+  const std::vector<AgentState> clear = {Car(1, 7.3, 0.0, 0.0)};
+  EXPECT_FALSE(
+      checker.Check(Straight(0.0), clear, ConstVel(clear, 1, 1.0)).collides());
+  EXPECT_TRUE(
+      checker.Check(Straight(2.0), clear, ConstVel(clear, 1, 1.0)).collides());
+}
+
 }  // namespace
 }  // namespace nuway_planning

@@ -170,6 +170,8 @@ class BehaviorFsmNode final : public rclcpp::Node {
     o.yield_lookahead_m =
         d("yield_lookahead_m", o.yield_lookahead_m, "yield lookahead");
     o.yield_margin_m = d("yield_margin_m", o.yield_margin_m, "yield margin");
+    o.yield_min_speed_mps = d("yield_min_speed_mps", o.yield_min_speed_mps,
+                              "slower agents are not crossing");
     o.yield_time_margin_s =
         d("yield_time_margin_s", o.yield_time_margin_s, "yield time margin");
     o.crossing_angle_rad =

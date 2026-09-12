@@ -82,6 +82,8 @@ MpcSolveStatus Reduce(OsqpEigen::Status status) {
 }
 
 // One reference knot: the state and input the model is linearised about.
+constexpr double kStopReferenceSpeedMps = 0.05;
+
 struct Knot {
   BicycleState x = BicycleState::Zero();
   BicycleInput u = BicycleInput::Zero();
@@ -172,6 +174,13 @@ struct Mpc::Impl {
   double delta_model = 0.0;
   int consecutive_failures = 0;
   double last_delta_ref = 0.0;
+
+  // True when every sampled reference knot stands still (a stop at rest).
+  bool ReferenceIsAStop() const {
+    return std::all_of(knots.begin(), knots.end(), [](const Knot& knot) {
+      return knot.x[kBicycleV] <= kStopReferenceSpeedMps;
+    });
+  }
 
   explicit Impl(VehicleModel m, MpcOptions o)
       : model(std::move(m)), options(o) {
@@ -647,7 +656,13 @@ MpcOutput Mpc::Step(const MpcInput& in) {
     im.Record(applied, true);
     return out;
   }
-  const BicycleInput u0 = im.Clamp(solution.head<kNu>(), u_prev_value);
+  BicycleInput u0 = im.Clamp(solution.head<kNu>(), u_prev_value);
+  // A stop reference (v_ref = 0 over the horizon) is never chased forward:
+  // the QP would trade a heading or lateral error at rest for motion and
+  // creep the car in a circle with the wheel turned (task 17 protocol).
+  if (im.ReferenceIsAStop()) {
+    u0[kBicycleAccel] = std::min(u0[kBicycleAccel], 0.0);
+  }
   out.accel_mps2 = u0[kBicycleAccel];
   out.steering_angle_rad = u0[kBicycleDeltaCmd];
   out.emergency_stop = false;

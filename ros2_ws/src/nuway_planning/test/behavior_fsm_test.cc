@@ -286,5 +286,30 @@ TEST(BehaviorFsmTest, GoalWithinStoppingDistanceMeansStop) {
   EXPECT_EQ(out.reason, "goal");
 }
 
+TEST(BehaviorFsmTest, AStandingAgentIsNotAYield) {
+  // A walker standing on the corridor 25 m ahead is not crossing anything:
+  // yielding to it held the car forever on a protocol route. It is the
+  // collision check's, which stops the car before it if it stays.
+  const RouteLine route = RouteOnLane(kLaneOuter, -1.75, 200.0);
+  BehaviorFsm fsm{BehaviorFsmOptions{}};
+  SceneInput in = Scene(&route, nullptr, 20.0, -1.75, 8.0);
+  AgentState walker = Car(7, 45.0, -1.0, -kPi / 2.0, 0.0);
+  walker.class_id = nuway_common::AgentClass::kPedestrian;
+  walker.length_m = 0.4;
+  walker.width_m = 0.4;
+  in.agents = {walker};
+  in.predictions = Predict(in.agents);
+  // It stands in the lane, so FOLLOW takes it as a stopped lead (the
+  // gap-keeping candidate stops behind it); what matters is no YIELD.
+  const BehaviorOutput standing = fsm.Step(in);
+  EXPECT_NE(standing.longitudinal, Longitudinal::kYield);
+  EXPECT_EQ(standing.longitudinal, Longitudinal::kFollow);
+  // The same walker stepping across at 1 m/s is a yield.
+  in.agents[0].vy_mps = -1.0;
+  in.predictions = Predict(in.agents);
+  BehaviorFsm fresh{BehaviorFsmOptions{}};
+  EXPECT_EQ(fresh.Step(in).longitudinal, Longitudinal::kYield);
+}
+
 }  // namespace
 }  // namespace nuway_planning

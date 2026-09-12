@@ -102,8 +102,15 @@ SpeedSpec KeepSpeed(const FrenetState& ego, double v_target, double horizon) {
   spec.kind = SpeedKind::kKeep;
   spec.v_target = v_target;
   spec.horizon = horizon;
-  spec.poly = Polynomial5::Quartic(ego.s, ego.s_dot, ego.s_ddot, v_target, 0.0,
-                                   horizon);
+  // A profile that must slow down never starts by speeding up: continuing
+  // a positive measured acceleration (the controller's own last command)
+  // lifts v^2 kappa above what the corner allows for the first second, and
+  // a corner entered too fast then rejects every candidate (task 17
+  // protocol, dev03_02). Jerk continuity is kept where the target is above.
+  const double a0 =
+      v_target < ego.s_dot ? std::min(ego.s_ddot, 0.0) : ego.s_ddot;
+  spec.poly =
+      Polynomial5::Quartic(ego.s, ego.s_dot, a0, v_target, 0.0, horizon);
   return spec;
 }
 
@@ -115,8 +122,12 @@ SpeedSpec StopAt(const FrenetState& ego, double s_stop, double horizon,
   spec.v_target = 0.0;
   spec.horizon = horizon;
   spec.stops = true;
-  spec.poly = Polynomial5::Quintic(ego.s, ego.s_dot, ego.s_ddot, s_stop, 0.0,
-                                   0.0, horizon);
+  // A stop never starts by accelerating: continuing a positive measured
+  // acceleration (the controller's own last command) made the injected stop
+  // speed the car up into a corner it was already too fast for (task 17
+  // protocol, dev03_02), and the controller then tracked exactly that.
+  spec.poly = Polynomial5::Quintic(ego.s, ego.s_dot, std::min(ego.s_ddot, 0.0),
+                                   s_stop, 0.0, 0.0, horizon);
   return spec;
 }
 
@@ -371,8 +382,12 @@ std::vector<Candidate> LatticeSampler::Sample(
             spec.kind = SpeedKind::kGap;
             spec.v_target = lead->v;
             spec.horizon = horizon;
-            spec.poly = Polynomial5::Quintic(ego.s, ego.s_dot, ego.s_ddot,
-                                             s_gap, lead->v, 0.0, horizon);
+            // Closing on a slower lead never starts by speeding up (as
+            // KeepSpeed does for a lower target).
+            const double a0 =
+                lead->v < ego.s_dot ? std::min(ego.s_ddot, 0.0) : ego.s_ddot;
+            spec.poly = Polynomial5::Quintic(ego.s, ego.s_dot, a0, s_gap,
+                                             lead->v, 0.0, horizon);
             speeds.push_back(spec);
           }
         }
@@ -447,9 +462,21 @@ std::vector<Candidate> LatticeSampler::SampleInjected(
   return out;
 }
 
+namespace {
+
+// How far a lateral offset lies beyond the drivable bounds [-right, left]
+// (0 inside them). The bounds apply to the path point itself, as the
+// outside-lanes criterion measures the hero centre (M1 §3.10): a half-width
+// margin on top rejected every candidate in the R = 2.4 m junction corners
+// once the controller's tracking error put the ego past it (task 17).
+double Excursion(double d, const LateralBounds& bounds) {
+  return std::max({0.0, d - bounds.left_m, -bounds.right_m - d});
+}
+
+}  // namespace
+
 void LatticeSampler::Filter(const RouteLine& route,
                             std::vector<Candidate>* candidates) const {
-  const double half_width = 0.5 * limits_.width_m;
   for (Candidate& c : *candidates) {
     if (c.injected) {
       continue;
@@ -460,6 +487,18 @@ void LatticeSampler::Filter(const RouteLine& route,
       c.reject = "length";
       continue;
     }
+    // The band rule is relative to where the candidate starts: an ego
+    // already outside it (a corner cut too tight by the controller) keeps
+    // the candidates that come back in and loses those that leave farther;
+    // inside the band the allowance is zero and the rule is the plain one.
+    const double allowed_excursion =
+        Excursion(c.frenet.front().d, route.BoundsAt(c.frenet.front().s));
+    // Likewise for the lateral acceleration: the ego's own v^2 kappa at t = 0
+    // is every candidate's first point, so a corner entered too fast would
+    // otherwise reject the braking candidates along with the rest.
+    const nuway_common::TrajectoryPoint& p0 = c.trajectory.front();
+    const double allowed_a_lat =
+        std::max(limits_.a_lat_max_mps2, p0.v * p0.v * std::abs(p0.kappa));
     for (std::size_t i = 0; i < c.trajectory.size() && c.reject.empty(); ++i) {
       const nuway_common::TrajectoryPoint& p = c.trajectory[i];
       const FrenetState& f = c.frenet[i];
@@ -471,11 +510,9 @@ void LatticeSampler::Filter(const RouteLine& route,
       } else if (p.a < limits_.a_min_mps2 - kEps ||
                  p.a > limits_.a_max_mps2 + kEps) {
         c.reject = "accel";
-      } else if (p.v * p.v * std::abs(p.kappa) >
-                 limits_.a_lat_max_mps2 + kEps) {
+      } else if (p.v * p.v * std::abs(p.kappa) > allowed_a_lat + kEps) {
         c.reject = "a_lat";
-      } else if (f.d > bounds.left_m - half_width + kEps ||
-                 f.d < -bounds.right_m + half_width - kEps) {
+      } else if (Excursion(f.d, bounds) > allowed_excursion + kEps) {
         c.reject = "bounds";
       }
     }

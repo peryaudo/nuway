@@ -506,5 +506,33 @@ TEST(MpcTest, StopTrackingConvergesWithinBudget) {
   }
 }
 
+TEST(MpcTest, AStopReferenceIsNeverChasedForward) {
+  // At rest with a 0.3 rad heading error against a stop at the same spot,
+  // the QP would accelerate to turn the car toward the reference heading;
+  // the command is clamped at zero so the car stays put (and the same from
+  // a creep of 0.3 m/s: braking only).
+  const VehicleModel model = Lincoln();
+  for (const double v0 : {0.0, 0.3}) {
+    Mpc mpc(model, MpcOptions{});
+    Plant plant;
+    plant.params.wheelbase_m = model.wheelbase_fitted_m;
+    plant.params.tau_steer_s = model.tau_steer_s;
+    plant.x << 5.0, -3.0, 0.7, v0, 0.0;
+    const Trajectory stop =
+        nuway_common::StopTrajectory(SE2{5.0, -3.0, 0.7 + 0.3});
+    for (int k = 0; k < 60; ++k) {
+      MpcInput in = plant.Input(&stop);
+      in.speed_mps = plant.x[3];
+      const MpcOutput out = mpc.Step(in);
+      EXPECT_LE(out.accel_mps2, 1e-9) << "v0 " << v0 << " tick " << k;
+      EXPECT_FALSE(out.emergency_stop);
+      plant.Apply(out, model.limits.a_min_mps2);
+    }
+    EXPECT_LE(plant.x[3], v0 + 1e-6);
+    EXPECT_NEAR(plant.x[0], 5.0, 0.5);
+    EXPECT_NEAR(plant.x[1], -3.0, 0.5);
+  }
+}
+
 }  // namespace
 }  // namespace nuway_control

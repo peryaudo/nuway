@@ -98,6 +98,8 @@ struct BehaviorFsmOptions {
   double yield_lookahead_m = 60.0;   // ... this far ahead on the route
   double yield_margin_m = 0.5;       // corridor half width slack
   double yield_time_margin_s = 1.5;  // agent must be clear this long before us
+  double yield_min_speed_mps = 0.3;  // slower agents are not crossing (the
+                                     // collision check handles a standing one)
   double crossing_angle_rad = 0.5;   // heading off the line by more: crossing
   double yield_stop_back_m = 3.0;    // stop_s = s_conflict - this
   double yield_hold_s = 1.0;  // a yield is kept at least this long (hysteresis)

@@ -140,12 +140,11 @@ TEST(LatticeSamplerTest, FeasibleCandidatesRespectTheLimits) {
       EXPECT_GE(p.a, -4.0 - 1e-6);
       EXPECT_LE(std::abs(p.kappa), 0.96 + 1e-6);
       EXPECT_LE(p.v * p.v * std::abs(p.kappa), 4.0 + 1e-6);
-      EXPECT_LE(std::abs(c.frenet[i].d), 1.75 - (0.5 * 1.837) + 1e-6);
+      EXPECT_LE(std::abs(c.frenet[i].d), 1.75 + 1e-6);
       EXPECT_GE(p.v, -0.05);
     }
   }
-  // The 1.0 m offsets leave the drivable band (1.75 - 0.92 = 0.83 m), and
-  // the 3 s stop from 8 m/s over 25 m exceeds 4 m/s^2: something rejects.
+  // The 3 s stop from 8 m/s over 25 m exceeds 4 m/s^2: something rejects.
   EXPECT_GT(rejected, 0U);
   EXPECT_GT(CountFeasibleNormal(set), 0U);
   // A stopping candidate ends at rest at the stop line.
@@ -155,6 +154,50 @@ TEST(LatticeSamplerTest, FeasibleCandidatesRespectTheLimits) {
       EXPECT_NEAR(c.trajectory.back().v, 0.0, 1e-6);
     }
   }
+}
+
+TEST(LatticeSamplerTest, AnEgoOutsideTheBandKeepsTheCandidatesThatReturn) {
+  // The bounds are +-1.75 m; an ego at d = 1.9 m starts 0.15 m beyond them
+  // (a corner the controller cut too wide). Candidates that come back in,
+  // or at least no farther out, stay feasible, the ones to a 2.5 m offset
+  // leave farther and are rejected; the plain rule would reject all of
+  // them at their first point and leave the car there.
+  const RouteLine route = Straight(300.0);
+  SceneInput in;
+  in.route = &route;
+  LatticeLimits limits;
+  limits.a_max_mps2 = 2.0;
+  limits.a_min_mps2 = -4.0;
+  LatticeOptions options;
+  options.d_offsets_m = {0.0, 1.0, 2.5};
+  const LatticeSampler sampler{options, limits};
+  std::vector<Candidate> set = sampler.Sample(
+      in, Ego(20.0, 8.0, 1.9), Decision(Longitudinal::kStop, 0.0, 45.0));
+  sampler.Filter(route, &set);
+  const double band = 1.75;
+  const double start_excursion = 1.9 - band;
+  std::size_t kept = 0;
+  std::size_t returning = 0;
+  std::size_t leaving = 0;
+  for (const Candidate& c : set) {
+    if (c.injected) {
+      continue;
+    }
+    if (c.feasible()) {
+      ++kept;
+      for (const FrenetState& f : c.frenet) {
+        EXPECT_LE(f.d - band, start_excursion + 1e-6);
+      }
+      if (std::abs(c.frenet.back().d) <= band + 1e-6) {
+        ++returning;  // the selector's lateral cost prefers these
+      }
+    } else if (c.reject == "bounds") {
+      ++leaving;
+    }
+  }
+  EXPECT_GT(kept, 0U);
+  EXPECT_GT(returning, 0U);
+  EXPECT_GT(leaving, 0U);
 }
 
 TEST(LatticeSamplerTest, TightCornerKeepsItsNormalCandidates) {
@@ -364,6 +407,40 @@ TEST(LatticeSamplerTest, FollowAddsGapKeepingAndEgoProjects) {
   ego.pose.y = 12.0;
   EXPECT_FALSE(EgoFrenetState(ego, route, LatticeOptions{}, 2.86, std::nullopt)
                    .has_value());
+}
+
+TEST(LatticeSamplerTest, ACornerEnteredTooFastKeepsTheBrakingCandidates) {
+  // On an R = 30 m circle at 12 m/s the ego's own lateral acceleration is
+  // 4.8 m/s^2, above the 4 m/s^2 limit, at every candidate's first point:
+  // the plain rule would reject them all and leave the injected stop. The
+  // keep targets are capped below the corner speed, so every profile slows
+  // down, starts from a non-positive acceleration despite the measured
+  // 2.5 m/s^2, and stays under its own start value: they are feasible.
+  const RouteLine route = Circle(30.0);
+  SceneInput in;
+  in.route = &route;
+  const LatticeSampler sampler{LatticeOptions{}, LatticeLimits{}};
+  FrenetState ego = Ego(5.0, 12.0);
+  ego.s_ddot = 2.5;  // accelerating into it (the controller's last command)
+  std::vector<Candidate> set =
+      sampler.Sample(in, ego, Decision(Longitudinal::kFree, 12.0));
+  sampler.Filter(route, &set);
+  std::size_t kept = 0;
+  for (const Candidate& c : set) {
+    const nuway_common::TrajectoryPoint& p0 = c.trajectory.front();
+    EXPECT_GT(p0.v * p0.v * std::abs(p0.kappa), 4.0);
+    if (c.injected) {
+      EXPECT_LE(p0.a, 1e-9) << SpeedKindName(c.speed_kind);
+      continue;
+    }
+    if (c.feasible()) {
+      ++kept;
+      EXPECT_LE(p0.a, 1e-9);
+      EXPECT_LT(c.trajectory.back().v, 12.0);
+    }
+  }
+  EXPECT_GT(kept, 0U);
+  EXPECT_GT(CountFeasibleNormal(set), 0U);
 }
 
 }  // namespace

@@ -358,6 +358,12 @@ std::optional<double> BehaviorFsm::ConflictAhead(const SceneInput& in,
   const PredictionSet& pred = in.predictions;
   std::optional<double> best;
   for (const AgentState& agent : in.agents) {
+    // A standing agent is not crossing anything: a walker parked on the
+    // corner held a yield stop forever (task 17 protocol, dev03_01). If it
+    // is in the path, the collision check stops the car before it.
+    if (agent.speed_mps() < options_.yield_min_speed_mps) {
+      continue;
+    }
     const bool pedestrian = agent.class_id == AgentClass::kPedestrian;
     std::vector<std::pair<double, SE2>> poses = {{0.0, agent.pose}};
     const int a = pred.IndexOf(agent.id);

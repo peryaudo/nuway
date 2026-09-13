@@ -93,6 +93,11 @@ from rclpy.node import Node
 from rosgraph_msgs.msg import Clock
 
 from nuway_carla_bridge.gt_publisher import GtParams, GtPublisher
+from nuway_carla_bridge.map_export import (
+    STOP_SIGNS_CSV,
+    stop_sign_records,
+    write_stop_signs_csv,
+)
 from nuway_carla_bridge.sensor_rig import SensorRig
 from nuway_carla_bridge.traffic import TrafficParams, TrafficSpawner
 from nuway_ml.common.carla_conv import (
@@ -194,6 +199,7 @@ class WorldManagerNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (
             if town_param.endswith(".xodr")
             else self._world.get_map().name.split("/")[-1]
         )
+        self._export_stop_signs()
         self._export_opendrive()
         self._apply_sync_settings(
             bool(p["carla.sync"]),
@@ -386,6 +392,20 @@ class WorldManagerNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (
             f"destroying {len(stale)} actors left by a previous session"
         )
         self._client.apply_batch([carla.command.DestroyActor(a) for a in stale])
+
+    def _export_stop_signs(self) -> None:
+        """Write the world's stop-sign boxes to ``data/maps/<town>/stop_signs.csv`` once.
+
+        Written before the OpenDRIVE so that ``map_server_node``, which waits
+        for both files, never sees a map directory with the OpenDRIVE alone
+        (``map_export`` module docstring; M0 §2.1).
+        """
+        path = self._map_dir / self._town / STOP_SIGNS_CSV
+        if path.is_file():
+            return
+        records = stop_sign_records(self._world.get_actors())
+        write_stop_signs_csv(path, records)
+        self.get_logger().info(f"exported {path} ({len(records)} stop signs)")
 
     def _export_opendrive(self) -> None:
         """Write the town's OpenDRIVE to ``data/maps/<town>/map.xodr`` once.

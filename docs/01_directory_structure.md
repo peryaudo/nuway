@@ -119,6 +119,7 @@ nuway/
 │       │   │   ├── world_manager.py       #   world_manager node (one process, one CARLA client). Node: owns world.tick() in
 │       │   │   │                          #   lockstep, /clock, /nuway/sim/tick_timeout, the reset/weather services
 │       │   │   ├── gt_publisher.py        # module: GT agents, GT ego pose/odom, traffic lights, vehicle_state
+│       │   │   ├── map_export.py          # module: the stop-sign sidecar data/maps/<town>/stop_signs.csv (M0 §2.1)
 │       │   │   ├── sensor_rig.py          # module: spawns the rig, publishes /tf_static + camera_info + chase_cam; all
 │       │   │   │                          #   parsing/arithmetic comes from nuway_ml.common.rig (shared with the collectors)
 │       │   │   ├── traffic.py             # module: seeded Traffic Manager vehicles + AI walkers, spawned/cleared from its own bookkeeping (M1)
@@ -331,7 +332,7 @@ nuway/
 │   ├── raw/
 │   ├── sysid/                             # M0 system-identification logs + residual plots
 │   ├── shards/
-│   ├── maps/<town>/                       # one directory per town: map.xodr, map.ply, map_tags.npy, static_occ.npz, REPORT.md
+│   ├── maps/<town>/                       # one directory per town: map.xodr, stop_signs.csv (both exported by world_manager, M0 §2.1), map.ply, map_tags.npy, static_occ.npz, REPORT.md
 │   │                                      #   (the small curated files live in configs/maps/<town>/)
 │   ├── checkpoints/                       # <experiment>/<timestamp>/: ckpts, viz/, .hydra/config.yaml
 │   └── eval_runs/                         # <run_id>/: report.md, results.csv, per-route mcap + renders (docs/02 §8)

@@ -8,8 +8,12 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
+#include <fstream>
 #include <map>
 #include <set>
+#include <sstream>
+#include <string>
 #include <unordered_set>
 #include <utility>
 
@@ -34,6 +38,9 @@ constexpr int kSectionsPerRoad = 64;
 constexpr std::uint32_t kTrafficLightHighBit = 0x80000000U;
 // Longitudinal slack past a lane end that still counts as "on the lane".
 constexpr double kEndTolerance = 0.2;
+// AddStopSigns: a lane centerline this far outside a sidecar box still
+// counts as covered (box edges sit on lane edges).
+constexpr double kStopSignBoxSlack = 0.5;
 
 // Cumulative lateral position of the centre of `lane` in `section` at road
 // arc length s; positive to the left of the reference line. This is how
@@ -322,6 +329,20 @@ Vector2dList FromPolygonMsg(const geometry_msgs::msg::Polygon& poly) {
   return out;
 }
 
+// FNV-1a of the box centre in centimetres: stable across servers (CARLA
+// actor ids are not) and distinct from every OpenDRIVE signal id in
+// practice; AddStopSigns probes on collision.
+std::uint32_t MakeSiteId(const Eigen::Vector2d& center) {
+  const auto cm = [](double v) {
+    return static_cast<std::uint32_t>(
+        static_cast<std::int64_t>(std::lround(v * 100.0)));
+  };
+  std::uint32_t hash = Fnv1a(2166136261U, cm(center.x()));
+  hash = Fnv1a(hash, cm(center.y()));
+  hash &= ~kTrafficLightHighBit;
+  return hash == 0U ? 1U : hash;
+}
+
 }  // namespace
 
 // KD-tree over every centerline sample of every lane. A KD-tree splits the
@@ -379,6 +400,46 @@ std::uint32_t MakeSignalId(int road_id, int signal_id) {
   hash = Fnv1a(hash, static_cast<std::uint32_t>(signal_id));
   hash &= ~kTrafficLightHighBit;  // high bit marks unmapped lights (M0 §2.2)
   return hash == 0U ? 1U : hash;
+}
+
+std::optional<std::vector<StopSignSite>> LoadStopSignSites(
+    const std::string& path, std::string* error) {
+  std::ifstream in(path);
+  if (!in) {
+    *error = "cannot open " + path;
+    return std::nullopt;
+  }
+  std::vector<StopSignSite> sites;
+  std::string line;
+  bool header = true;
+  int line_no = 0;
+  while (std::getline(in, line)) {
+    ++line_no;
+    if (header) {
+      header = false;
+      if (line.rfind("x_m,y_m,yaw_rad,half_length_m,half_width_m", 0) != 0) {
+        *error = path;
+        *error += ": unexpected header '";
+        *error += line;
+        *error += "'";
+        return std::nullopt;
+      }
+      continue;
+    }
+    if (line.empty() || line == "\r") {
+      continue;
+    }
+    std::replace(line.begin(), line.end(), ',', ' ');
+    std::istringstream row(line);
+    StopSignSite site;
+    if (!(row >> site.center.x() >> site.center.y() >> site.yaw_rad >>
+          site.half_length_m >> site.half_width_m)) {
+      *error = path + ": malformed row " + std::to_string(line_no);
+      return std::nullopt;
+    }
+    sites.push_back(site);
+  }
+  return sites;
 }
 
 LaneGraph::LaneGraph() = default;
@@ -904,6 +965,99 @@ const nuway_common::ReferenceLine* LaneGraph::reference_line(
     return nullptr;
   }
   return &index_->reference_lines[it->second];
+}
+
+std::size_t LaneGraph::AddStopSigns(const std::vector<StopSignSite>& sites) {
+  std::unordered_set<std::uint32_t> used;
+  for (const TrafficLightMapping& light : traffic_lights_) {
+    used.insert(light.id);
+  }
+  for (const StopSign& sign : stop_signs_) {
+    used.insert(sign.id);
+  }
+  std::size_t added = 0;
+  for (const StopSignSite& site : sites) {
+    if (std::min(site.half_length_m, site.half_width_m) <
+        options_.stop_sign_min_extent_m) {
+      continue;
+    }
+    // Governed lanes: through the box, running along one of its axes,
+    // nearest first.
+    std::vector<std::uint32_t> affected;
+    std::optional<Eigen::Vector3d> stop_line;
+    const Eigen::Vector2d fwd{std::cos(site.yaw_rad), std::sin(site.yaw_rad)};
+    const Eigen::Vector2d left{-fwd.y(), fwd.x()};
+    const double reach = std::max(site.half_length_m, site.half_width_m) +
+                         options_.centerline_spacing_m;
+    for (const LaneQuery& query :
+         LanesNear(site.center.x(), site.center.y(), reach)) {
+      const nuway_common::ReferenceLine* line = reference_line(query.lane_id);
+      if (line == nullptr) {
+        continue;
+      }
+      // Heading modulo pi/2: the lane runs along either box axis, and
+      // neither axis has a sign of its own.
+      const double axis_err =
+          0.25 * std::abs(nuway_common::WrapAngle(
+                     4.0 * (line->HeadingAt(query.s) - site.yaw_rad)));
+      if (axis_err > options_.stop_sign_heading_tol_rad) {
+        continue;
+      }
+      // The centerline's foot point must lie in the box (a box across a
+      // multi-lane road governs every lane it covers, a box of one lane's
+      // width only that lane).
+      const nuway_common::CartesianPoint foot = line->PointAt(query.s);
+      const Eigen::Vector2d rel = Eigen::Vector2d{foot.x, foot.y} - site.center;
+      if (std::abs(rel.dot(fwd)) > site.half_length_m + kStopSignBoxSlack ||
+          std::abs(rel.dot(left)) > site.half_width_m + kStopSignBoxSlack) {
+        continue;
+      }
+      PushUnique(&affected, query.lane_id);
+      if (!stop_line.has_value()) {
+        stop_line = Eigen::Vector3d{foot.x, foot.y, 0.0};
+      }
+    }
+    if (affected.empty() || !stop_line.has_value()) {
+      continue;
+    }
+    // The OpenDRIVE already lists some of the props: same lane, same spot.
+    bool known = false;
+    for (const StopSign& sign : stop_signs_) {
+      const bool shares_lane =
+          std::any_of(affected.begin(), affected.end(), [&](std::uint32_t id) {
+            return std::find(sign.affected_lane_ids.begin(),
+                             sign.affected_lane_ids.end(),
+                             id) != sign.affected_lane_ids.end();
+          });
+      if (shares_lane && (sign.stop_line.head<2>() - site.center).norm() <=
+                             options_.stop_sign_merge_dist_m) {
+        known = true;
+        break;
+      }
+    }
+    if (known) {
+      continue;
+    }
+    std::uint32_t id = MakeSiteId(site.center);
+    while (used.count(id) != 0U) {
+      id = (id + 1U) & ~kTrafficLightHighBit;
+      id = id == 0U ? 1U : id;
+    }
+    used.insert(id);
+    StopSign sign;
+    sign.id = id;
+    sign.affected_lane_ids = affected;
+    sign.stop_line = *stop_line;
+    const Eigen::Vector2d c = site.center;
+    const double hl = site.half_length_m;
+    const double hw = site.half_width_m;
+    sign.trigger_volume = {
+        c - (hl * fwd) + (hw * left), c + (hl * fwd) + (hw * left),
+        c + (hl * fwd) - (hw * left), c - (hl * fwd) - (hw * left)};
+    stop_signs_.push_back(std::move(sign));
+    ++added;
+  }
+  return added;
 }
 
 // Three stages: (1) a KD-tree radius search collects every lane with a

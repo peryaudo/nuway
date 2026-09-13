@@ -425,7 +425,14 @@ class RouteRunnerNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (0
             self.get_logger().error("reset service unavailable")
             return False
         start, nxt = run.route.waypoints[0], run.route.waypoints[1]
-        yaw = math.atan2(nxt.y - start.y, nxt.x - start.x)
+        # The lane's own heading at the start, as the Leaderboard spawns;
+        # the chord to the next waypoint only without a CARLA client (it
+        # is 62 deg off at the dev03_04 junction start, protocol v6).
+        yaw = (
+            self._probe.lane_yaw_at(start.x, start.y, start.z) if self._probe else None
+        )
+        if yaw is None:
+            yaw = math.atan2(nxt.y - start.y, nxt.x - start.x)
         req = Reset.Request()
         req.spawn_index = -1
         req.clear_traffic = True

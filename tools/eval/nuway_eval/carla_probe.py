@@ -23,7 +23,7 @@ from typing import Any
 import carla
 
 from nuway_eval.infractions import CollisionEvent, StopLine, StopSignVolume
-from nuway_ml.common.carla_conv import location_to_ros, yaw_to_ros
+from nuway_ml.common.carla_conv import location_from_ros, location_to_ros, yaw_to_ros
 
 HERO_ROLE = "hero"
 
@@ -43,6 +43,29 @@ class CarlaProbe:
         self._stop_signs: tuple[StopSignVolume, ...] = ()
         self._lock = threading.Lock()
         self._hits: list[tuple[int, str, float]] = []  # (other id, type, other speed)
+
+    # ----------------------------------------------------------------- map
+    def lane_yaw_at(self, x: float, y: float, z: float = 0.0) -> float | None:
+        """ROS yaw of the driving lane under a ROS map point; None off the road.
+
+        The route XML carries positions only, and the heading toward the
+        next waypoint is wrong wherever the road bends between them: the
+        dev03_04 start sits at a junction whose lane runs 62 deg from the
+        chord to a waypoint 43 m away, so the hero spawned across its lane,
+        no lane matched its heading and the route planner rerouted forever
+        (protocol v6). The Leaderboard spawns on the map waypoint's
+        transform; this is the same lookup.
+        """
+        import numpy as np  # noqa: PLC0415  # only this method needs it
+
+        wp = self._world.get_map().get_waypoint(
+            location_from_ros(np.array([x, y, z])),
+            project_to_road=True,
+            lane_type=carla.LaneType.Driving,
+        )
+        if wp is None:
+            return None
+        return float(yaw_to_ros(wp.transform.rotation.yaw))
 
     # ---------------------------------------------------------------- hero
     def attach(self) -> bool:

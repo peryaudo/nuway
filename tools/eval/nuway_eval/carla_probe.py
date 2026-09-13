@@ -58,8 +58,9 @@ class CarlaProbe:
         """
         import numpy as np  # noqa: PLC0415  # only this method needs it
 
+        loc = location_from_ros(np.array([x, y, z]))  # a plain struct, not carla's
         wp = self._world.get_map().get_waypoint(
-            location_from_ros(np.array([x, y, z])),
+            carla.Location(x=loc.x, y=loc.y, z=loc.z),
             project_to_road=True,
             lane_type=carla.LaneType.Driving,
         )

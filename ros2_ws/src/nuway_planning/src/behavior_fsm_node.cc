@@ -165,6 +165,8 @@ class BehaviorFsmNode final : public rclcpp::Node {
     o.stop_sign_dist_m =
         d("stop_sign_dist_m", o.stop_sign_dist_m, "stop sign distance");
     o.stop_sign_hold_s = d("stop_sign_hold_s", o.stop_sign_hold_s, "stop hold");
+    o.stop_line_lane_window_m =
+        d("stop_line_lane_window_m", o.stop_line_lane_window_m, "lane window");
     o.yield_horizon_s =
         d("yield_horizon_s", o.yield_horizon_s, "yield horizon");
     o.yield_lookahead_m =

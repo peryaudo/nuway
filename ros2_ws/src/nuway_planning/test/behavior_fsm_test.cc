@@ -68,6 +68,22 @@ RouteLine RouteOnLane(std::uint32_t lane_id, double y, double goal_s) {
                    limits, {1.75}, {1.75}, goal_s);
 }
 
+// A route line along y = -1.75 whose lane ids switch from `first` to
+// `second` at split_s: the ids stand in for two legs of a route that loops
+// back through one junction.
+RouteLine RouteWithLegs(std::uint32_t first, std::uint32_t second,
+                        double split_s, double goal_s) {
+  nuway_common::Vector2dList points;
+  std::vector<std::uint32_t> lanes;
+  std::vector<double> limits;
+  for (int i = 0; i <= 500; ++i) {
+    points.emplace_back(0.5 * i, -1.75);
+    lanes.push_back(0.5 * i < split_s ? first : second);
+    limits.push_back(13.9);
+  }
+  return RouteLine(nuway_common::ReferenceLine::FromPoints(points), lanes,
+                   limits, {1.75}, {1.75}, goal_s);
+}
 AgentState Car(std::uint32_t id, double x, double y, double yaw, double speed) {
   AgentState agent;
   agent.id = id;
@@ -191,6 +207,51 @@ TEST(BehaviorFsmTest, RedLightWithinStoppingDistanceMeansStop) {
   in.lights[0].affected_lane_ids = {kLaneOuter};
   in.ego.pose.x = 62.0;
   EXPECT_EQ(fsm.Step(in).longitudinal, Longitudinal::kFree);
+}
+
+TEST(BehaviorFsmTest, AStopLineGovernsTheRouteOnlyWhereItProjects) {
+  // dev03_01 (protocol v8): the route passed one junction westbound at
+  // s = 33 and eastbound at s = 551, and the stop sign of the eastbound
+  // lanes projected onto the westbound leg 3.5 m away; "its lane is
+  // somewhere ahead" stopped the car there and marked the sign honoured
+  // before the real pass. A governed lane must be the route lane within
+  // stop_line_lane_window_m of the projected line; the window covers a line
+  // on the boundary where its lane begins.
+  nuway_map::LaneGraph graph = BuildGraph();
+  const RouteLine route = RouteWithLegs(kLaneInner, kLaneOuter, 100.0, 200.0);
+  TrafficLightObs light;
+  light.id = 11;
+  light.state = TrafficLightColor::kRed;
+  light.stop_line = Eigen::Vector2d(60.0, -1.75);
+  light.affected_lane_ids = {kLaneOuter};
+  {
+    BehaviorFsm fsm{BehaviorFsmOptions{}};
+    SceneInput in = Scene(&route, &graph, 40.0, -1.75, 10.0);
+    in.lights = {light};
+    EXPECT_EQ(fsm.Step(in).longitudinal, Longitudinal::kFree);
+    in.lights[0].stop_line = Eigen::Vector2d(100.0, -1.75);
+    in.ego.pose.x = 80.0;
+    const BehaviorOutput out = fsm.Step(in);
+    EXPECT_EQ(out.longitudinal, Longitudinal::kStop);
+    EXPECT_EQ(out.reason, "red_light");
+  }
+  // The same rule for the lane graph's stop signs: boxes on lane -1 at
+  // x = 60 (the later leg's lane, beside this leg) and at x = 100.
+  nuway_map::StopSignSite beside;
+  beside.center = Eigen::Vector2d(60.0, -1.75);
+  beside.half_length_m = 1.7;
+  beside.half_width_m = 1.7;
+  nuway_map::StopSignSite boundary = beside;
+  boundary.center = Eigen::Vector2d(100.0, -1.75);
+  ASSERT_EQ(graph.AddStopSigns({beside, boundary}), 2U);
+  BehaviorFsm fsm{BehaviorFsmOptions{}};
+  SceneInput in = Scene(&route, &graph, 40.0, -1.75, 10.0);
+  EXPECT_EQ(fsm.Step(in).longitudinal, Longitudinal::kFree);
+  in.ego.pose.x = 80.0;
+  const BehaviorOutput out = fsm.Step(in);
+  EXPECT_EQ(out.longitudinal, Longitudinal::kStop);
+  EXPECT_EQ(out.reason, "stop_sign");
+  EXPECT_NEAR(out.stop_s, 99.0, 1e-6);
 }
 
 TEST(BehaviorFsmTest, YellowIsLatchedByTheDilemmaZoneRule) {

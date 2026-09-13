@@ -66,11 +66,14 @@ LateralBounds RouteLine::BoundsAt(double s) const {
   return LateralBounds{left_bound_m_[idx], right_bound_m_[idx]};
 }
 
-bool RouteLine::IsRouteLaneAhead(std::uint32_t lane_id, double s) const {
+bool RouteLine::IsRouteLaneNear(std::uint32_t lane_id, double s,
+                                double window_m) const {
   if (lane_id == 0 || lane_id_.empty()) {
     return false;
   }
-  for (std::size_t i = SampleIndexAt(s); i < lane_id_.size(); ++i) {
+  const std::size_t last = SampleIndexAt(s + window_m);
+  for (std::size_t i = SampleIndexAt(s - window_m);
+       i <= last && i < lane_id_.size(); ++i) {
     if (lane_id_[i] == lane_id) {
       return true;
     }

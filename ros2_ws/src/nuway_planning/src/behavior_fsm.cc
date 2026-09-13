@@ -246,6 +246,26 @@ bool BehaviorFsm::YellowMeansStop(const TrafficLightObs& light, double d_stop,
   return stop;
 }
 
+namespace {
+
+// Whether one of `lanes` is the route lane within window_m of the stop
+// line's projection at s. A light or sign governs the route where its line
+// projects, not wherever its lane recurs: the protocol routes loop back
+// through their own junctions, and a sign of the eastbound lanes, whose
+// line lay 3.5 m from the westbound leg the ego was on, stopped the car
+// there and was marked honoured 500 m before the real pass (dev03_01,
+// protocol v8). The line sits on a lane boundary, so the governed lane may
+// begin just past it: hence the window rather than the lane at s alone.
+bool GovernsRouteAt(const RouteLine& route,
+                    const std::vector<std::uint32_t>& lanes, double s,
+                    double window_m) {
+  return std::any_of(lanes.begin(), lanes.end(), [&](std::uint32_t lane) {
+    return route.IsRouteLaneNear(lane, s, window_m);
+  });
+}
+
+}  // namespace
+
 std::optional<double> BehaviorFsm::StopLineAhead(const SceneInput& in,
                                                  double s_ego, double v,
                                                  std::string* reason) {
@@ -261,21 +281,13 @@ std::optional<double> BehaviorFsm::StopLineAhead(const SceneInput& in,
       (v * options_.t_react_s) + ((v * v) / (2.0 * options_.a_comf_mps2));
   // Traffic lights.
   for (const TrafficLightObs& light : in.lights) {
-    bool on_route = false;
-    for (const std::uint32_t lane : light.affected_lane_ids) {
-      if (in.route->IsRouteLaneAhead(lane, s_ego)) {
-        on_route = true;
-        break;
-      }
-    }
-    if (!on_route) {
-      continue;
-    }
     const std::optional<nuway_common::FrenetPoint> f =
         in.route->ProjectNear(light.stop_line.x(), light.stop_line.y(), 6.0,
                               s_ego, options_.projection_back_m, 300.0);
-    if (!f.has_value() || f->s < s_ego - options_.passed_line_m ||
-        f->s - s_ego > 300.0) {
+    if (!f.has_value() ||
+        !GovernsRouteAt(*in.route, light.affected_lane_ids, f->s,
+                        options_.stop_line_lane_window_m) ||
+        f->s < s_ego - options_.passed_line_m || f->s - s_ego > 300.0) {
       yellow_latch_.erase(light.id);
       last_color_.erase(light.id);
       continue;
@@ -314,20 +326,13 @@ std::optional<double> BehaviorFsm::StopLineAhead(const SceneInput& in,
       if (honoured_signs_.count(sign.id) > 0) {
         continue;
       }
-      bool on_route = false;
-      for (const std::uint32_t lane : sign.affected_lane_ids) {
-        if (in.route->IsRouteLaneAhead(lane, s_ego)) {
-          on_route = true;
-          break;
-        }
-      }
-      if (!on_route) {
-        continue;
-      }
       const std::optional<nuway_common::FrenetPoint> f =
           in.route->ProjectNear(sign.stop_line.x(), sign.stop_line.y(), 6.0,
                                 s_ego, options_.projection_back_m, 300.0);
-      if (!f.has_value() || f->s < s_ego - options_.passed_line_m) {
+      if (!f.has_value() ||
+          !GovernsRouteAt(*in.route, sign.affected_lane_ids, f->s,
+                          options_.stop_line_lane_window_m) ||
+          f->s < s_ego - options_.passed_line_m) {
         continue;
       }
       const double d_stop = f->s - s_ego;

@@ -58,8 +58,11 @@ class RouteLine {
   double SpeedLimitAt(double s) const;
   // Drivable extent at s (the sample at or before s).
   LateralBounds BoundsAt(double s) const;
-  // True when `lane_id` is a route lane at or after arc length s.
-  bool IsRouteLaneAhead(std::uint32_t lane_id, double s) const;
+  // True when `lane_id` is the route lane within window_m of arc length s.
+  // A stop line sits on a lane boundary, so the lane it governs may begin
+  // just past it; the window covers that, and not the same lane on a later
+  // leg of a route that loops back through its own junctions.
+  bool IsRouteLaneNear(std::uint32_t lane_id, double s, double window_m) const;
 
   // The speed profile v*(s) of M0 §2.7 (PurePursuitPid::TargetSpeed) without
   // the end stop: min of the posted limit at s, the curvature speed at s,

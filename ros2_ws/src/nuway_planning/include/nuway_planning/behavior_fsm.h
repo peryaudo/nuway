@@ -89,10 +89,13 @@ struct BehaviorFsmOptions {
   double stop_lookahead_m = 5.0;  // stopping distance = v^2 / (2 a_comf) + this
   double stop_margin_m = 1.0;     // stop_s = stop line - this
   double passed_line_m = 1.0;     // a line this far behind the ego is passed
-  double unknown_confidence = 0.5;   // below: the light state is unknown
-  double stop_sign_speed_mps = 0.2;  // honoured: slower than this ...
-  double stop_sign_dist_m = 3.0;     // ... within this of the line ...
-  double stop_sign_hold_s = 1.0;     // ... for this long
+  double unknown_confidence = 0.5;       // below: the light state is unknown
+  double stop_sign_speed_mps = 0.2;      // honoured: slower than this ...
+  double stop_sign_dist_m = 3.0;         // ... within this of the line ...
+  double stop_sign_hold_s = 1.0;         // ... for this long
+  double stop_line_lane_window_m = 5.0;  // a light or sign governs the route
+                                         // where a governed lane is the route
+                                         // lane within this of its line
   // Yielding.
   double yield_horizon_s = 4.0;      // predicted crossings up to this time
   double yield_lookahead_m = 60.0;   // ... this far ahead on the route

@@ -36,9 +36,13 @@ TEST(RouteLineTest, AttributesFollowTheSamples) {
   EXPECT_NEAR(route.BoundsAt(5.0).left_m, 2.0, 1e-12);
   EXPECT_NEAR(route.BoundsAt(5.0).right_m, 1.5, 1e-12);
   EXPECT_NEAR(route.goal_s(), 150.0, 1e-12);
-  EXPECT_TRUE(route.IsRouteLaneAhead(2, 10.0));
-  EXPECT_FALSE(route.IsRouteLaneAhead(1, 120.0));
-  EXPECT_FALSE(route.IsRouteLaneAhead(0, 0.0));
+  // Lane 2 begins at 100 m: the route's lane there, within a 5 m window
+  // of its boundary, and not "somewhere ahead" of 10 m.
+  EXPECT_TRUE(route.IsRouteLaneNear(1, 10.0, 5.0));
+  EXPECT_TRUE(route.IsRouteLaneNear(2, 97.0, 5.0));
+  EXPECT_FALSE(route.IsRouteLaneNear(2, 10.0, 5.0));
+  EXPECT_FALSE(route.IsRouteLaneNear(1, 120.0, 5.0));
+  EXPECT_FALSE(route.IsRouteLaneNear(0, 0.0, 5.0));
 }
 
 TEST(RouteLineTest, SpeedBoundRampsDownBeforeALowerLimit) {

@@ -297,6 +297,25 @@ class RouteRunnerNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (0
         self._line_right: np.ndarray | None = None
         self._pending: list[Odometry] = []
 
+    def forget_stack(self) -> None:
+        """Drop the episode state a previous stack left behind.
+
+        The runner launches one stack per town on one node. A fresh stack
+        starts its episode ids and its sim clock at zero, so the replay
+        filters below (an episode id not newer than the last, a tick before
+        the episode's first) would swallow every reset event and every tick
+        of the new stack: protocol v6 recorded Town03's last trace under
+        every Town05 row.
+        """
+        self._episode_k = -1
+        self._episode_id = -1
+        self._episode_stamp = TimeMsg()
+        self._trace = _Trace()
+        self._line = None
+        self._line_left = None
+        self._line_right = None
+        self._pending = []
+
     # ------------------------------------------------------------ callbacks
     def _on_reset_event(self, msg: ResetEvent) -> None:
         # Transient-local replays of earlier episodes arrive in no order;

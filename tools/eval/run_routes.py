@@ -224,6 +224,8 @@ class Harness:
         """Launch the town's stack unless one is already running."""
         if self.args.no_launch:
             return
+        if self.node is not None:
+            self.node.forget_stack()  # its episode ids and clock restart at 0
         self.stack = StackProcess(
             town_profile(self.profile_path, town, self.out_dir),
             self.out_dir / f"stack_{town}.log",

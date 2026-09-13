@@ -392,8 +392,10 @@ std::vector<Candidate> LatticeSampler::Sample(
   // creep that the MPC chases with throttle, and on a downhill the coast-
   // level deceleration the pedal map then commands never re-stops the car
   // (it rolled through a red light at 0.3 m/s, dev03_00 HardRainNight,
-  // protocol v8). Within that distance the stop is honoured as well as the
-  // FSM's own stop_sign_dist_m judges it. Without the quintics the STOP
+  // protocol v8). The FSM's stop-sign dwell counts within its own
+  // stop_sign_dist_m of stop_s, the same 3 m, so a held stop is honoured
+  // (a dwell measured from the line left a held car standing for good,
+  // dev03_01, protocol v8 check). Without the quintics the STOP
   // state keeps its constant-deceleration hard stop, a standstill from rest.
   const auto add_stops = [&](double s_stop) {
     const double gap_m = s_stop - ego.s;

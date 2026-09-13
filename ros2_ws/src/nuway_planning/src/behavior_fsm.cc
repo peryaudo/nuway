@@ -337,8 +337,13 @@ std::optional<double> BehaviorFsm::StopLineAhead(const SceneInput& in,
           f->s < s_ego - options_.passed_line_m) {
         continue;
       }
+      // Honoured within stop_sign_dist_m of stop_s, the point the planner
+      // aims for, not of the line: the sampler holds a stopped ego within
+      // hold_short_of_stop_m of stop_s, and a dwell window measured from
+      // the line 1 m further on left a car held 2.9 m short of stop_s
+      // standing for good (dev03_01, protocol v8 check).
       const double d_stop = f->s - s_ego;
-      if (std::abs(d_stop) <= options_.stop_sign_dist_m &&
+      if (d_stop - options_.stop_margin_m <= options_.stop_sign_dist_m &&
           v < options_.stop_sign_speed_mps) {
         if (dwelling_sign_ != sign.id) {
           dwelling_sign_ = sign.id;

@@ -45,14 +45,22 @@ struct LatticeLimits {
 
 struct LatticeOptions {
   std::vector<double> d_offsets_m = {-1.0, -0.5, 0.0, 0.5, 1.0};
-  // Path lengths; the 8 m entry is the low-speed recovery length: an ego
-  // whose heading is well off the line's (after understeering through an
-  // R ~ 2.5 m junction corner at 1 m/s) needs a path that settles within a
-  // couple of car lengths, and the 20 m quintic from its d' leaves the band
-  // before it turns back, so the band filter rejected every moving
-  // candidate and the car stood still (task 17, protocol v2). From 6.7 m/s
-  // on the speed scaling merges it with the 20 m entry.
-  std::vector<double> ds_set_m = {8.0, 20.0, 35.0, 50.0};
+  // Path lengths; the 8 m and 4 m entries are the low-speed recovery
+  // lengths: an ego whose heading is well off the line's (after
+  // understeering through an R ~ 2.5 m junction corner at 1 m/s) needs a
+  // path that settles within a couple of car lengths, and the 20 m quintic
+  // from its d' leaves the band before it turns back, so the band filter
+  // rejected every moving candidate and the car stood still (task 17,
+  // protocol v2). The 4 m entry is the turn-in: a quintic builds its
+  // curvature over the first third of its length, the MPC tracks one
+  // second of it, and the planner restarts from the measured state every
+  // planning tick, so an 8 m path from 23 deg off the line at 1.5 m/s
+  // asked for 0.2 rad/m over the controller's horizon where the corner
+  // needed 0.6, and the car drifted out of the band while every replan
+  // again began gently (protocol v5 check). From 2.7 m/s on the speed
+  // scaling merges the 4 m entry with the 8 m one, from 6.7 m/s both with
+  // the 20 m one.
+  std::vector<double> ds_set_m = {4.0, 8.0, 20.0, 35.0, 50.0};
   double ds_speed_factor_s = 3.0;  // ds = max(ds, factor * v)
   // The keep targets are capped by the curvature speed of the stretch the
   // candidate covers, aiming at this fraction of a_lat_max so that the

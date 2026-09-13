@@ -156,6 +156,38 @@ TEST(LatticeSamplerTest, FeasibleCandidatesRespectTheLimits) {
   }
 }
 
+TEST(LatticeSamplerTest, AnEgoDriftingOutAtTheBandEdgeKeepsATurnInPath) {
+  // 1.3 m left of the line, 0.45 m inside the band, heading 31 degrees
+  // outward (d' = 0.6) at 1.5 m/s: the corner exit of protocol v5, where
+  // the 8 m quintic still swings past the band before it turns back and
+  // every moving candidate was rejected. The 4 m turn-in (max(4, 3 v) =
+  // 4.5 m) peaks a quarter of a metre out and stays inside.
+  const RouteLine route = Straight(300.0);
+  SceneInput in;
+  in.route = &route;
+  FrenetState ego = Ego(20.0, 1.5, 1.3);
+  ego.d_prime = 0.6;
+  const LatticeSampler sampler{LatticeOptions{}, LatticeLimits{}};
+  std::vector<Candidate> set =
+      sampler.Sample(in, ego, Decision(Longitudinal::kFree, 2.9));
+  sampler.Filter(route, &set);
+  std::size_t moving = 0;
+  for (const Candidate& c : set) {
+    if (c.injected || !c.feasible()) {
+      continue;
+    }
+    double v_max = 0.0;
+    for (const nuway_common::TrajectoryPoint& p : c.trajectory) {
+      v_max = std::max(v_max, p.v);
+    }
+    if (v_max > 1.5) {
+      ++moving;
+      EXPECT_LE(c.s_f_m - ego.s, 4.5 + 1e-9);
+    }
+  }
+  EXPECT_GT(moving, 0U);
+}
+
 TEST(LatticeSamplerTest, AnEgoHeadedOffTheLineAtLowSpeedKeepsARecoveryPath) {
   // An ego 0.64 m left of the line, heading 27 degrees off it (d' = 0.5)
   // at 1 m/s: the way out of an R ~ 2.5 m junction corner the controller

@@ -96,6 +96,9 @@ struct SpeedSpec {
   }
 };
 
+// Peak over mean acceleration of the velocity-keeping quartic below.
+constexpr double kQuarticPeakFactor = 1.5;
+
 // The velocity-keeping quartic (end position free, Werling 2010 §V.B).
 SpeedSpec KeepSpeed(const FrenetState& ego, double v_target, double horizon) {
   SpeedSpec spec;
@@ -359,9 +362,28 @@ std::vector<Candidate> LatticeSampler::Sample(
         targets.push_back(v_t);
       }
     }
-    for (const double v_t : targets) {
-      for (const double horizon : options_.keep_horizons_s) {
-        speeds.push_back(KeepSpeed(ego, v_t, horizon));
+    // A keep target beyond what the horizon can reach is replaced by the
+    // reachable speed: the quartic's acceleration peaks at 1.5x its mean
+    // (a(t) = 6 dv/T (tau - tau^2)), so from rest on a 70 km/h road every
+    // target above 16 m/s failed the 3 m/s^2 bound on the 8 s horizon and
+    // the ego, halted at a stop sign, never moved again (protocol v8,
+    // dev03_00: 302 sampled, 0 feasible for 180 s). The 5 % margin covers
+    // a small non-zero start acceleration.
+    for (const double horizon : options_.keep_horizons_s) {
+      const double v_reach = ego.s_dot + (0.95 * limits_.a_max_mps2 /
+                                          kQuarticPeakFactor * horizon);
+      std::vector<double> ends;
+      for (const double v_t : targets) {
+        const double v_end = std::min(v_t, std::max(v_reach, 0.0));
+        bool duplicate = false;
+        for (const double e : ends) {
+          duplicate = duplicate || std::abs(e - v_end) < kEps;
+        }
+        if (duplicate) {
+          continue;
+        }
+        ends.push_back(v_end);
+        speeds.push_back(KeepSpeed(ego, v_end, horizon));
       }
     }
   };

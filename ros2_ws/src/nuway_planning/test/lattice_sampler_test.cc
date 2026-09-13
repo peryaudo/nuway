@@ -474,6 +474,38 @@ TEST(LatticeSamplerTest, FollowAddsGapKeepingAndEgoProjects) {
                    .has_value());
 }
 
+TEST(LatticeSamplerTest, KeepTargetsFromRestStayWithinTheAccelerationBound) {
+  // Halted on a 70 km/h road (a stop sign), FREE at 19.3 m/s: the targets
+  // above what 8 s of 3 m/s^2 can reach are replaced by the reachable
+  // speed, so at least one keep candidate meets the bound and the ego can
+  // start again (protocol v8, dev03_00). The test route's own 50 km/h limit
+  // caps the targets at 13.9 m/s, so the bound is tightened to 2 m/s^2
+  // instead: reach = 0.95 * 2 / 1.5 * 8 s = 10.1 m/s.
+  const RouteLine route = Straight(600.0);
+  SceneInput in;
+  in.route = &route;
+  LatticeLimits limits;
+  limits.a_max_mps2 = 2.0;
+  const LatticeSampler sampler{LatticeOptions{}, limits};
+  const std::vector<Candidate> set =
+      sampler.Sample(in, Ego(20.0, 0.0), Decision(Longitudinal::kFree, 19.3));
+  bool one_within_bound = false;
+  double v_end_max = 0.0;
+  for (const Candidate& c : set) {
+    if (c.speed_kind != SpeedKind::kKeep) {
+      continue;
+    }
+    double a_max = 0.0;
+    for (const auto& p : c.frenet) {
+      a_max = std::max(a_max, p.s_ddot);
+    }
+    one_within_bound = one_within_bound || a_max <= limits.a_max_mps2 + 1e-6;
+    v_end_max = std::max(v_end_max, c.frenet.back().s_dot);
+  }
+  EXPECT_TRUE(one_within_bound);
+  EXPECT_NEAR(v_end_max, 10.13, 0.05);  // the 10.9+ targets are unreachable
+}
+
 TEST(LatticeSamplerTest, FollowNeverAimsAboveItsTargetButFreeDoes) {
   // FOLLOW's target is the IDM desired speed: the keep targets stop at it
   // (closing in is the gap candidates' job, and the +1.5 targets alone put

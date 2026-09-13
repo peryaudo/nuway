@@ -192,6 +192,13 @@ TEST(BehaviorFsmTest, RedLightWithinStoppingDistanceMeansStop) {
   SceneInput in = Scene(&route, &graph, 20.0, -1.75, 10.0);
   in.lights = {light};
   EXPECT_EQ(fsm.Step(in).longitudinal, Longitudinal::kFree);
+  // At 30 m the line is 29 m past stop_s: still free, but the target speed
+  // is the one a 2.5 m/s^2 stop from there allows, so that STOP begins at
+  // a speed its quintics can stop from (Decisions (g) of 2026-09-13).
+  in.ego.pose.x = 30.0;
+  const BehaviorOutput approach = fsm.Step(in);
+  EXPECT_EQ(approach.longitudinal, Longitudinal::kFree);
+  EXPECT_NEAR(approach.target_speed_mps, std::sqrt(2.0 * 2.5 * 29.0), 1e-6);
   in.ego.pose.x = 40.0;
   const BehaviorOutput out = fsm.Step(in);
   EXPECT_EQ(out.longitudinal, Longitudinal::kStop);

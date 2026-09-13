@@ -535,6 +535,20 @@ BehaviorOutput BehaviorFsm::Step(const SceneInput& in) {
   const std::optional<double> stop_line = StopLineAhead(in, s, v, &why);
   const double stopping_distance =
       ((v * v) / (2.0 * options_.a_comf_mps2)) + options_.stop_lookahead_m;
+  // Beyond the stopping distance the line still bounds the target speed:
+  // the speed from which stop_s is reached at a_comf. FREE aimed at the road
+  // limit until the line was one stopping distance away, so STOP began at a
+  // speed none of its quintics could stop from, the injected gentle stop
+  // overshot the line by 8 m, and a Town03 stop sign was crossed at 8 m/s
+  // (dev03_01, protocol v8 check). With the bound, STOP begins at the speed
+  // its own target formula gives.
+  double v_approach = v_bound;
+  if (stop_line.has_value()) {
+    const double remaining =
+        std::max(0.0, *stop_line - options_.stop_margin_m - s);
+    v_approach =
+        std::min(v_bound, std::sqrt(2.0 * options_.a_comf_mps2 * remaining));
+  }
   if (stop_line.has_value() && *stop_line - s <= stopping_distance) {
     out.longitudinal = Longitudinal::kStop;
     out.stop_s = *stop_line - options_.stop_margin_m;
@@ -569,7 +583,7 @@ BehaviorOutput BehaviorFsm::Step(const SceneInput& in) {
     out.stop_s = YieldStop(*conflict, s);
     const double remaining = std::max(0.0, out.stop_s - s);
     out.target_speed_mps =
-        std::min(v_bound, std::sqrt(2.0 * options_.a_comf_mps2 * remaining));
+        std::min(v_approach, std::sqrt(2.0 * options_.a_comf_mps2 * remaining));
     out.reason += yield_why;
     return out;
   }
@@ -586,12 +600,12 @@ BehaviorOutput BehaviorFsm::Step(const SceneInput& in) {
     const double v_lead = std::max(0.0, (lead->vx_mps * std::cos(heading)) +
                                             (lead->vy_mps * std::sin(heading)));
     out.target_speed_mps =
-        std::min(v_bound, IdmTargetSpeed(v, gap, v_lead, v_limit));
+        std::min(v_approach, IdmTargetSpeed(v, gap, v_lead, v_limit));
     out.reason += "follow:agent" + std::to_string(lead->id);
     return out;
   }
   out.longitudinal = Longitudinal::kFree;
-  out.target_speed_mps = v_bound;
+  out.target_speed_mps = v_approach;
   out.reason += "free";
   return out;
 }

@@ -216,7 +216,8 @@ TEST(BehaviorFsmTest, AStopLineGovernsTheRouteOnlyWhereItProjects) {
   // somewhere ahead" stopped the car there and marked the sign honoured
   // before the real pass. A governed lane must be the route lane within
   // stop_line_lane_window_m of the projected line; the window covers a line
-  // on the boundary where its lane begins.
+  // short of the lanes it governs (the graph's sits on their boundary, a GT
+  // light's up to 8 m before it), not a lane 40 m on.
   nuway_map::LaneGraph graph = BuildGraph();
   const RouteLine route = RouteWithLegs(kLaneInner, kLaneOuter, 100.0, 200.0);
   TrafficLightObs light;

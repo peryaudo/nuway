@@ -254,8 +254,10 @@ namespace {
 // through their own junctions, and a sign of the eastbound lanes, whose
 // line lay 3.5 m from the westbound leg the ego was on, stopped the car
 // there and was marked honoured 500 m before the real pass (dev03_01,
-// protocol v8). The line sits on a lane boundary, so the governed lane may
-// begin just past it: hence the window rather than the lane at s alone.
+// protocol v8). The line sits short of the lanes it governs -- the graph's
+// on the boundary where they begin, a GT light's at CARLA's stop waypoint,
+// measured up to 8 m before them -- hence the window rather than the lane
+// at s alone.
 bool GovernsRouteAt(const RouteLine& route,
                     const std::vector<std::uint32_t>& lanes, double s,
                     double window_m) {

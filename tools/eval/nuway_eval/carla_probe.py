@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import math
 import threading
+import time
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
@@ -133,9 +134,27 @@ class CarlaProbe:
         ]
 
     # ---------------------------------------------------------------- town
-    def cache_town(self) -> None:
-        """Stop lines of every light and the trigger volume of every stop sign."""
-        self._lights = list(self._world.get_actors().filter("traffic.traffic_light"))
+    def cache_town(self, attempts: int = 20) -> None:
+        """Stop lines of every light and the trigger volume of every stop sign.
+
+        A client that has just connected sees no actors until the server's
+        episode state reaches it, and one query more than a minute after the
+        launch still came back empty on the dev box, which left a whole town
+        without stop-sign checks (protocol v7 check). So poll until the world
+        reports actors (a town always has its traffic lights) and fail loudly
+        otherwise: a silent empty cache disables the checks it feeds. Polling
+        with sleeps, not ``wait_for_tick``: that call leaves a worker thread
+        in the client whose teardown aborted the harness at the next town.
+        """
+        actors = self._world.get_actors()
+        for _ in range(attempts):
+            if len(actors) > 0:
+                break
+            time.sleep(0.5)
+            actors = self._world.get_actors()
+        if len(actors) == 0:
+            raise RuntimeError("the world reports no actors; is the server ticking?")
+        self._lights = list(actors.filter("traffic.traffic_light"))
         self._stop_lines = {}
         for light in self._lights:
             lines = []
@@ -152,7 +171,7 @@ class CarlaProbe:
                 )
             self._stop_lines[int(light.id)] = tuple(lines)
         signs = []
-        for sign in self._world.get_actors().filter("traffic.stop"):
+        for sign in actors.filter("traffic.stop"):
             box = sign.trigger_volume
             transform = sign.get_transform()
             corners = []

@@ -474,6 +474,36 @@ TEST(LatticeSamplerTest, FollowAddsGapKeepingAndEgoProjects) {
                    .has_value());
 }
 
+TEST(LatticeSamplerTest, FollowNeverAimsAboveItsTargetButFreeDoes) {
+  // FOLLOW's target is the IDM desired speed: the keep targets stop at it
+  // (closing in is the gap candidates' job, and the +1.5 targets alone put
+  // a walking-pace queue over the 15 ms budget); FREE keeps the +1.5 one.
+  const RouteLine route = Straight(300.0);
+  SceneInput in;
+  in.route = &route;
+  nuway_common::AgentState lead;
+  lead.id = 5;
+  lead.pose = nuway_common::SE2{60.0, 0.0, 0.0};
+  lead.length_m = 4.5;
+  lead.vx_mps = 6.0;
+  in.agents = {lead};
+  const LatticeSampler sampler{LatticeOptions{}, LatticeLimits{}};
+  const auto max_keep_end_speed = [&](const BehaviorOutput& decision) {
+    double v_max = 0.0;
+    for (const Candidate& c : sampler.Sample(in, Ego(20.0, 7.0), decision)) {
+      if (c.speed_kind == SpeedKind::kKeep) {
+        v_max = std::max(v_max, c.frenet.back().s_dot);
+      }
+    }
+    return v_max;
+  };
+  BehaviorOutput follow = Decision(Longitudinal::kFollow, 7.0);
+  follow.lead_agent_id = 5;
+  EXPECT_LE(max_keep_end_speed(follow), 7.0 + 1e-6);
+  EXPECT_NEAR(max_keep_end_speed(Decision(Longitudinal::kFree, 7.0)), 8.5,
+              1e-6);
+}
+
 TEST(LatticeSamplerTest, ACornerEnteredTooFastKeepsTheBrakingCandidates) {
   // On an R = 30 m circle at 12 m/s the ego's own lateral acceleration is
   // 4.8 m/s^2, above the 4 m/s^2 limit, at every candidate's first point:

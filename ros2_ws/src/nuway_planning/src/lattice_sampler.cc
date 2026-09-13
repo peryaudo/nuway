@@ -319,7 +319,13 @@ std::vector<Candidate> LatticeSampler::Sample(
   // Longitudinal set by behavior state.
   std::vector<SpeedSpec> speeds;
   const double v_limit = route.SpeedLimitAt(ego.s);
-  const auto add_keeping = [&](double v_center) {
+  // `above_target` admits the positive speed offsets. FOLLOW's target is
+  // already the IDM desired speed toward the lead, closing in is what the
+  // gap candidates are for, and at walking pace behind a queue (five path
+  // ends times five offsets) the targets above it alone put the planning
+  // cycle over its 15 ms budget: 377 candidates and every tick over budget
+  // a FOLLOW one (protocol v7 check).
+  const auto add_keeping = [&](double v_center, bool above_target) {
     std::vector<double> targets;
     // A keep profile holds its end speed to the 8 s horizon, so the end
     // speed must respect the bends of the whole stretch it can reach; a
@@ -329,7 +335,9 @@ std::vector<Candidate> LatticeSampler::Sample(
     // its own where it bites.
     double v_high = v_center;
     for (const double offset : options_.speed_offsets_mps) {
-      v_high = std::max(v_high, v_center + offset);
+      if (above_target || offset <= 0.0) {
+        v_high = std::max(v_high, v_center + offset);
+      }
     }
     const double reach =
         std::max(v, v_high) * nuway_common::kTrajectoryDtS *
@@ -339,6 +347,9 @@ std::vector<Candidate> LatticeSampler::Sample(
                      ego.s, reach,
                      options_.curvature_cap_factor * limits_.a_lat_max_mps2));
     for (const double offset : options_.speed_offsets_mps) {
+      if (offset > 0.0 && !above_target) {
+        continue;
+      }
       const double v_t = std::clamp(v_center + offset, 0.0, v_cap);
       bool duplicate = false;
       for (const double e : targets) {
@@ -363,10 +374,10 @@ std::vector<Candidate> LatticeSampler::Sample(
   };
   switch (decision.longitudinal) {
     case Longitudinal::kFree:
-      add_keeping(decision.target_speed_mps);
+      add_keeping(decision.target_speed_mps, true);
       break;
     case Longitudinal::kFollow: {
-      add_keeping(decision.target_speed_mps);
+      add_keeping(decision.target_speed_mps, false);
       const std::optional<LeadOnLine> lead =
           ProjectLead(in, ego, decision.lead_agent_id);
       if (lead.has_value()) {

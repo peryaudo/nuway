@@ -387,8 +387,19 @@ std::vector<Candidate> LatticeSampler::Sample(
       }
     }
   };
+  // A stopped ego within hold_short_of_stop_m of its stop holds where it is
+  // instead of creeping the last metres: the quintic from rest is a 0.2 m/s
+  // creep that the MPC chases with throttle, and on a downhill the coast-
+  // level deceleration the pedal map then commands never re-stops the car
+  // (it rolled through a red light at 0.3 m/s, dev03_00 HardRainNight,
+  // protocol v8). Within that distance the stop is honoured as well as the
+  // FSM's own stop_sign_dist_m judges it. Without the quintics the STOP
+  // state keeps its constant-deceleration hard stop, a standstill from rest.
   const auto add_stops = [&](double s_stop) {
-    if (s_stop - ego.s > 0.5) {
+    const double gap_m = s_stop - ego.s;
+    const bool hold = ego.s_dot < options_.stopped_speed_mps &&
+                      gap_m < options_.hold_short_of_stop_m;
+    if (gap_m > 0.5 && !hold) {
       for (const double horizon : options_.stop_horizons_s) {
         speeds.push_back(StopAt(ego, s_stop, horizon, SpeedKind::kStop));
       }

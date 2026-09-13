@@ -506,6 +506,33 @@ TEST(LatticeSamplerTest, KeepTargetsFromRestStayWithinTheAccelerationBound) {
   EXPECT_NEAR(v_end_max, 10.13, 0.05);  // the 10.9+ targets are unreachable
 }
 
+TEST(LatticeSamplerTest, StoppedEgoShortOfItsStopHoldsInsteadOfCreeping) {
+  // Halted 2.4 m short of a red light on a 9.5 % downhill, the quintic to
+  // stop_s was a 0.2 m/s creep that the controller chased with throttle and
+  // could not re-stop on the grade (protocol v8, dev03_00 HardRainNight).
+  // At rest within hold_short_of_stop_m the STOP set has no quintic: the
+  // hard stop and the injected pair are standstills. A moving ego, or one
+  // stopped farther short, still gets the quintics to the line.
+  const RouteLine route = Straight(300.0);
+  SceneInput in;
+  in.route = &route;
+  const LatticeSampler sampler{LatticeOptions{}, LatticeLimits{}};
+  const auto peak_speed = [&](const FrenetState& ego, double stop_s) {
+    double v = 0.0;
+    const std::vector<Candidate> set =
+        sampler.Sample(in, ego, Decision(Longitudinal::kStop, 0.0, stop_s));
+    for (const Candidate& c : set) {
+      for (const auto& p : c.frenet) {
+        v = std::max(v, p.s_dot);
+      }
+    }
+    return v;
+  };
+  EXPECT_LE(peak_speed(Ego(20.0, 0.0), 22.4), 1e-6);  // holds
+  EXPECT_GT(peak_speed(Ego(20.0, 0.0), 25.0), 0.5);   // 5 m short: creeps up
+  EXPECT_GT(peak_speed(Ego(20.0, 2.0), 22.4), 1.0);   // rolling: stops there
+}
+
 TEST(LatticeSamplerTest, FollowNeverAimsAboveItsTargetButFreeDoes) {
   // FOLLOW's target is the IDM desired speed: the keep targets stop at it
   // (closing in is the gap candidates' job, and the +1.5 targets alone put

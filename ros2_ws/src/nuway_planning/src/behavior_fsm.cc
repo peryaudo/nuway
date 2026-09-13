@@ -72,7 +72,12 @@ double BehaviorFsm::LaneHalfWidth(const SceneInput& in, std::uint32_t lane_id,
 }
 
 // The lead of M1 §3.2: nearest agent with s > s_ego within follow_range
-// whose Frenet d lies within half width + slack of the lane band centre.
+// whose Frenet d lies within half width + slack of the lane band centre and
+// which drives the line's way (heading within 90 deg of the line's). A car
+// heading against the line is oncoming, not a lead: on a left turn the
+// route line sweeps through the crossing lane and an oncoming truck that
+// stopped for the hero there projected as a standing lead, so the ego
+// "followed" it until the route timed out (protocol v7, Decisions (n)).
 const AgentState* BehaviorFsm::FindLead(const SceneInput& in, double s_ego,
                                         double d_lane,
                                         double half_width) const {
@@ -89,6 +94,10 @@ const AgentState* BehaviorFsm::FindLead(const SceneInput& in, double s_ego,
       continue;
     }
     if (std::abs(f->d - d_lane) > half_width + options_.lane_slack_m) {
+      continue;
+    }
+    if (std::abs(nuway_common::WrapAngle(
+            agent.pose.yaw - in.route->line().HeadingAt(f->s))) > M_PI_2) {
       continue;
     }
     if (f->s < best_s) {

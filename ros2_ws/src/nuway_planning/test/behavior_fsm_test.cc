@@ -140,9 +140,11 @@ TEST(BehaviorFsmTest, LeadVehicleAheadMeansFollowBelowItsSpeed) {
   const RouteLine route = RouteOnLane(kLaneOuter, -1.75, 200.0);
   BehaviorFsm fsm{BehaviorFsmOptions{}};
   SceneInput in = Scene(&route, &graph, 20.0, -1.75, 12.0);
-  in.agents = {Car(5, 40.0, -1.75, 0.0, 6.0),  // lead, 20 m ahead, slow
-               Car(6, 40.0, -5.0, 0.0, 6.0),   // other lane: ignored
-               Car(7, 5.0, -1.75, 0.0, 6.0)};  // behind: ignored
+  in.agents = {
+      Car(5, 40.0, -1.75, 0.0, 6.0),    // lead, 20 m ahead, slow
+      Car(6, 40.0, -5.0, 0.0, 6.0),     // other lane: ignored
+      Car(7, 5.0, -1.75, 0.0, 6.0),     // behind: ignored
+      Car(8, 30.0, -1.75, M_PI, 0.0)};  // oncoming, standing: not a lead
   in.predictions = Predict(in.agents);
   const BehaviorOutput out = fsm.Step(in);
   EXPECT_EQ(out.longitudinal, Longitudinal::kFollow);

@@ -332,5 +332,34 @@ TEST(CandidateRefinerTest, ExhaustedBudgetKeepsTheLatticeShape) {
   fine.Reset();
 }
 
+// An ego that has understeered out of the drivable box (0.42 m past the
+// bound the hero fits in) still gets a converged, unrelaxed path QP that
+// brings it back: the box is widened by the start's own excess (the
+// sampler's relative band rule), not enforced at the fixed first knot,
+// where it made every top-K solve fail and left the injected stop the only
+// choice (task 17, protocol v5, a bus into the standing car).
+TEST(CandidateRefinerTest, AnEgoOutsideTheBoxAtTheStartIsBroughtBackIn) {
+  const RouteLine route = Straight();
+  SceneInput in;
+  in.route = &route;
+  in.predictions = ConstVel({});
+  FrenetState ego = Ego(20.0, 10.0);
+  ego.d = 3.0;  // bound 3.5, half width 0.92: the box ends at 2.58
+  Candidate c = CentreCandidate(in, ego, 10.0);
+  ASSERT_EQ(c.trajectory.size(), 81U);
+  CandidateRefiner refiner{RefinerOptions{}, LatticeLimits{},
+                           CollisionOptions{}};
+  const RefineOutcome out = refiner.Refine(in, ego, &c);
+  EXPECT_EQ(out.path, QpOutcome::kSolved) << out.message;
+  EXPECT_TRUE(c.refined);
+  EXPECT_FALSE(c.qp_relaxed) << out.message;
+  ASSERT_EQ(c.frenet.size(), 81U);
+  EXPECT_NEAR(c.frenet.front().d, 3.0, 1e-3);
+  for (const FrenetState& f : c.frenet) {
+    EXPECT_LE(f.d, 3.0 + 1e-2);  // never farther out than the start
+  }
+  EXPECT_LT(std::abs(c.frenet.back().d), 0.5);  // back toward the centre
+}
+
 }  // namespace
 }  // namespace nuway_planning

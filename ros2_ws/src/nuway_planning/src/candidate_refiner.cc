@@ -205,6 +205,21 @@ RefineOutcome CandidateRefiner::Refine(const SceneInput& in,
     }
     p.ddx_lower[0] = std::min(p.ddx_lower[0], ego.d_dprime);
     p.ddx_upper[0] = std::max(p.ddx_upper[0], ego.d_dprime);
+    // The sampler's band rule (M1 §3.3) is relative to the start: an ego
+    // already outside the drivable box keeps the candidates that come
+    // back in. The box here is widened by the start's own excess over the
+    // whole path, so the fixed first knot is feasible and the lattice
+    // reference pulls the path back; with the hard box an ego that had
+    // understeered 0.7 m out of an R ~ 3 m corner at 2 m/s saw every
+    // top-K path QP fail or relax, the injected stop won for good and a
+    // bus drove into the standing car (task 17, protocol v5).
+    const double excess_left = std::max(0.0, ego.d - p.x_upper[0]);
+    const double excess_right = std::max(0.0, p.x_lower[0] - ego.d);
+    for (int i = 0; i < n_path; ++i) {
+      const auto k = static_cast<std::size_t>(i);
+      p.x_upper[k] += excess_left;
+      p.x_lower[k] -= excess_right;
+    }
     // Static and slow agents tighten the bound on the side the lattice
     // path passes them, over the s interval their footprint (plus the
     // ego's own length and the margins) occupies.

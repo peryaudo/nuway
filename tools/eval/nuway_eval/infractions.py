@@ -148,6 +148,10 @@ class InfractionTracker:
     _driven_m: float = 0.0
     _outside_m: float = 0.0
     _last_collision: _LastCollision | None = None
+    # The ego speed of the previous tick: a collision row reports the speed
+    # *before* impact, since the collision tick already carries the physics
+    # kick (a standing ego read 0.3 m/s on the tick a van drove into it).
+    _prev_speed_mps: float | None = None
     _lines: dict[int, _LineState] = field(default_factory=dict)
     _signs: dict[int, _SignState] = field(default_factory=dict)
     _slow_since: float | None = None
@@ -219,10 +223,15 @@ class InfractionTracker:
                 hit.other_type,
                 hit.other_speed_mps,
                 hit.visible,
-                ego_speed_mps=obs.speed_mps,
+                ego_speed_mps=(
+                    obs.speed_mps
+                    if self._prev_speed_mps is None
+                    else self._prev_speed_mps
+                ),
             )
             fired.append(hit.kind)
         self._last_collision = last
+        self._prev_speed_mps = obs.speed_mps
         return fired
 
     def _red_lights(self, obs: TickObservation) -> list[str]:

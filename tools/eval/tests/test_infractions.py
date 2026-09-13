@@ -71,6 +71,22 @@ def test_collisions_are_classed_and_deduplicated(cfg: ScoringConfig) -> None:
     assert c.incidents[0] == (0, "collision_vehicle")
 
 
+def test_collision_row_carries_the_speed_before_impact(cfg: ScoringConfig) -> None:
+    """The collision tick already carries the physics kick: a standing ego read
+    0.3 m/s on the tick a van drove into it (protocol v6). The row reports the
+    previous tick's speed, which is what the standing-ego attribution reads."""
+    tr = InfractionTracker(cfg, 1000.0)
+    van = CollisionEvent(5, "vehicle.mercedes.sprinter", 3.7, True)
+    assert tr.update(_obs(0, 0.0, speed=0.0)) == []
+    assert tr.update(_obs(1, 0.0, speed=0.0)) == []
+    assert tr.update(_obs(2, 0.01, speed=0.3, collisions=[van])) == [
+        "collision_vehicle"
+    ]
+    assert tr.counts.collisions == [
+        (2, "collision_vehicle", "vehicle.mercedes.sprinter", 3.7, True, 0.0),
+    ]
+
+
 def test_red_light_counts_a_crossing_while_red_only(cfg: ScoringConfig) -> None:
     tr = InfractionTracker(cfg, 1000.0)
     line = StopLine(light_id=1, x=10.0, y=0.0, heading=0.0, half_width_m=1.75)

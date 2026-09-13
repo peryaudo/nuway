@@ -88,6 +88,7 @@ class TickObservation:
     d: float | None  # left positive
     left_bound_m: float  # drivable edge distances at s (positive)
     right_bound_m: float
+    yaw: float = 0.0  # heading, map frame (the stop-sign lookahead runs along it)
     red_stop_lines: Sequence[StopLine] = ()  # stop lines of lights that are red now
     stop_signs: Sequence[StopSignVolume] = ()
     collisions: Sequence[CollisionEvent] = ()
@@ -260,12 +261,30 @@ class InfractionTracker:
         return fired
 
     def _stop_signs(self, obs: TickObservation) -> list[str]:
+        """Port of the Leaderboard 2.0 ``RunningStopTest``.
+
+        The vehicle is affected by a sign while any of its next waypoints
+        lies in the trigger volume, and the stop counts once its speed drops
+        below the threshold while affected; so a halt with the nose in the
+        box honours the sign. The waypoints become points along the heading
+        from the reference point to ``stop_sign_lookahead_m`` ahead.
+        """
         fired: list[str] = []
         present: set[int] = set()
+        steps = max(1, math.ceil(self.config.stop_sign_lookahead_m))
+        probes = [
+            (
+                obs.x + a * math.cos(obs.yaw),
+                obs.y + a * math.sin(obs.yaw),
+            )
+            for a in [
+                i * self.config.stop_sign_lookahead_m / steps for i in range(steps + 1)
+            ]
+        ]
         for sign in obs.stop_signs:
             present.add(sign.sign_id)
             state = self._signs.setdefault(sign.sign_id, _SignState())
-            inside = point_in_polygon(obs.x, obs.y, sign.polygon)
+            inside = any(point_in_polygon(px, py, sign.polygon) for px, py in probes)
             if inside:
                 state.inside = True
                 if obs.speed_mps < self.config.stop_sign_speed_mps:

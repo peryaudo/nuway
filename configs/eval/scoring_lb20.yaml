@@ -25,7 +25,8 @@ detectors:
   # away; a hit with the remembered id or at the remembered location is the same collision.
   collision_same_actor_s: 5.0
   collision_radius_m: 5.0
-  stop_sign_speed_mps: 0.2   # honoured = slower than this inside the trigger volume
+  stop_sign_speed_mps: 0.2   # honoured = slower than this while in the trigger volume ...
+  stop_sign_lookahead_m: 4.0 # ... which the ego is in when any point from its reference point to this far ahead is (the Leaderboard scans the next waypoints; the hero's nose is 3.9 m ahead)
   # Port of the Leaderboard 2.0 MinimumSpeedRouteTest (its RATIO and checkpoints): the route
   # is cut into `checkpoints` equal segments; one whose ego mean speed is below `ratio` times
   # the mean speed of the vehicles within `radius_m` (the Leaderboard's background activity)

@@ -48,6 +48,10 @@ class ScoringConfig:
     collision_same_actor_s: float = 5.0
     collision_radius_m: float = 5.0
     stop_sign_speed_mps: float = 0.2
+    # The ego is in a stop sign's trigger volume when any point of its body is:
+    # the reference point up to this far ahead along its heading (the
+    # Leaderboard's RunningStopTest scans the vehicle's next waypoints).
+    stop_sign_lookahead_m: float = 4.0
     min_speed_ratio: float = 1.0
     min_speed_radius_m: float = 50.0
     min_speed_checkpoints: int = 1

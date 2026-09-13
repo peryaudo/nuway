@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import replace
 from pathlib import Path
 
@@ -124,6 +125,27 @@ def test_stop_sign_needs_a_halt_inside_the_volume(cfg: ScoringConfig) -> None:
     ):
         assert honoured.update(_obs(k, x, speed=v, stop_signs=[sign])) == []
     assert honoured.counts.n_stop_sign == 0
+    # A halt with the nose in the box (heading +x, 4 m lookahead) counts too:
+    # the Leaderboard scans the vehicle's next waypoints, and the ego stops
+    # with its bumper at the line, not its rear axle.
+    nose = InfractionTracker(cfg, 1000.0)
+    for k, (x, v) in enumerate(
+        [(5.0, 3.0), (7.0, 1.0), (8.5, 0.1), (8.5, 0.0), (11.0, 2.0), (15.0, 3.0)]
+    ):
+        assert nose.update(_obs(k, x, speed=v, stop_signs=[sign])) == []
+    assert nose.counts.n_stop_sign == 0
+    # ... but a halt 5 m short of the box, before rolling through, does not.
+    short = InfractionTracker(cfg, 1000.0)
+    fired = []
+    for k, (x, v) in enumerate(
+        [(3.0, 3.0), (5.0, 0.1), (5.0, 0.0), (9.0, 2.0), (12.0, 3.0), (15.0, 3.0)]
+    ):
+        fired += short.update(_obs(k, x, speed=v, stop_signs=[sign]))
+    assert fired == ["stop_sign"]
+    # Heading away from the box, the lookahead points the other way.
+    away = InfractionTracker(cfg, 1000.0)
+    assert away.update(_obs(0, 8.5, speed=0.0, yaw=math.pi, stop_signs=[sign])) == []
+    assert not away._signs[5].inside  # the detector's own state
 
 
 def test_outside_lanes_is_a_distance_fraction(cfg: ScoringConfig) -> None:

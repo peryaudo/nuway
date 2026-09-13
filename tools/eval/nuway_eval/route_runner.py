@@ -666,12 +666,14 @@ class RouteRunnerNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (0
         traffic = vehicle_speeds_near(
             list(self._trace.agents.values()), (p.x, p.y), traffic_radius_m
         )
+        q = msg.pose.pose.orientation
         return TickObservation(
             k=k,
             t=t,
             x=float(p.x),
             y=float(p.y),
             speed_mps=speed,
+            yaw=quaternion_to_yaw(np.array([q.x, q.y, q.z, q.w])),
             s=s,
             d=d,
             left_bound_m=left,

@@ -483,8 +483,9 @@ BehaviorOutput BehaviorFsm::Step(const SceneInput& in) {
     return NoInputDecision();
   }
   const std::optional<nuway_common::FrenetPoint> ego_f = in.route->Project(
-      in.ego.pose.x, in.ego.pose.y, options_.projection_max_dist_m, last_s_,
-      options_.projection_back_m, options_.projection_ahead_m);
+      in.ego.pose.x, in.ego.pose.y, in.ego.pose.yaw,
+      options_.projection_max_dist_m, last_s_, options_.projection_back_m,
+      options_.projection_ahead_m);
   if (!ego_f.has_value()) {
     last_s_.reset();
     BehaviorOutput out = NoInputDecision();

@@ -80,14 +80,24 @@ class RouteLine {
   // (the lattice's keep targets, M1 §3.3 feasibility filter).
   double CurvatureSpeedCap(double s, double reach_m, double a_lat_max) const;
 
-  // Frenet projection with the windowed search of ReferenceLine::
-  // ToFrenetNear when a hint is given, the global search otherwise, and the
-  // global search as the fallback when the window finds nothing.
-  std::optional<nuway_common::FrenetPoint> Project(double x, double y,
-                                                   double max_dist,
-                                                   std::optional<double> s_hint,
-                                                   double back_m,
-                                                   double ahead_m) const;
+  // The ego's Frenet projection: the windowed search of ReferenceLine::
+  // ToFrenetNear when a hint is given, ProjectAlong otherwise and as the
+  // fallback when the window finds nothing.
+  std::optional<nuway_common::FrenetPoint> Project(
+      double x, double y, double yaw_rad, double max_dist,
+      std::optional<double> s_hint, double back_m, double ahead_m) const;
+  // The global search that prefers the leg the pose is heading along: of
+  // the line samples within max_dist whose heading is within
+  // kMaxHeadingOffRad of yaw_rad the nearest is refined to the projection;
+  // without one, the plain nearest segment. A protocol route loops back
+  // through its own junctions, and after a replan mid-turn (no hint) the
+  // nearest segment was the route's second pass through the junction, 58 deg
+  // off the ego's heading, from where every lattice candidate failed the
+  // curvature or band rule and the car stood still (protocol v9).
+  std::optional<nuway_common::FrenetPoint> ProjectAlong(double x, double y,
+                                                        double yaw_rad,
+                                                        double max_dist) const;
+  static constexpr double kMaxHeadingOffRad = 0.25 * nuway_common::kPi;
   // The windowed search alone, for anything that is not the ego: an agent,
   // a predicted pose or a stop line the window does not reach is not on
   // this leg of the route, whatever later leg passes near it. Project's

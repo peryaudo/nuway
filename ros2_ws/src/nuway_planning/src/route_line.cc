@@ -137,13 +137,40 @@ double RouteLine::CurvatureSpeedCap(double s, double reach_m,
 }
 
 std::optional<nuway_common::FrenetPoint> RouteLine::Project(
-    double x, double y, double max_dist, std::optional<double> s_hint,
-    double back_m, double ahead_m) const {
+    double x, double y, double yaw_rad, double max_dist,
+    std::optional<double> s_hint, double back_m, double ahead_m) const {
   if (s_hint.has_value()) {
     const std::optional<nuway_common::FrenetPoint> near =
         line_.ToFrenetNear(x, y, max_dist, *s_hint, back_m, ahead_m);
     if (near.has_value()) {
       return near;
+    }
+  }
+  return ProjectAlong(x, y, yaw_rad, max_dist);
+}
+
+std::optional<nuway_common::FrenetPoint> RouteLine::ProjectAlong(
+    double x, double y, double yaw_rad, double max_dist) const {
+  // Sample-level search (0.5 m spacing): the nearest aligned sample picks
+  // the leg, the windowed projection around it gives the exact point.
+  const nuway_common::Vector2dList& points = line_.points();
+  const std::vector<double>& heading = line_.heading();
+  std::optional<std::size_t> best;
+  double best_dist = max_dist + 0.5;  // a sample may sit half a step past
+  for (std::size_t i = 0; i < points.size(); ++i) {
+    const double dist = std::hypot(points[i].x() - x, points[i].y() - y);
+    if (dist >= best_dist || std::abs(nuway_common::WrapAngle(
+                                 yaw_rad - heading[i])) > kMaxHeadingOffRad) {
+      continue;
+    }
+    best = i;
+    best_dist = dist;
+  }
+  if (best.has_value()) {
+    const std::optional<nuway_common::FrenetPoint> aligned =
+        line_.ToFrenetNear(x, y, max_dist, line_.s()[*best], 1.0, 1.0);
+    if (aligned.has_value()) {
+      return aligned;
     }
   }
   return line_.ToFrenet(x, y, max_dist);

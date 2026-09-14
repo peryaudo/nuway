@@ -209,15 +209,13 @@ std::optional<FrenetState> EgoFrenetState(const EgoObs& ego,
                                         : ego.ax_mps2;
   c.kappa =
       wheelbase_m > kEps ? std::tan(ego.steering_angle_rad) / wheelbase_m : 0.0;
-  if (s_hint.has_value()) {
-    const std::optional<FrenetState> near = route.line().ToFrenetStateNear(
-        c, options.projection_max_dist_m, *s_hint, options.projection_back_m,
-        options.projection_ahead_m);
-    if (near.has_value()) {
-      return near;
-    }
+  const std::optional<nuway_common::FrenetPoint> point =
+      route.Project(c.x, c.y, c.yaw, options.projection_max_dist_m, s_hint,
+                    options.projection_back_m, options.projection_ahead_m);
+  if (!point.has_value()) {
+    return std::nullopt;
   }
-  return route.line().ToFrenetState(c, options.projection_max_dist_m);
+  return route.line().FrenetStateAt(c, *point);
 }
 
 LatticeSampler::LatticeSampler(LatticeOptions options, LatticeLimits limits)

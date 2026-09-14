@@ -85,13 +85,61 @@ TEST(RouteLineTest, CurvatureSpeedCapLooksAheadOverTheReach) {
 
 TEST(RouteLineTest, ProjectUsesTheHintAndFallsBackGlobally) {
   const RouteLine route = Straight();
-  EXPECT_NEAR(ProjectedS(route.Project(50.2, 0.3, 5.0, 48.0, 10.0, 50.0)), 50.2,
-              1e-9);
+  EXPECT_NEAR(ProjectedS(route.Project(50.2, 0.3, 0.0, 5.0, 48.0, 10.0, 50.0)),
+              50.2, 1e-9);
   // A hint far away: the window misses, the global search still finds it.
-  EXPECT_NEAR(ProjectedS(route.Project(50.2, 0.3, 5.0, 190.0, 5.0, 5.0)), 50.2,
-              1e-9);
+  EXPECT_NEAR(ProjectedS(route.Project(50.2, 0.3, 0.0, 5.0, 190.0, 5.0, 5.0)),
+              50.2, 1e-9);
   EXPECT_FALSE(
-      route.Project(50.0, 30.0, 5.0, std::nullopt, 0.0, 0.0).has_value());
+      route.Project(50.0, 30.0, 0.0, 5.0, std::nullopt, 0.0, 0.0).has_value());
+}
+
+// A route that comes back through its own junction: east along y = 0, a
+// loop away to the south, then north along x = 25, crossing the first leg
+// at (25, 0). An ego at (25.3, 0.2) is 0.2 m from the eastbound leg and
+// 0.3 m from the northbound one.
+RouteLine Crossing() {
+  nuway_common::Vector2dList points;
+  for (int i = 0; i <= 100; ++i) {  // leg 1: east along y = 0
+    points.emplace_back(0.5 * i, 0.0);
+  }
+  for (int i = 1; i <= 40; ++i) {  // a loop away, returning from the south
+    const double a = nuway_common::kPi * i / 40.0;
+    points.emplace_back(50.0 + (12.5 * std::sin(a)),
+                        12.5 * (std::cos(a) - 1.0));
+  }
+  for (int i = 1; i <= 50; ++i) {  // west along y = -25
+    points.emplace_back(50.0 - (0.5 * i), -25.0);
+  }
+  for (int i = 1; i <= 100; ++i) {  // leg 2: north along x = 25
+    points.emplace_back(25.0, -25.0 + (0.5 * i));
+  }
+  return RouteLine(nuway_common::ReferenceLine::FromPoints(points), {1U},
+                   {20.0}, {1.75}, {1.75}, std::nullopt);
+}
+
+TEST(RouteLineTest, ProjectWithoutAHintPrefersTheLegTheEgoHeadsAlong) {
+  const RouteLine route = Crossing();
+  const double pi = nuway_common::kPi;
+  // Nearer to the northbound leg, heading east: the eastbound leg wins.
+  const nuway_common::FrenetPoint east =
+      route.Project(25.3, 0.2, 0.0, 5.0, std::nullopt, 0.0, 0.0)
+          .value_or(nuway_common::FrenetPoint{});
+  EXPECT_NEAR(east.s, 25.3, 1e-6);
+  EXPECT_NEAR(east.d, 0.2, 1e-6);
+  // The same pose heading north (up to 45 deg off): the northbound leg.
+  const nuway_common::FrenetPoint north =
+      route.Project(25.3, 0.2, 0.4 * pi, 5.0, std::nullopt, 0.0, 0.0)
+          .value_or(nuway_common::FrenetPoint{});
+  EXPECT_GT(north.s, 100.0);
+  EXPECT_NEAR(north.d, -0.3, 1e-6);
+  // A heading that fits no leg (south-west): the plain nearest, leg 1.
+  EXPECT_NEAR(ProjectedS(route.Project(25.3, 0.2, -0.75 * pi, 5.0, std::nullopt,
+                                       0.0, 0.0)),
+              25.3, 1e-6);
+  // A hint still wins over the heading.
+  EXPECT_GT(ProjectedS(route.Project(25.3, 0.2, 0.0, 5.0, 160.0, 20.0, 20.0)),
+            100.0);
 }
 
 TEST(RouteLineTest, ProjectNearNeverLeavesTheWindow) {

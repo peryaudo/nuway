@@ -29,6 +29,10 @@ from nuway_ml.common.carla_conv import location_from_ros, location_to_ros, yaw_t
 HERO_ROLE = "hero"
 
 
+# The Leaderboard scales a stop volume's extents by this in its box test.
+STOP_BOX_SCALE = 1.2
+
+
 class CarlaProbe:
     """Read-only view of the world for the infraction detectors."""
 
@@ -172,19 +176,20 @@ class CarlaProbe:
             self._stop_lines[int(light.id)] = tuple(lines)
         signs = []
         for sign in actors.filter("traffic.stop"):
+            # The Leaderboard's RunningStopTest tests the volume's centre
+            # against an axis-aligned box of 1.2x its extents (the volume's
+            # rotation is ignored), so the harness builds the same polygon.
             box = sign.trigger_volume
             transform = sign.get_transform()
-            corners = []
-            for sx, sy in ((1, 1), (1, -1), (-1, -1), (-1, 1)):
-                local = carla.Location(
-                    x=box.location.x + sx * box.extent.x,
-                    y=box.location.y + sy * box.extent.y,
-                    z=box.location.z,
-                )
-                world = transform.transform(local)
-                xyz = location_to_ros(world)
-                corners.append((float(xyz[0]), float(xyz[1])))
-            signs.append(StopSignVolume(int(sign.id), tuple(corners)))
+            centre = location_to_ros(transform.transform(box.location))
+            cx, cy = float(centre[0]), float(centre[1])
+            hx = STOP_BOX_SCALE * float(box.extent.x)
+            hy = STOP_BOX_SCALE * float(box.extent.y)
+            corners = tuple(
+                (cx + sx * hx, cy + sy * hy)
+                for sx, sy in ((1, 1), (1, -1), (-1, -1), (-1, 1))
+            )
+            signs.append(StopSignVolume(int(sign.id), corners, (cx, cy)))
         self._stop_signs = tuple(signs)
 
     @property

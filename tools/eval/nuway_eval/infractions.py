@@ -68,10 +68,29 @@ class StopLine:
 
 @dataclass(frozen=True, slots=True)
 class StopSignVolume:
-    """A stop sign's trigger volume as a map-frame polygon."""
+    """A stop sign's trigger volume as a map-frame polygon.
+
+    The probe builds the polygon the way the Leaderboard tests it: the box
+    around the volume's centre with its extents scaled by 1.2, axis-aligned
+    (``RunningStopTest.point_inside_boundingbox`` ignores the volume's
+    rotation). ``center`` is the volume's centre for the proximity gate;
+    without it the polygon's centroid stands in.
+    """
 
     sign_id: int
     polygon: tuple[tuple[float, float], ...]
+    center: tuple[float, float] | None = None
+
+    @property
+    def centre(self) -> tuple[float, float]:
+        """The volume's centre (the polygon centroid when none was given)."""
+        if self.center is not None:
+            return self.center
+        n = max(1, len(self.polygon))
+        return (
+            sum(x for x, _ in self.polygon) / n,
+            sum(y for _, y in self.polygon) / n,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,6 +108,10 @@ class TickObservation:
     left_bound_m: float  # drivable edge distances at s (positive)
     right_bound_m: float
     yaw: float = 0.0  # heading, map frame (the stop-sign lookahead runs along it)
+    # The hero's next lane waypoints, the reference line from its projection
+    # every 0.5 m to stop_sign_lookahead_m (the Leaderboard's
+    # ``_get_waypoints``); empty without a line, then the heading ray stands in.
+    lane_probes: Sequence[tuple[float, float]] = ()
     red_stop_lines: Sequence[StopLine] = ()  # stop lines of lights that are red now
     stop_signs: Sequence[StopSignVolume] = ()
     collisions: Sequence[CollisionEvent] = ()
@@ -263,28 +286,38 @@ class InfractionTracker:
     def _stop_signs(self, obs: TickObservation) -> list[str]:
         """Port of the Leaderboard 2.0 ``RunningStopTest``.
 
-        The vehicle is affected by a sign while any of its next waypoints
-        lies in the trigger volume, and the stop counts once its speed drops
-        below the threshold while affected; so a halt with the nose in the
-        box honours the sign. The waypoints become points along the heading
-        from the reference point to ``stop_sign_lookahead_m`` ahead.
+        The vehicle is affected by a sign while the volume's centre lies
+        within ``stop_sign_lookahead_m`` of it and any of its next lane
+        waypoints (its reference line from the projection, every 0.5 m over
+        the same distance) lies in the 1.2x box, and the stop counts once its
+        speed drops below the threshold while affected; so a halt with the
+        nose in the box honours the sign. The waypoints follow the lane, not
+        the heading: on a bend a heading ray leaves the lane and either
+        misses a box on it or clips one beside it (a right turn past the
+        box of the crossing road was charged that way, protocol v9). Without
+        a line the ray from the reference point stands in.
         """
         fired: list[str] = []
         present: set[int] = set()
-        steps = max(1, math.ceil(self.config.stop_sign_lookahead_m))
-        probes = [
-            (
-                obs.x + a * math.cos(obs.yaw),
-                obs.y + a * math.sin(obs.yaw),
-            )
-            for a in [
-                i * self.config.stop_sign_lookahead_m / steps for i in range(steps + 1)
+        reach = self.config.stop_sign_lookahead_m
+        probes = list(obs.lane_probes)
+        if not probes:
+            steps = max(1, math.ceil(reach / 0.5))
+            probes = [
+                (
+                    obs.x + a * math.cos(obs.yaw),
+                    obs.y + a * math.sin(obs.yaw),
+                )
+                for a in [i * reach / steps for i in range(steps + 1)]
             ]
-        ]
         for sign in obs.stop_signs:
             present.add(sign.sign_id)
             state = self._signs.setdefault(sign.sign_id, _SignState())
-            inside = any(point_in_polygon(px, py, sign.polygon) for px, py in probes)
+            cx, cy = sign.centre
+            near = math.hypot(cx - probes[0][0], cy - probes[0][1]) <= reach
+            inside = near and any(
+                point_in_polygon(px, py, sign.polygon) for px, py in probes
+            )
             if inside:
                 state.inside = True
                 if obs.speed_mps < self.config.stop_sign_speed_mps:

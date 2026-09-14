@@ -148,6 +148,47 @@ def test_stop_sign_needs_a_halt_inside_the_volume(cfg: ScoringConfig) -> None:
     assert not away._signs[5].inside  # the detector's own state
 
 
+def test_stop_sign_probes_follow_the_lane_within_the_proximity(
+    cfg: ScoringConfig,
+) -> None:
+    # The Leaderboard scans the vehicle's next lane waypoints, not a ray
+    # along its heading: turning right past the box of the crossing road
+    # (protocol v9, dev03_02), the heading ray clipped a box the lane never
+    # enters, and on a bend toward a box the ray misses it.
+    poly = ((10.0, -2.0), (14.0, -2.0), (14.0, 2.0), (10.0, 2.0))
+    sign = StopSignVolume(5, poly, (12.0, 0.0))
+    # Heading 45 deg left at x = 8.5: the ray leaves the lane (y up to 2.8 at
+    # 4 m), the lane waypoints run straight into the box: a halt counts.
+    lane = [(8.5 + 0.5 * i, 0.0) for i in range(9)]
+    turning = InfractionTracker(cfg, 1000.0)
+    obs = _obs(0, 8.5, speed=0.0, yaw=math.pi / 4, stop_signs=[sign], lane_probes=lane)
+    assert turning.update(obs) == []
+    assert turning._signs[5].inside
+    assert turning._signs[5].honoured
+    # The lane bends away from a box beside it: the ray would clip the box
+    # at 4 m, the lane waypoints stay clear, so passing at speed is no
+    # infraction.
+    bend = [(8.5 + 0.5 * i, -2.5 - 0.3 * i) for i in range(9)]
+    clear = InfractionTracker(cfg, 1000.0)
+    fired: list[str] = []
+    for k, x in enumerate([8.5, 11.0, 13.0, 15.0]):
+        probes = [(px + (x - 8.5), py) for px, py in bend]
+        fired += clear.update(
+            _obs(
+                k, x, y=-2.5, speed=4.0, yaw=0.5, stop_signs=[sign], lane_probes=probes
+            )
+        )
+    assert fired == []
+    # The proximity gate: 4.5 m from the box centre the waypoints reach the
+    # box, but the Leaderboard only looks within stop_sign_lookahead_m.
+    far = InfractionTracker(cfg, 1000.0)
+    lane = [(7.5 + 0.5 * i, 0.0) for i in range(9)]
+    assert (
+        far.update(_obs(0, 7.5, speed=0.0, stop_signs=[sign], lane_probes=lane)) == []
+    )
+    assert not far._signs[5].inside
+
+
 def test_outside_lanes_is_a_distance_fraction(cfg: ScoringConfig) -> None:
     tr = InfractionTracker(cfg, 1000.0)
     tr.update(_obs(0, 0.0))

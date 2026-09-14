@@ -293,6 +293,7 @@ class RouteRunnerNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (0
         self._episode_stamp = TimeMsg()
         self._trace = _Trace()
         self._line: PyReferenceLine | None = None
+        self._line_xy: np.ndarray | None = None
         self._line_left: np.ndarray | None = None
         self._line_right: np.ndarray | None = None
         self._pending: list[Odometry] = []
@@ -312,6 +313,7 @@ class RouteRunnerNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (0
         self._episode_stamp = TimeMsg()
         self._trace = _Trace()
         self._line = None
+        self._line_xy = None
         self._line_left = None
         self._line_right = None
         self._pending = []
@@ -327,6 +329,7 @@ class RouteRunnerNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (0
         self._episode_stamp = msg.header.stamp
         self._trace = _Trace()
         self._line = None
+        self._line_xy = None
         self._pending = []
 
     def _on_ego_odom(self, msg: Odometry) -> None:
@@ -395,6 +398,7 @@ class RouteRunnerNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (0
         self._trace.lines.append(rows)
         pts = np.array([[r[1], r[2]] for r in rows], dtype=np.float64)
         self._line = PyReferenceLine.from_points(pts)
+        self._line_xy = pts  # 0.5 m samples: the hero's next lane waypoints
         self._line_left = np.array(msg.left_bound, dtype=np.float64)
         self._line_right = np.array(msg.right_bound, dtype=np.float64)
 
@@ -588,7 +592,9 @@ class RouteRunnerNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (0
             if tracker is None or self._line is None:
                 continue
             for msg in pending:
-                obs = self._observe(msg, last_s, config.min_speed_radius_m)
+                obs = self._observe(
+                    msg, last_s, config.min_speed_radius_m, config.stop_sign_lookahead_m
+                )
                 if obs.s is not None:
                     last_s = obs.s
                     max_s = max(max_s, obs.s)
@@ -629,7 +635,11 @@ class RouteRunnerNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (0
         result.apply_counts(tracker.counts, config)
 
     def _observe(
-        self, msg: Odometry, last_s: float | None, traffic_radius_m: float
+        self,
+        msg: Odometry,
+        last_s: float | None,
+        traffic_radius_m: float,
+        stop_sign_lookahead_m: float,
     ) -> TickObservation:
         assert self._line is not None
         p = msg.pose.pose.position
@@ -655,6 +665,14 @@ class RouteRunnerNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (0
             idx = min(len(self._line_left) - 1, max(0, round(f.s / 0.5)))
             left = float(self._line_left[idx])
             right = float(self._line_right[idx])
+        probes: list[tuple[float, float]] = []
+        if f is not None and self._line_xy is not None:
+            # The Leaderboard's next waypoints: the lane every 0.5 m from the
+            # hero's projection over the stop-sign reach (the runner keeps the
+            # line's own 0.5 m samples).
+            first = max(0, round(f.s / 0.5))
+            last = min(len(self._line_xy), first + int(stop_sign_lookahead_m / 0.5) + 1)
+            probes = [(float(x), float(y)) for x, y in self._line_xy[first:last]]
         red_lines: list[Any] = []
         signs: list[Any] = []
         hits: list[Any] = []
@@ -681,6 +699,7 @@ class RouteRunnerNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs (0
             red_stop_lines=red_lines,
             stop_signs=signs,
             collisions=hits,
+            lane_probes=probes,
             traffic_speeds_mps=traffic,
         )
 

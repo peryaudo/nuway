@@ -292,5 +292,28 @@ TEST(CollisionCheckerTest, AMarginAlreadyViolatedRejectsOnlyContact) {
       checker.Check(Straight(2.0), clear, ConstVel(clear, 1, 1.0)).collides());
 }
 
+TEST(CollisionCheckerTest, AStandingPedestrianBesideThePathKeepsItsMargin) {
+  // A walker 1.4 m off the ego's axis, 4 m ahead: the inflated boxes
+  // overlap at t = 0, the raw ones (half widths 1.0 + 0.2) do not, and on
+  // raw footprints the ego pulled away past it and struck it at 1.5 m/s
+  // (protocol v9, dev03_03). A pedestrian keeps the margins; the same
+  // footprint as a static obstacle takes the raw rule and is passed.
+  const CollisionChecker checker{CollisionOptions{}};
+  AgentState walker;
+  walker.id = 3;
+  walker.class_id = nuway_common::AgentClass::kPedestrian;
+  walker.pose = SE2{4.0, 1.4, 0.0};
+  walker.length_m = 0.4;
+  walker.width_m = 0.4;
+  const std::vector<AgentState> person = {walker};
+  EXPECT_TRUE(checker.Check(Straight(1.5), person, ConstVel(person, 1, 1.0))
+                  .collides());
+  AgentState prop = walker;
+  prop.class_id = nuway_common::AgentClass::kStaticObstacle;
+  const std::vector<AgentState> props = {prop};
+  EXPECT_FALSE(
+      checker.Check(Straight(1.5), props, ConstVel(props, 1, 1.0)).collides());
+}
+
 }  // namespace
 }  // namespace nuway_planning

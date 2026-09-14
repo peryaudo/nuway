@@ -55,7 +55,8 @@ struct LateralProfile {
 // The inflation an agent's box gets: the configured margins, or none when
 // the inflated box already covers the ego at the start (its s interval
 // holds ego.s and it overlaps the path laterally), the collision checker's
-// raw-footprint rule of M1 §3.4 carried into the QPs.
+// raw-footprint rule of M1 §3.4 carried into the QPs. A pedestrian keeps
+// the margins (`keep`), as in the checker.
 struct Margins {
   double agent = 0.0;
   double lon = 0.0;
@@ -64,8 +65,9 @@ struct Margins {
 
 Margins MarginsFor(double s_lo_inflated, double s_hi_inflated,
                    bool overlaps_laterally, double ego_s,
-                   const Margins& configured) {
-  if (s_lo_inflated <= ego_s && ego_s <= s_hi_inflated && overlaps_laterally) {
+                   const Margins& configured, bool keep) {
+  if (!keep && s_lo_inflated <= ego_s && ego_s <= s_hi_inflated &&
+      overlaps_laterally) {
     return Margins{};
   }
   return configured;
@@ -258,7 +260,8 @@ RefineOutcome CandidateRefiner::Refine(const SceneInput& in,
               collision_.margin_lon_m,
           std::abs(ego.d - f->d) < across + collision_.agent_margin_m +
                                        half_width + collision_.margin_lat_m,
-          ego.s, configured);
+          ego.s, configured,
+          agent.class_id == nuway_common::AgentClass::kPedestrian);
       const double s_lo = f->s - along - m.agent - limits_.ego_front_m - m.lon;
       const double s_hi = f->s + along + m.agent + ego_rear + m.lon;
       const bool pass_left = LatticeDAt(*c, f->s) >= f->d;
@@ -413,7 +416,8 @@ RefineOutcome CandidateRefiner::Refine(const SceneInput& in,
             f0->s - along - m.agent - limits_.ego_front_m - m.lon,
             f0->s + along + m.agent + ego_rear + m.lon,
             std::abs(f0->d - d_path) < across + m.agent + half_width + m.lat,
-            ego.s, configured);
+            ego.s, configured,
+            agent.class_id == nuway_common::AgentClass::kPedestrian);
       }
     }
     const int agent_samples = static_agent ? 1 : samples;

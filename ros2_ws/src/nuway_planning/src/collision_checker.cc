@@ -212,7 +212,11 @@ CollisionResult CollisionChecker::Check(
   // An agent whose inflated box already overlaps the inflated ego at t = 0
   // is checked on the raw footprints: no candidate can restore a margin
   // without moving, so only physical contact rejects and the ego may pull
-  // away from a corner it cut too tight (task 17 protocol).
+  // away from a corner it cut too tight (task 17 protocol). A pedestrian
+  // keeps the margins: a walker standing 1.4 m off the ego's axis was
+  // passed on raw footprints (1.2 m of half widths) and struck at 1.5 m/s
+  // (protocol v9, dev03_03); waiting for a person to move is the outcome
+  // the criteria want.
   std::vector<bool> raw_only;
   raw_only.reserve(agents.size());
   const OrientedBox ego_now = EgoBoxAt(trajectory, 0.0, true);
@@ -240,6 +244,7 @@ CollisionResult CollisionChecker::Check(
     skip.push_back(dist > reach || IsFollower(trajectory, agent));
     raw_only.push_back(
         !skip.back() &&
+        agent.class_id != nuway_common::AgentClass::kPedestrian &&
         BoxesOverlap(ego_now, AgentBoxAt(agent, predictions, -1, 0, 0.0,
                                          options_.agent_margin_m)));
   }

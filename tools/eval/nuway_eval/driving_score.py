@@ -107,9 +107,11 @@ class InfractionCounts:
     blocked: bool = False
     timeout: bool = False
     incidents: list[tuple[int, str]] = field(default_factory=list)  # (tick, kind)
-    # (tick, kind, other actor's blueprint, its speed in m/s, visible): one per
-    # counted collision, for the report's incident lines (M1 criteria).
-    collisions: list[tuple[int, str, str, float, bool, float]] = field(
+    # (tick, kind, other actor's blueprint, its speed in m/s, visible, the
+    # ego's speed the tick before, the other actor's bearing from the hero in
+    # degrees or None): one per counted collision, for the report's incident
+    # lines (M1 criteria).
+    collisions: list[tuple[int, str, str, float, bool, float, float | None]] = field(
         default_factory=list
     )
 
@@ -131,11 +133,20 @@ class InfractionCounts:
         visible: bool,
         *,
         ego_speed_mps: float,
+        bearing_deg: float | None = None,
     ) -> None:
         """Count a collision and keep what the criteria ask about both actors at impact."""
         self.add(tick, kind)
         self.collisions.append(
-            (tick, kind, other_type, other_speed_mps, visible, ego_speed_mps)
+            (
+                tick,
+                kind,
+                other_type,
+                other_speed_mps,
+                visible,
+                ego_speed_mps,
+                bearing_deg,
+            )
         )
 
     def add_min_speed(self, tick: int, pct: float) -> None:

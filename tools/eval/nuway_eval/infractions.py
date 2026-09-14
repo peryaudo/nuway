@@ -44,6 +44,9 @@ class CollisionEvent:
     )
     other_speed_mps: float
     visible: bool  # the other actor was in the GT agent list with visible = True
+    # Where the other actor was, seen from the hero, on the tick of the hit:
+    # 0 dead ahead, +-180 behind (degrees, left positive); None when unknown.
+    bearing_deg: float | None = None
 
     @property
     def kind(self) -> str:
@@ -247,6 +250,7 @@ class InfractionTracker:
                 hit.other_type,
                 hit.other_speed_mps,
                 hit.visible,
+                bearing_deg=hit.bearing_deg,
                 ego_speed_mps=(
                     obs.speed_mps
                     if self._prev_speed_mps is None

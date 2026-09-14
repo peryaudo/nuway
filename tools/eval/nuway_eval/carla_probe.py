@@ -47,7 +47,8 @@ class CarlaProbe:
         self._stop_lines: dict[int, tuple[StopLine, ...]] = {}
         self._stop_signs: tuple[StopSignVolume, ...] = ()
         self._lock = threading.Lock()
-        self._hits: list[tuple[int, str, float]] = []  # (other id, type, other speed)
+        # (other id, type, other speed, bearing from the hero in degrees or None)
+        self._hits: list[tuple[int, str, float, float | None]] = []
 
     # ----------------------------------------------------------------- map
     def lane_yaw_at(self, x: float, y: float, z: float = 0.0) -> float | None:
@@ -117,24 +118,36 @@ class CarlaProbe:
         speed = 0.0
         type_id = "unknown"
         other_id = 0
+        bearing: float | None = None
         if other is not None:
             type_id = str(other.type_id)
             other_id = int(other.id)
             try:
                 v = other.get_velocity()
                 speed = math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z)
+                # Where the other actor is, seen from the hero: the criteria
+                # attribute a hit from behind to the actor that drove into
+                # the ego. Computed in the map frame (left positive).
+                hero = self._hero.get_transform() if self._hero is not None else None
+                if hero is not None:
+                    ego = location_to_ros(hero.location)
+                    oth = location_to_ros(other.get_location())
+                    rel = math.atan2(oth[1] - ego[1], oth[0] - ego[0]) - yaw_to_ros(
+                        float(hero.rotation.yaw)
+                    )
+                    bearing = math.degrees(math.atan2(math.sin(rel), math.cos(rel)))
             except RuntimeError:
                 speed = 0.0
         with self._lock:
-            self._hits.append((other_id, type_id, speed))
+            self._hits.append((other_id, type_id, speed, bearing))
 
     def drain_collisions(self, visible: Callable[[int], bool]) -> list[CollisionEvent]:
         """Hits since the last call; ``visible(id)`` answers from the GT agent list."""
         with self._lock:
             hits, self._hits = self._hits, []
         return [
-            CollisionEvent(other_id, type_id, speed, visible(other_id))
-            for other_id, type_id, speed in hits
+            CollisionEvent(other_id, type_id, speed, visible(other_id), bearing)
+            for other_id, type_id, speed, bearing in hits
         ]
 
     # ---------------------------------------------------------------- town

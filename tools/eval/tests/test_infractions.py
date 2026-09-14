@@ -60,9 +60,9 @@ def test_collisions_are_classed_and_deduplicated(cfg: ScoringConfig) -> None:
     assert tr.update(_obs(120, 12.0, collisions=[car])) == ["collision_vehicle"]
     c = tr.counts
     assert c.collisions == [
-        (0, "collision_vehicle", "vehicle.audi.a2", 3.0, True, 5.0),
-        (41, "collision_layout", "static.prop.streetsign", 0.0, False, 5.0),
-        (120, "collision_vehicle", "vehicle.audi.a2", 3.0, True, 5.0),
+        (0, "collision_vehicle", "vehicle.audi.a2", 3.0, True, 5.0, None),
+        (41, "collision_layout", "static.prop.streetsign", 0.0, False, 5.0, None),
+        (120, "collision_vehicle", "vehicle.audi.a2", 3.0, True, 5.0, None),
     ]
     assert (c.n_collision_vehicle, c.n_collision_pedestrian, c.n_collision_layout) == (
         2,
@@ -84,7 +84,7 @@ def test_collision_row_carries_the_speed_before_impact(cfg: ScoringConfig) -> No
         "collision_vehicle"
     ]
     assert tr.counts.collisions == [
-        (2, "collision_vehicle", "vehicle.mercedes.sprinter", 3.7, True, 0.0),
+        (2, "collision_vehicle", "vehicle.mercedes.sprinter", 3.7, True, 0.0, None),
     ]
 
 

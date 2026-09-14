@@ -120,7 +120,7 @@ class RouteResult:
     incidents: list[tuple[int, str]] = field(default_factory=list)
     # Not a CSV column: the other actor of every counted collision, (tick,
     # kind, blueprint, speed m/s, visible, ego speed m/s), printed on the incident line.
-    collisions: list[tuple[int, str, str, float, bool, float]] = field(
+    collisions: list[tuple[int, str, str, float, bool, float, float | None]] = field(
         default_factory=list
     )
 
@@ -316,13 +316,18 @@ def render_full(
 
 
 def _collision_note(result: RouteResult, tick: int, kind: str) -> str:
-    """Describe a collision sheet: the other actor's speed and visibility, the ego's speed."""
+    """Describe a collision sheet: the other actor's speed, visibility and bearing, the ego's speed."""
     notes = []
-    for t, k, other_type, speed, visible, ego_speed in result.collisions:
+    for t, k, other_type, speed, visible, ego_speed, bearing in result.collisions:
         if k == kind and t == tick:
             seen = "visible" if visible else "not visible"
+            where = ""
+            if bearing is not None:
+                side = "from behind" if abs(bearing) >= 135.0 else "ahead"
+                where = f", {side} (bearing {bearing:.0f}°)"
             notes.append(
-                f"`{other_type}` at {speed:.1f} m/s, {seen}; ego at {ego_speed:.1f} m/s"
+                f"`{other_type}` at {speed:.1f} m/s, {seen}{where}; "
+                f"ego at {ego_speed:.1f} m/s"
             )
     return f" — other actor {'; '.join(notes)}" if notes else ""
 

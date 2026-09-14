@@ -260,11 +260,11 @@ TEST(BehaviorFsmTest, AStopLineGovernsTheRouteOnlyWhereItProjects) {
   EXPECT_EQ(out.longitudinal, Longitudinal::kStop);
   EXPECT_EQ(out.reason, "stop_sign");
   EXPECT_NEAR(out.stop_s, 99.0, 1e-6);
-  // Halted 2.9 m short of stop_s (3.9 m from the line, where the sampler
+  // Halted 2.4 m short of stop_s (3.4 m from the line, where the sampler
   // holds it): the dwell counts from stop_s, so the sign is honoured after
   // stop_sign_hold_s and the car may go (ten 0.1 s ticks sum to just under
   // 1 s in floating point; the eleventh honours the sign).
-  in.ego.pose.x = 96.1;
+  in.ego.pose.x = 96.6;
   in.ego.vx_mps = 0.0;
   for (int i = 0; i < 10; ++i) {
     EXPECT_EQ(fsm.Step(in).longitudinal, Longitudinal::kStop);

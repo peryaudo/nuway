@@ -78,7 +78,7 @@ struct LatticeOptions {
   double gentle_time_factor = 1.5;     // its horizon: factor * v / a_gentle
   double min_horizon_s = 1.0;          // floor of any stop horizon
   double stopped_speed_mps = 0.3;      // below: the stops hold the pose
-  double hold_short_of_stop_m = 2.5;   // a stopped ego this close to its
+  double hold_short_of_stop_m = 2.9;   // a stopped ego this close to its
                                        // stop holds instead of creeping up
   double projection_max_dist_m = 5.0;  // ego projection (EgoFrenetState)
   double projection_back_m = 10.0;

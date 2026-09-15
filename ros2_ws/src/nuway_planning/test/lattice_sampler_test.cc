@@ -551,8 +551,12 @@ TEST(LatticeSamplerTest, StoppedEgoShortOfItsStopHoldsInsteadOfCreeping) {
     return v;
   };
   EXPECT_LE(peak_speed(Ego(20.0, 0.0), 22.4), 1e-6);  // holds
-  EXPECT_GT(peak_speed(Ego(20.0, 0.0), 25.0), 0.5);   // 5 m short: creeps up
-  EXPECT_GT(peak_speed(Ego(20.0, 2.0), 22.4), 1.0);   // rolling: stops there
+  // 2.6 m short, where a car that stopped early stands (protocol v10,
+  // dev05_02 WetSunset, dev05_03 HardRainNight): still held, 3.6 m from the
+  // sign, inside the harness's 4 m proximity.
+  EXPECT_LE(peak_speed(Ego(20.0, 0.0), 22.6), 1e-6);
+  EXPECT_GT(peak_speed(Ego(20.0, 0.0), 25.0), 0.5);  // 5 m short: creeps up
+  EXPECT_GT(peak_speed(Ego(20.0, 2.0), 22.4), 1.0);  // rolling: stops there
 }
 
 TEST(LatticeSamplerTest, FollowNeverAimsAboveItsTargetButFreeDoes) {

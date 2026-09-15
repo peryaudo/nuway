@@ -474,6 +474,28 @@ TEST(LatticeSamplerTest, FollowAddsGapKeepingAndEgoProjects) {
                    .has_value());
 }
 
+TEST(LatticeSamplerTest, AnEgoAtRestStartsFromZeroAcceleration) {
+  const RouteLine route = Straight(200.0);
+  EgoObs ego;
+  ego.pose = nuway_common::SE2{30.0, 0.0, 0.0};
+  ego.vx_mps = 0.06;
+  // The contact force of a road-mesh step, or the brake on a grade: not a
+  // state the profiles or the speed QP may continue from.
+  for (const double ax : {1.3, -1.3}) {
+    ego.ax_mps2 = ax;
+    const FrenetState f =
+        EgoFrenetState(ego, route, LatticeOptions{}, 2.86, std::nullopt)
+            .value_or(FrenetState{});
+    EXPECT_NEAR(f.s_ddot, 0.0, 1e-9) << ax;
+  }
+  ego.vx_mps = 2.0;  // rolling: the measured acceleration carries over
+  ego.ax_mps2 = 1.3;
+  EXPECT_NEAR(EgoFrenetState(ego, route, LatticeOptions{}, 2.86, std::nullopt)
+                  .value_or(FrenetState{})
+                  .s_ddot,
+              1.3, 1e-9);
+}
+
 TEST(LatticeSamplerTest, KeepTargetsFromRestStayWithinTheAccelerationBound) {
   // Halted on a 70 km/h road (a stop sign), FREE at 19.3 m/s: the targets
   // above what 8 s of 3 m/s^2 can reach are replaced by the reachable

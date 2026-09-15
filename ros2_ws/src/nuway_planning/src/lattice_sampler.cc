@@ -200,13 +200,18 @@ std::optional<FrenetState> EgoFrenetState(const EgoObs& ego,
   c.y = ego.pose.y;
   c.yaw = ego.pose.yaw;
   // The lattice never plans in reverse: a car rolling back (a stop on a
-  // grade) is sampled from rest, and at rest the measured deceleration
-  // (the slope, the brake) is not a state the profiles must continue from,
-  // or every quartic would dip below zero and be rejected as "reverse",
-  // which left the car stopped for good on the Town03 ramp (task 9).
+  // grade) is sampled from rest, and at rest the measured acceleration is
+  // not a state the profiles must continue from. A deceleration (the
+  // slope, the brake) would dip every quartic below zero, rejected as
+  // "reverse", which left the car stopped for good on the Town03 ramp
+  // (task 9); an acceleration (the contact force of a road-mesh step the
+  // car had snagged on read +1.3 m/s^2 for three minutes) made the speed
+  // QP, whose initial state is fixed, pull away faster than every creep
+  // quintic and overshoot the stop point it was refining toward, so the
+  // selector held the car short of its stop sign for good (protocol v10,
+  // dev05_02 WetSunset). At rest the profiles start from a = 0.
   c.v = std::max(0.0, ego.vx_mps);
-  c.a = c.v < options.stopped_speed_mps ? std::max(0.0, ego.ax_mps2)
-                                        : ego.ax_mps2;
+  c.a = c.v < options.stopped_speed_mps ? 0.0 : ego.ax_mps2;
   c.kappa =
       wheelbase_m > kEps ? std::tan(ego.steering_angle_rad) / wheelbase_m : 0.0;
   const std::optional<nuway_common::FrenetPoint> point =

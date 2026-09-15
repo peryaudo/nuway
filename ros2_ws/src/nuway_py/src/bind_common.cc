@@ -1,6 +1,7 @@
-// pybind11 bindings of nuway_common (M0). Argument and return conventions
-// follow the Python twins in nuway_ml/common so the parity test reads
-// one-to-one: quaternions are (x, y, z, w) lists, points are (x, y) tuples.
+// pybind11 bindings of nuway_common (M0; Frenet states and polynomials M1).
+// Argument and return conventions follow the Python twins in nuway_ml/common so
+// the parity test reads one-to-one: quaternions are (x, y, z, w) lists, points
+// are (x, y) tuples.
 #include "bind_common.h"
 
 #include <array>
@@ -17,6 +18,7 @@
 #include <nuway_common/frenet.h>
 #include <nuway_common/geometry.h>
 #include <nuway_common/occupancy.h>
+#include <nuway_common/polynomial.h>
 #include <nuway_common/tick.h>
 
 namespace nuway_py {
@@ -201,7 +203,9 @@ void BindCarlaConv(py::module_& module) {
 
 void BindFrenet(py::module_& module) {
   using nuway_common::CartesianPoint;
+  using nuway_common::CartesianState;
   using nuway_common::FrenetPoint;
+  using nuway_common::FrenetState;
   using nuway_common::ReferenceLine;
   py::class_<FrenetPoint>(module, "FrenetPoint")
       .def(py::init([](double s, double d) { return FrenetPoint{s, d}; }),
@@ -213,6 +217,33 @@ void BindFrenet(py::module_& module) {
       .def_readwrite("x", &CartesianPoint::x)
       .def_readwrite("y", &CartesianPoint::y)
       .def_readwrite("heading", &CartesianPoint::heading);
+  py::class_<FrenetState>(module, "FrenetState")
+      .def(py::init([](double s, double s_dot, double s_ddot, double d,
+                       double d_prime, double d_dprime) {
+             return FrenetState{s, s_dot, s_ddot, d, d_prime, d_dprime};
+           }),
+           py::arg("s") = 0.0, py::arg("s_dot") = 0.0, py::arg("s_ddot") = 0.0,
+           py::arg("d") = 0.0, py::arg("d_prime") = 0.0,
+           py::arg("d_dprime") = 0.0)
+      .def_readwrite("s", &FrenetState::s)
+      .def_readwrite("s_dot", &FrenetState::s_dot)
+      .def_readwrite("s_ddot", &FrenetState::s_ddot)
+      .def_readwrite("d", &FrenetState::d)
+      .def_readwrite("d_prime", &FrenetState::d_prime)
+      .def_readwrite("d_dprime", &FrenetState::d_dprime);
+  py::class_<CartesianState>(module, "CartesianState")
+      .def(py::init([](double x, double y, double yaw, double v, double a,
+                       double kappa) {
+             return CartesianState{x, y, yaw, v, a, kappa};
+           }),
+           py::arg("x") = 0.0, py::arg("y") = 0.0, py::arg("yaw") = 0.0,
+           py::arg("v") = 0.0, py::arg("a") = 0.0, py::arg("kappa") = 0.0)
+      .def_readwrite("x", &CartesianState::x)
+      .def_readwrite("y", &CartesianState::y)
+      .def_readwrite("yaw", &CartesianState::yaw)
+      .def_readwrite("v", &CartesianState::v)
+      .def_readwrite("a", &CartesianState::a)
+      .def_readwrite("kappa", &CartesianState::kappa);
   py::class_<ReferenceLine>(module, "ReferenceLine")
       .def_static(
           "from_points",
@@ -253,7 +284,35 @@ void BindFrenet(py::module_& module) {
            py::arg("max_dist") = 1e9)
       .def("to_frenet_near", &ReferenceLine::ToFrenetNear, py::arg("x"),
            py::arg("y"), py::arg("max_dist"), py::arg("s_hint"),
-           py::arg("back_m"), py::arg("ahead_m"));
+           py::arg("back_m"), py::arg("ahead_m"))
+      .def("curvature_rate_at", &ReferenceLine::CurvatureRateAt, py::arg("s"))
+      .def("to_cartesian_state", &ReferenceLine::ToCartesianState, py::arg("f"))
+      .def("to_frenet_state", &ReferenceLine::ToFrenetState, py::arg("c"),
+           py::arg("max_dist") = 1e9)
+      .def("to_frenet_state_near", &ReferenceLine::ToFrenetStateNear,
+           py::arg("c"), py::arg("max_dist"), py::arg("s_hint"),
+           py::arg("back_m"), py::arg("ahead_m"))
+      .def("frenet_state_at", &ReferenceLine::FrenetStateAt, py::arg("c"),
+           py::arg("point"));
+}
+
+void BindPolynomial(py::module_& module) {
+  using nuway_common::Polynomial5;
+  py::class_<Polynomial5>(module, "Polynomial5")
+      .def(py::init(
+               [](const std::array<double, 6>& c) { return Polynomial5(c); }),
+           py::arg("c"))
+      .def_static("quintic", &Polynomial5::Quintic, py::arg("x0"),
+                  py::arg("dx0"), py::arg("ddx0"), py::arg("x1"),
+                  py::arg("dx1"), py::arg("ddx1"), py::arg("length"))
+      .def_static("quartic", &Polynomial5::Quartic, py::arg("x0"),
+                  py::arg("dx0"), py::arg("ddx0"), py::arg("dx1"),
+                  py::arg("ddx1"), py::arg("length"))
+      .def_property_readonly("c", &Polynomial5::coefficients)
+      .def("eval", &Polynomial5::Eval, py::arg("t"))
+      .def("eval_first", &Polynomial5::EvalFirst, py::arg("t"))
+      .def("eval_second", &Polynomial5::EvalSecond, py::arg("t"))
+      .def("eval_third", &Polynomial5::EvalThird, py::arg("t"));
 }
 
 void BindOccupancy(py::module_& module) {
@@ -342,6 +401,7 @@ void BindCommon(py::module_& module) {
   BindGeometry(module);
   BindCarlaConv(module);
   BindFrenet(module);
+  BindPolynomial(module);
   BindOccupancy(module);
   BindTick(module);
 }

@@ -19,13 +19,34 @@ dev = [
   "types-pyyaml",
   "types-setuptools>=84.0.0.20260812",
 ]
-carla = ["carla==0.9.16"]
+carla = [
+    "carla==0.9.16",
+    "pillow>=12.3.0",
+]
 infer = ["nuway-ml[torch]"]       # run learned profiles (M3+) without training tooling
 train = ["hydra-core", "wandb", "nuway-ml[torch]"]   # config management and run/metric logging (03 §9.7)
 viz = ["matplotlib", "rosbags", "jupyterlab"]        # headless rendering (02_interfaces.md §8); never imported by runtime nodes
 # Python deps of external/{leaderboard,scenario_runner}. M1 task 19 completes the list from the
 # pinned checkouts' requirements.txt (03 §6.4); these are the ones known today.
-leaderboard = ["py-trees", "networkx", "shapely"]
+leaderboard = [
+    "py-trees==0.8.3",
+    "networkx",
+    "shapely",
+    "dictor>=0.1.12",
+    "requests>=2.34.2",
+    "opencv-python>=5.0.0.93",
+    "pygame>=2.6.1",
+    "tabulate>=0.10.0",
+    "pexpect>=4.9.0",
+    "transforms3d>=0.4.2",
+    "psutil>=7.2.2",
+    "xmlschema>=4.3.2",
+    "ephem>=4.2.1",
+    "six>=1.17.0",
+    "simple-watchdog-timer>=0.1.1",
+    "antlr4-python3-runtime==4.10",
+    "graphviz>=0.21",
+]
 
 [tool.uv]
 package = false                    # the root is not installable
@@ -49,7 +70,7 @@ explicit = true
 
 [tool.pytest.ini_options]
 testpaths = ["ml/tests", "tools", "tests"]
-pythonpath = ["tools/eval", "ros2_ws/src/nuway_bringup"]  # nuway_eval (docs/01 Rules) and the pure-Python profile loader, so tests/integration runs without a colcon build
+pythonpath = ["tools/eval", "tools/viz", "ros2_ws/src/nuway_bringup", "tests/integration"]  # nuway_eval (docs/01 Rules) and the pure-Python profile loader, so tests/integration runs without a colcon build
 addopts = "--strict-markers -p no:launch_testing -p no:launch_ros -p no:ament_lint -p no:ament_copyright -p no:ament_flake8 -p no:ament_pep257 -p no:ament_xmllint"  # ROS pytest plugins leak in via system site packages; launch_testing breaks pytest >= 8
 markers = [
   "slow: minutes-long",
@@ -125,7 +146,7 @@ exclude = ["ros2_ws/(build|install|log)/", "ros2_ws/src/carla_msgs/", "ros2_ws/s
 # without an install step. tools/eval holds the nuway_eval package.
 explicit_package_bases = true
 mypy_path = [
-  "ml", "tools/eval",
+  "ml", "tools/eval", "tools/viz", "tests/integration",
   "ros2_ws/src/nuway_carla_bridge", "ros2_ws/src/nuway_rclpy", "ros2_ws/src/nuway_perception",
   "ros2_ws/src/nuway_prediction", "ros2_ws/src/nuway_planning",
   "ros2_ws/src/nuway_bringup", "ros2_ws/src/nuway_viz",
@@ -140,6 +161,7 @@ module = [
   "std_msgs.*", "geometry_msgs.*", "sensor_msgs.*", "nav_msgs.*", "tf2_msgs.*",
   "visualization_msgs.*", "rosgraph_msgs.*", "builtin_interfaces.*", "tf2_ros", "tf2_ros.*",
   "launch", "launch.*", "launch_ros", "launch_ros.*", "ament_index_python", "ament_index_python.*",
+  "leaderboard", "leaderboard.*", "srunner", "srunner.*",
 ]
 ignore_missing_imports = true
 follow_imports = "skip"

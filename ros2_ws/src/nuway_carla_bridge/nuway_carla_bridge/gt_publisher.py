@@ -40,6 +40,8 @@ point of the same body) is the only geometry done here.
 from __future__ import annotations
 
 import collections
+import math
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 import carla
@@ -75,12 +77,37 @@ from nuway_ml.common.frames import (
 )
 from nuway_ml.common.geometry import SE3, apply, compose, inverse, quaternion_to_yaw
 from nuway_ml.common.rig import VehicleGeometry
+from nuway_ml.common.tick import TICK_DT_S
 from nuway_rclpy.ros_conv import pose_from_se3
 from nuway_rclpy.ros_qos import qos
 
 Array = NDArray[np.float64]
 
 HISTORY_LEN = int(Agent.HISTORY_LEN)  # past poses per agent, 0.1 s apart
+
+
+def kinematic_velocity(
+    history: Sequence[tuple[float, float, float]],
+    center: tuple[float, float, float],
+    dt_s: float,
+) -> tuple[float, float, float]:
+    """World-frame ``(vx, vy, yaw_rate)`` of a kinematic actor from its last pose.
+
+    CARLA moves walkers through their controller, not the physics engine, so
+    ``Actor.get_velocity()`` is 0 for a walking pedestrian (992 of the 1096
+    moving walker samples of a protocol bag reported 0.0 m/s, and the stack
+    treated every crossing walker as standing until it was in the lane). The
+    ring buffer holds the previous tick's box centre and yaw, and a walk is
+    smooth enough for the one-tick difference. An actor that just appeared
+    has no history and stands until the next tick.
+    """
+    if not history:
+        return (0.0, 0.0, 0.0)
+    hx, hy, hyaw = history[-1]
+    dyaw = math.atan2(math.sin(center[2] - hyaw), math.cos(center[2] - hyaw))
+    return ((center[0] - hx) / dt_s, (center[1] - hy) / dt_s, dyaw / dt_s)
+
+
 # Set in the id of a light that governs no lane of the LaneGraph: the id then
 # is the CARLA actor id, which never collides with the map's (high bit clear).
 TL_ID_UNMAPPED_FLAG = 0x80000000
@@ -356,10 +383,6 @@ class GtPublisher:
             agent.length = float(2.0 * bbox.extent.x)
             agent.width = float(2.0 * bbox.extent.y)
             agent.height = float(2.0 * bbox.extent.z)
-            agent.vx = float(velocity[0])
-            agent.vy = float(velocity[1])
-            agent.yaw_rate = float(omega[2])
-            agent.visible = True
             # Poses of the previous ticks, newest last. history[i] of the
             # message is the pose 0.1 s * (i + 1) ago on *every* tick, i.e.
             # every second entry counted back from the newest, which is one
@@ -368,6 +391,17 @@ class GtPublisher:
             history = self._history.setdefault(
                 int(actor.id), collections.deque(maxlen=2 * HISTORY_LEN)
             )
+            if agent.class_id == Agent.CLASS_PEDESTRIAN:
+                # Walkers are kinematic: their physics velocity is zero.
+                walker_v = kinematic_velocity(
+                    history, (float(center[0]), float(center[1]), float(yaw)), TICK_DT_S
+                )
+                agent.vx, agent.vy, agent.yaw_rate = walker_v
+            else:
+                agent.vx = float(velocity[0])
+                agent.vy = float(velocity[1])
+                agent.yaw_rate = float(omega[2])
+            agent.visible = True
             flat = [0.0] * (3 * HISTORY_LEN)
             past = list(history)[-2::-2]  # 2, 4, 6, ... ticks ago
             for i, (hx, hy, hyaw) in enumerate(past[:HISTORY_LEN]):

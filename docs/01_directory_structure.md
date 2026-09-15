@@ -80,7 +80,7 @@ nuway/
 │   └── src/
 │       ├── nuway_cmake/                   # shared CMake: warnings, -Werror, NUWAY_CLANG_TIDY/SANITIZE/LTO
 │       ├── carla_msgs/                    # vendored from ros-carla-msgs (leaderboard-2.0 branch); messages only (M0)
-│       ├── osqp_eigen_vendor/             # FetchContent, pinned tag+hash (M1) — the only vendored
+│       ├── osqp_eigen_vendor/             # ExternalProject, pinned tag+hash (M1) — the only vendored
 │       │                                  #   dep; OSQP, GTSAM and nanoflann come from apt on
 │       │                                  #   Jazzy/noble (03_style_and_conventions.md §6.2)
 │       ├── nuway_msgs/                    # ALL custom messages and services. No msgs/srvs elsewhere.
@@ -90,7 +90,10 @@ nuway/
 │       ├── nuway_common/                  # C++ header-mostly library
 │       │   ├── include/nuway_common/
 │       │   │   ├── geometry.h           # SE2, SE3 helpers, angle wrap
-│       │   │   ├── frenet.h             # reference line, cartesian<->frenet
+│       │   │   ├── agents.h             # AgentClass, AgentState, PredictionSet: plain images of Agent / PredictionSamples
+│       │   │   │                        #   for the rclcpp-free planning and prediction libraries (M1)
+│       │   │   ├── frenet.h             # reference line, cartesian<->frenet (+ state conversions, M1)
+│       │   │   ├── polynomial.h         # quintic / quartic polynomials for the lattice (M1; mirrors polynomial.py)
 │       │   │   ├── bicycle_model.h      # kinematic bicycle, discretization, jacobians
 │       │   │   ├── trajectory.h         # Trajectory struct, resampling, interpolation
 │       │   │   ├── carla_conv.h         # left-handed <-> ROS conversion, GNSS <-> map (C++ side; see Rules)
@@ -116,10 +119,12 @@ nuway/
 │       │   │   ├── world_manager.py       #   world_manager node (one process, one CARLA client). Node: owns world.tick() in
 │       │   │   │                          #   lockstep, /clock, /nuway/sim/tick_timeout, the reset/weather services
 │       │   │   ├── gt_publisher.py        # module: GT agents, GT ego pose/odom, traffic lights, vehicle_state
+│       │   │   ├── map_export.py          # module: the stop-sign sidecar data/maps/<town>/stop_signs.csv (M0 §2.1)
 │       │   │   ├── sensor_rig.py          # module: spawns the rig, publishes /tf_static + camera_info + chase_cam; all
 │       │   │   │                          #   parsing/arithmetic comes from nuway_ml.common.rig (shared with the collectors)
+│       │   │   ├── traffic.py             # module: seeded Traffic Manager vehicles + AI walkers, spawned/cleared from its own bookkeeping (M1)
 │       │   │   ├── control_adapter.py     # node: ControlCommand -> CarlaEgoVehicleControl
-│       │   │   └── leaderboard_agent.py   # Leaderboard 2.x ROS agent entry point (M1)
+│       │   │   └── leaderboard_agent.py   # Leaderboard 2.x agent (MAP track; does the ROS side itself, M1 §3.12)
 │       │   └── launch/
 │       ├── nuway_map/                     # C++
 │       │   ├── src/
@@ -161,13 +166,16 @@ nuway/
 │       │       └── prediction_node.py        # M7; also hosts the M8 ego planning head
 │       ├── nuway_planning/                # C++ except gt_planning_node.py
 │       │   ├── src/
+│       │   │   ├── route_line.cc          # reference line + lane ids, limits, bounds, goal; the M0 speed profile as SpeedBoundAt (M1)
 │       │   │   ├── behavior_fsm.cc / behavior_fsm_node.cc      # M1
-│       │   │   ├── lattice_sampler.cc                           # M1
-│       │   │   ├── collision_checker.cc                         # M1
-│       │   │   ├── piecewise_jerk_qp.cc                         # M1
-│       │   │   ├── rule_selector.cc                             # M1
-│       │   │   ├── safety_layer_node.cc                         # M1
-│       │   │   ├── planner_node.cc        # orchestrates: candidates -> refine -> select
+│       │   │   ├── lattice_sampler.cc     # Frenet lattice + feasibility filter + the injected stop pair; candidate.h is the Candidate struct (M1)
+│       │   │   ├── collision_checker.cc   # SAT box overlap vs predictions, min_ttc, 3-disc min distance (M1)
+│       │   │   ├── piecewise_jerk_qp.cc   # the OSQP piecewise-jerk QP both refinements reduce to (M1)
+│       │   │   ├── candidate_refiner.cc   # path QP + speed QP (S-T boxes) on one candidate (M1)
+│       │   │   ├── rule_selector.cc       # the §3.6 cost table and the argmin over refined + injected (M1)
+│       │   │   ├── planner.cc             # the pipeline as a library: sample -> filter -> score -> refine -> select (M1)
+│       │   │   ├── safety_layer.cc / safety_layer_node.cc      # re-time, degraded fallback, doubled-margin check, limits, occupancy (M1)
+│       │   │   ├── planner_node.cc        # the ROS shell around planner.cc: barrier, three §3.6 cases, candidates + trajectory
 │       │   │   ├── forward_sim_scorer.cc  # M9
 │       │   │   └── ilqr.cc                # M10
 │       │   ├── nuway_planning/gt_planning_node.py   # cheat twin: M6 expert (via nuway_py) as a node (M6)
@@ -178,6 +186,7 @@ nuway/
 │       │   │   ├── vehicle_model.cc           # configs/vehicle/<vehicle>.yaml -> VehicleModel (geometry, limits, fit, map) (M0)
 │       │   │   ├── pure_pursuit_pid.cc        # the controller as a library (gtest without rclcpp) (M0)
 │       │   │   ├── pure_pursuit_pid_node.cc   # M0
+│       │   │   ├── mpc.cc                     # LTV-MPC on the kinematic bicycle, dense condensed QP on OSQP (library, gtest without rclcpp) (M1)
 │       │   │   └── mpc_node.cc                # M1
 │       │   ├── include/nuway_control/
 │       │   ├── config/defaults.yaml
@@ -198,6 +207,7 @@ nuway/
 │   │   ├── common/
 │   │   │   ├── geometry.py                # numpy/torch SE2 utils, must mirror nuway_common
 │   │   │   ├── frenet.py                  # mirrors nuway_common/frenet.h
+│   │   │   ├── polynomial.py              # mirrors nuway_common/polynomial.h (M1)
 │   │   │   ├── trajectory.py              # mirrors nuway_common/trajectory.h resampling (M8 spline resample)
 │   │   │   ├── longitudinal_map.py        # mirrors nuway_control's LongitudinalMap; parity-tested (M0)
 │   │   │   ├── carla_conv.py              # left-handed <-> ROS conversion (Python side; see Rules)
@@ -215,7 +225,8 @@ nuway/
 │   │   │   ├── run_logger.py              # the one wandb wrapper; training loops log through it
 │   │   │   └── schema.py                  # dataset record schema (dataclasses + validation)
 │   │   ├── viz/                           # M1; the one BEV drawing implementation (docs/02 §8)
-│   │   │   ├── style.py                   # colors, widths, figure geometry; Agg backend only
+│   │   │   ├── style.py                   # colors, widths, figure geometry, the §3.9 layer vocabulary; Agg backend only
+│   │   │   ├── scene.py                   # plain-data view of one tick (no ROS messages): what the draw functions take
 │   │   │   ├── bev_draw.py                # one draw_<layer>() per §3.9 marker layer, onto an Axes
 │   │   │   ├── panel.py                   # the standard frame: BEV + header text + diag strip
 │   │   │   └── contact_sheet.py           # tile N frames into one PNG
@@ -293,22 +304,27 @@ nuway/
 │   │   └── verify_tl_association.py       # M4
 │   ├── eval/
 │   │   ├── nuway_eval/                    # THE harness package (rclpy; imported by the scripts below, never by ml/ or ros2_ws)
-│   │   │   ├── route_runner.py            # one stack per town, second non-ticking CARLA client, resume. M0 v0: reset +
-│   │   │   │                              #   waypoints per route, lateral error from ControlDebug, odom/debug CSVs per route
-│   │   │   ├── infractions.py
-│   │   │   ├── driving_score.py
+│   │   │   ├── route_runner.py            # one stack per town, second non-ticking CARLA client (carla_probe.py), the
+│   │   │   │                              #   per-tick scoring loop, MCAP recorder; writes <route>_<weather>_<seed>/
+│   │   │   ├── carla_probe.py             # the harness's read-only client: collision sensor, stop lines, trigger volumes
+│   │   │   ├── infractions.py             # the Leaderboard 2.0 criteria as pure tick-driven detectors (M1 §3.10)
+│   │   │   ├── driving_score.py           # scoring config (configs/eval/scoring_*.yaml) and the LB 2.0 formula
 │   │   │   ├── report.py                  # results.csv (schema in M1 §3.10), report.md, incident renders
-│   │   │   └── chase_writer.py            # M1; /nuway/viz/chase_cam -> chase/*.jpg (docs/02 §8.3)
+│   │   │   ├── chase_writer.py            # M1; /nuway/viz/chase_cam -> chase/*.jpg (docs/02 §8.3)
+│   │   │   └── leaderboard_results.py     # M1: splits a route file per route; merges the evaluator's JSON + agent sidecars into leaderboard_results.csv
 │   │   ├── routes/                        # route XMLs (leaderboard format): dev_* (M0: dev_town01/03/05, 10 routes >= 1.5 km
-│   │   │                                  #   from route_gen), mapping_*, collect_long_*
-│   │   ├── run_routes.py                  # entry point for evaluation harness (also --replay, M6)
-│   │   ├── setup_leaderboard.sh           # M1: clones leaderboard + scenario_runner into external/ at the pinned commits
+│   │   │                                  #   from route_gen), smoke_town03 (M1: one 105 m Town03 route, protocol="smoke",
+│   │   │                                  #   for the integration tests), mapping_*, collect_long_*
+│   │   ├── run_routes.py                  # entry point: --routes m1|full, --weathers, --seed, --resume, --render, crash recovery (also --replay, M6)
+│   │   ├── patches/                       # M1: fixes carried on the pinned external/ checkouts (scenario_runner_*.patch, applied by setup_leaderboard.sh)
+│   │   ├── setup_leaderboard.sh           # M1: clones leaderboard + scenario_runner into external/ at the pinned commits, applies patches/
 │   │   ├── run_leaderboard.sh             # M1: one stack + one evaluator invocation per route (M1 §3.12)
 │   │   ├── eval_localization.py           # M5
-│   │   └── compare_runs.py
+│   │   └── compare_runs.py                # two run dirs: results rows within tolerance, first command tick outside the spread
 │   ├── lint/                              # format_cpp.sh, tidy_cpp.sh, lint_py.sh, merge_compile_commands.py, header guard check (M0)
 │   └── viz/                               # M1; headless renderers (docs/02 §8); no ROS env needed
-│       ├── render_bag.py                  # MCAP -> frames/, sheets/, incidents/ PNGs
+│       ├── render_bag.py                  # MCAP -> frames/, sheets/, incidents/ PNGs (rosbags decode, two streaming passes)
+│       ├── tests/                         # a synthetic MCAP written with rosbags; the no-ROS CLI run
 │       └── make_video.sh                  # optional ffmpeg wrapper; MP4 is never the primary artifact
 │
 ├── external/                              # gitignored; leaderboard/ and scenario_runner/ checkouts (tools/eval/setup_leaderboard.sh)
@@ -316,14 +332,15 @@ nuway/
 │   ├── raw/
 │   ├── sysid/                             # M0 system-identification logs + residual plots
 │   ├── shards/
-│   ├── maps/<town>/                       # one directory per town: map.xodr, map.ply, map_tags.npy, static_occ.npz, REPORT.md
+│   ├── maps/<town>/                       # one directory per town: map.xodr, stop_signs.csv (both exported by world_manager, M0 §2.1), map.ply, map_tags.npy, static_occ.npz, REPORT.md
 │   │                                      #   (the small curated files live in configs/maps/<town>/)
 │   ├── checkpoints/                       # <experiment>/<timestamp>/: ckpts, viz/, .hydra/config.yaml
 │   └── eval_runs/                         # <run_id>/: report.md, results.csv, per-route mcap + renders (docs/02 §8)
 │
 ├── tests/                                 # cross-cutting integration tests
 │   ├── fixtures/                          # gen_*.py generators (CLI, may print) + small committed CSV/JSON fixtures
-│   └── integration/
+│   └── integration/                       # geometry parity, bringup profile, and the M1 CARLA tests (slow, carla):
+│       └── m1_stack.py                    #   shared helper: test profile, stack launch, smoke-route drive for test_m1_*.py
 ├── .github/workflows/                     # CI: format, tidy, sanitizer, ruff, mypy, pytest (see docs/03 §7.4)
 ├── .clang-format                          # BasedOnStyle: Google (see docs/03)
 ├── .clang-tidy                            # google-* + naming checks, warnings are errors (see docs/03)
@@ -344,7 +361,7 @@ nuway/
 - **`nuway_py` is the one pybind package and the one sanctioned import from `ros2_ws` into `tools/`.** It exists so that the M6 expert, `gt_planning_node.py` and the parity tests run the *same* C++ planner/controller code as the runtime, which is worth more than the "everything `tools/` imports lives in `ml/`" rule it bends. It is available only after `colcon build` with `ros2_ws/install/setup.bash` sourced; `setup_env.sh` does that. It ships no stubs, so it is listed in the mypy `ignore_missing_imports` override (`03_style_and_conventions.md` §7.3). No *node package* under `ros2_ws` may be imported by `tools/` or `ml/`; the rclpy-side harness code (`tools/eval/nuway_eval/`, `tools/sysid/run_sweeps.py`, `tools/carla/check_native_ros2.py`) may import `rclpy` and the message packages (`nuway_msgs`, `carla_msgs`, the standard `*_msgs`), nothing else. This is why the evaluation harness (`nuway_eval`) lives under `tools/eval/` and the tracker under `ml/nuway_ml/perception/`: anything a script or a training-side tool imports is outside `ros2_ws`.
 - **`ml/` never imports `rclpy`.** `nuway_ml` must import in an environment with no ROS (the collectors, `render_bag.py`, training). Code that needs `rclpy` and is not a node lives in `tools/eval/nuway_eval/`.
 - **Mixed C++/Python packages** (`nuway_perception`, `nuway_prediction`, `nuway_planning`) are `ament_cmake` packages that install their Python subpackage with `ament_cmake_python` (`ament_python_install_package(${PROJECT_NAME})`) and register the Python nodes as `install(PROGRAMS ...)` entry points. `mypy` finds them through `mypy_path` (`03_style_and_conventions.md` §7.3).
-- **In `nuway_carla_bridge` only `world_manager.py` and `control_adapter.py` are nodes.** `gt_publisher.py` and `sensor_rig.py` are modules called by the `world_manager` node, because there is exactly one CARLA client per process and the GT topics must be emitted in the same call that publishes `/clock`. "One node per file" applies to the node files; module files say `# module, not a node` in their header comment.
+- **In `nuway_carla_bridge` only `world_manager.py` and `control_adapter.py` are nodes.** `gt_publisher.py`, `sensor_rig.py` and `traffic.py` are modules called by the `world_manager` node, because there is exactly one CARLA client per process and the GT topics must be emitted in the same call that publishes `/clock`. "One node per file" applies to the node files; module files say `# module, not a node` in their header comment.
 - **GT occupancy has exactly one implementation** (`nuway_ml/data/gt_occupancy.py`, both the sensor-based `generate_gt_occupancy` and the geometry-based `generate_from_geometry`), called directly by both the offline collectors and the runtime cheat node `gt_perception_node.py`. There is no C++ port and therefore no parity test to keep green. This is why the GT perception twin is Python (`00_overview.md` §2.6): a second implementation of the DDA ray casting and lane rasterization, maintained forever for one consumer, costs more than the node saves. No CLI bridge, no pybind for this function.
 - One node per file, one file per node. Nodes are thin: they parse params, subscribe/publish, and call a library class that is unit-tested without ROS.
 - Python packages inside `ros2_ws` only contain nodes and thin glue. Model code and anything shared with `tools/` lives in `ml/nuway_ml` and is imported.

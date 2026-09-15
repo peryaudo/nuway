@@ -1,0 +1,138 @@
+// Message -> scene.h conversions for the planning nodes (M1). Field copies
+// only; the geometric work happens in the libraries. Header-only so the
+// nodes and (from M6) nuway_py share one definition.
+#ifndef NUWAY_PLANNING_MSG_CONV_H_
+#define NUWAY_PLANNING_MSG_CONV_H_
+
+#include <cstddef>
+#include <cstdint>
+#include <optional>
+#include <vector>
+
+#include <nuway_common/frenet.h>
+#include <nuway_common/geometry.h>
+#include <nuway_common/ros_conv.h>
+#include <nuway_msgs/msg/behavior_decision.hpp>
+#include <nuway_msgs/msg/ego_state.hpp>
+#include <nuway_msgs/msg/occupancy_grid_mc.hpp>
+#include <nuway_msgs/msg/reference_line.hpp>
+#include <nuway_msgs/msg/route.hpp>
+#include <nuway_msgs/msg/traffic_light_array.hpp>
+
+#include "nuway_planning/behavior_fsm.h"
+#include "nuway_planning/route_line.h"
+#include "nuway_planning/safety_layer.h"
+#include "nuway_planning/scene.h"
+
+namespace nuway_planning {
+
+inline EgoObs EgoObsFromMsg(const nuway_msgs::msg::EgoState& msg) {
+  EgoObs out;
+  out.pose = nuway_common::SE2FromMsg(msg.pose);
+  out.vx_mps = msg.vx;
+  out.vy_mps = msg.vy;
+  out.ax_mps2 = msg.ax;
+  out.ay_mps2 = msg.ay;
+  out.yaw_rate_radps = msg.yaw_rate;
+  out.steering_angle_rad = msg.steering_angle;
+  return out;
+}
+
+inline std::vector<TrafficLightObs> TrafficLightsFromMsg(
+    const nuway_msgs::msg::TrafficLightArray& msg) {
+  std::vector<TrafficLightObs> out;
+  out.reserve(msg.lights.size());
+  for (const nuway_msgs::msg::TrafficLight& light : msg.lights) {
+    TrafficLightObs obs;
+    obs.id = light.id;
+    obs.state = static_cast<TrafficLightColor>(light.state);
+    obs.stop_line = Eigen::Vector2d(light.stop_line.x, light.stop_line.y);
+    obs.affected_lane_ids = light.affected_lane_ids;
+    obs.confidence = static_cast<double>(light.confidence);
+    obs.time_in_state_s = static_cast<double>(light.time_in_state);
+    obs.yellow_duration_s = static_cast<double>(light.yellow_duration);
+    out.push_back(obs);
+  }
+  return out;
+}
+
+// Builds the RouteLine of an episode from the latched line and, when the
+// route message is at hand, its goal projected onto the line. Returns
+// nullopt when the message is malformed (fewer than two points or
+// mismatched attribute sizes), so a node never indexes past the end.
+inline std::optional<RouteLine> RouteLineFromMsg(
+    const nuway_msgs::msg::ReferenceLine& msg,
+    const nuway_msgs::msg::Route* route) {
+  const std::size_t n = msg.points.size();
+  if (n < 2 || msg.s.size() != n || msg.heading.size() != n ||
+      msg.curvature.size() != n) {
+    return std::nullopt;
+  }
+  nuway_common::Vector2dList points;
+  points.reserve(n);
+  for (const geometry_msgs::msg::Point& p : msg.points) {
+    points.emplace_back(p.x, p.y);
+  }
+  nuway_common::ReferenceLine line = nuway_common::ReferenceLine::FromSamples(
+      points, std::vector<double>(msg.s.begin(), msg.s.end()),
+      std::vector<double>(msg.heading.begin(), msg.heading.end()),
+      std::vector<double>(msg.curvature.begin(), msg.curvature.end()));
+  std::optional<double> goal_s;
+  if (route != nullptr) {
+    const std::optional<nuway_common::FrenetPoint> goal =
+        line.ToFrenet(route->goal.position.x, route->goal.position.y, 20.0);
+    if (goal.has_value()) {
+      goal_s = goal->s;
+    }
+  }
+  return RouteLine(
+      std::move(line), msg.lane_id,
+      std::vector<double>(msg.speed_limit.begin(), msg.speed_limit.end()),
+      std::vector<double>(msg.left_bound.begin(), msg.left_bound.end()),
+      std::vector<double>(msg.right_bound.begin(), msg.right_bound.end()),
+      goal_s);
+}
+
+// nuway_msgs/BehaviorDecision -> BehaviorOutput (the wire fields only).
+inline BehaviorOutput BehaviorOutputFromMsg(
+    const nuway_msgs::msg::BehaviorDecision& msg) {
+  BehaviorOutput out;
+  out.lateral = static_cast<Lateral>(msg.lateral);
+  out.target_lane_id = msg.target_lane_id;
+  out.longitudinal = static_cast<Longitudinal>(msg.longitudinal);
+  out.lead_agent_id = msg.lead_agent_id;
+  out.stop_s = static_cast<double>(msg.stop_s);
+  out.target_speed_mps = static_cast<double>(msg.target_speed);
+  out.reason = msg.reason;
+  return out;
+}
+
+// The `occupied` channel of an OccupancyGridMC as the safety layer reads
+// it; `base_pose` is the ego pose at the grid's stamp. nullopt when the
+// message is malformed (data shorter than its channels claim).
+inline std::optional<OccupancyView> OccupancyViewFromMsg(
+    const nuway_msgs::msg::OccupancyGridMC& msg,
+    const nuway_common::SE2& base_pose) {
+  OccupancyView view;
+  view.spec.resolution = static_cast<double>(msg.resolution);
+  view.spec.x_min = static_cast<double>(msg.x_min);
+  view.spec.y_min = static_cast<double>(msg.y_min);
+  view.spec.height = msg.height;
+  view.spec.width = msg.width;
+  view.base_pose = base_pose;
+  const std::size_t cells = static_cast<std::size_t>(msg.height) *
+                            static_cast<std::size_t>(msg.width);
+  const auto channel =
+      static_cast<std::size_t>(nuway_common::OccupancyChannel::kOccupied);
+  if (msg.num_channels <= channel || msg.data.size() < (channel + 1) * cells) {
+    return std::nullopt;
+  }
+  view.occupied.assign(
+      msg.data.begin() + static_cast<std::ptrdiff_t>(channel * cells),
+      msg.data.begin() + static_cast<std::ptrdiff_t>((channel + 1) * cells));
+  return view;
+}
+
+}  // namespace nuway_planning
+
+#endif  // NUWAY_PLANNING_MSG_CONV_H_

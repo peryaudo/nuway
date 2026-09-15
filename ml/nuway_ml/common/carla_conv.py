@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 import numpy as np
+import numpy.typing as npt
 from numpy.typing import NDArray
 
 from nuway_ml.common.geometry import SE3, rpy_to_quaternion, wrap_angle
@@ -127,6 +128,24 @@ def angular_velocity_to_ros(omega_deg: LocationLike) -> Array:
             -omega_deg.z * DEG_TO_RAD,
         ]
     )
+
+
+def lidar_points_to_ros(points: npt.NDArray[np.float32]) -> npt.NDArray[np.float32]:
+    """CARLA LiDAR points ``(N, 4)`` (x, y, z, intensity; sensor axes) -> ROS axes (y negated).
+
+    The raw ``carla.LidarMeasurement`` buffer is left-handed like every CARLA
+    location, and CARLA's own ROS 2 bridge publishes the same flip, so a
+    consumer sees one convention on both paths (M1 §3.12).
+    """
+    out = np.array(points, dtype=np.float32, copy=True)
+    if out.ndim == 2 and out.shape[1] >= 2:
+        out[:, 1] = -out[:, 1]
+    return out
+
+
+def gyroscope_to_ros(omega_rad: LocationLike) -> Array:
+    """CARLA IMU gyroscope (rad/s, CARLA axes) -> ROS rad/s ``(3,)``."""
+    return np.array([omega_rad.x, -omega_rad.y, -omega_rad.z], dtype=np.float64)
 
 
 def steer_from_ros(steering_angle_rad: float, max_steer_rad: float) -> float:

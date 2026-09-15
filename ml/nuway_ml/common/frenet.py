@@ -1,4 +1,4 @@
-"""Reference line and Cartesian <-> Frenet conversion (M0).
+"""Reference line and Cartesian <-> Frenet conversion (M0; state conversions M1).
 
 Mirrors ``nuway_common/frenet.h``: a polyline sampled along arc length ``s``
 (meters, map frame) with per-sample heading (rad) and curvature (1/m). Frenet
@@ -6,6 +6,14 @@ coordinates are ``(s, d)`` with ``d`` positive to the left (ROS convention).
 Cartesian points are ``p(s) + d * n(theta(s))`` with the heading interpolated on
 the circle; the inverse solves the tangent condition with Newton steps, so the
 round trip is exact while ``|d| * curvature < 1``.
+
+The state conversions (:meth:`ReferenceLine.to_cartesian_state`,
+:meth:`ReferenceLine.to_frenet_state`) are the Werling et al. (ICRA 2010)
+formulas in Apollo's ``CartesianFrenetConverter`` form: with ``dtheta`` the
+heading difference to the line and ``one_minus_kd = 1 - kappa_r d`` the metric
+stretch of a point beside a bend, ``s_dot = v cos(dtheta) / one_minus_kd`` and
+``d' = one_minus_kd tan(dtheta)``; the second derivatives bring in the
+curvature rate ``kappa_r'`` along the line.
 """
 
 from __future__ import annotations
@@ -22,6 +30,8 @@ Array = NDArray[np.float64]
 
 NEWTON_ITERATIONS = 12
 NEWTON_TOLERANCE = 1e-10
+# Half-width of the central difference behind curvature_rate_at (0.5 m samples).
+CURVATURE_RATE_STEP_M = 0.5
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,6 +65,30 @@ def menger_curvature(first: Array, mid: Array, last: Array) -> float:
     if denom < 1e-12:
         return 0.0
     return float(2.0 * cross / denom)
+
+
+@dataclass(frozen=True, slots=True)
+class FrenetState:
+    """Frenet state: ``s`` with time derivatives, ``d`` with derivatives in ``s``."""
+
+    s: float = 0.0
+    s_dot: float = 0.0
+    s_ddot: float = 0.0
+    d: float = 0.0
+    d_prime: float = 0.0
+    d_dprime: float = 0.0
+
+
+@dataclass(frozen=True, slots=True)
+class CartesianState:
+    """Cartesian state: pose, speed along ``yaw``, tangential accel, path curvature."""
+
+    x: float = 0.0
+    y: float = 0.0
+    yaw: float = 0.0
+    v: float = 0.0
+    a: float = 0.0
+    kappa: float = 0.0
 
 
 class ReferenceLine:
@@ -182,6 +216,93 @@ class ReferenceLine:
         c0 = float(self._curvature[idx])
         c1 = float(self._curvature[idx + 1])
         return c0 + alpha * (c1 - c0)
+
+    def curvature_rate_at(self, s: float) -> float:
+        """Curvature rate ``dkappa/ds`` at s: a central difference clamped to the line."""
+        if self.size < 2:
+            return 0.0
+        lo = max(0.0, s - CURVATURE_RATE_STEP_M)
+        hi = min(self.length, s + CURVATURE_RATE_STEP_M)
+        if hi - lo <= 0.0:
+            return 0.0
+        return (self.curvature_at(hi) - self.curvature_at(lo)) / (hi - lo)
+
+    def to_cartesian_state(self, f: FrenetState) -> CartesianState:
+        """Frenet state -> Cartesian state (Werling 2010 / Apollo frenet_to_cartesian).
+
+        Position ``p(s) + d n(s)``, heading ``theta_r + atan2(d', 1 - kappa_r d)``,
+        then speed, curvature and acceleration from differentiating twice.
+        Valid while ``|d| kappa_r < 1``.
+        """
+        base = self.to_cartesian(FrenetPoint(f.s, f.d))
+        kappa_r = self.curvature_at(f.s)
+        dkappa_r = self.curvature_rate_at(f.s)
+        one_minus_kd = 1.0 - kappa_r * f.d
+        dtheta = math.atan2(f.d_prime, one_minus_kd)
+        cos_dtheta = math.cos(dtheta)
+        tan_dtheta = math.tan(dtheta)
+        kd_term = dkappa_r * f.d + kappa_r * f.d_prime
+        v = f.s_dot * one_minus_kd / cos_dtheta
+        kappa = (
+            ((f.d_dprime + kd_term * tan_dtheta) * cos_dtheta * cos_dtheta)
+            / one_minus_kd
+            + kappa_r
+        ) * (cos_dtheta / one_minus_kd)
+        delta_theta_prime = (kappa * one_minus_kd) / cos_dtheta - kappa_r
+        a = (f.s_ddot * one_minus_kd) / cos_dtheta + (
+            f.s_dot * f.s_dot / cos_dtheta
+        ) * (f.d_prime * delta_theta_prime - kd_term)
+        return CartesianState(
+            base.x, base.y, wrap_angle(base.heading + dtheta), v, a, kappa
+        )
+
+    def to_frenet_state(
+        self, c: CartesianState, max_dist: float = 1e9
+    ) -> FrenetState | None:
+        """Cartesian state -> Frenet state at the global projection; None if it fails."""
+        point = self.to_frenet(c.x, c.y, max_dist)
+        if point is None:
+            return None
+        return self.frenet_state_at(c, point)
+
+    def to_frenet_state_near(
+        self,
+        c: CartesianState,
+        max_dist: float,
+        s_hint: float,
+        *,
+        back_m: float,
+        ahead_m: float,
+    ) -> FrenetState | None:
+        """Cartesian state -> Frenet state with the windowed projection of ``to_frenet_near``."""
+        point = self.to_frenet_near(
+            c.x, c.y, max_dist, s_hint, back_m=back_m, ahead_m=ahead_m
+        )
+        if point is None:
+            return None
+        return self.frenet_state_at(c, point)
+
+    def frenet_state_at(self, c: CartesianState, point: FrenetPoint) -> FrenetState:
+        """Return the Frenet derivatives at a known projection (Apollo cartesian_to_frenet)."""
+        theta_r = self.heading_at(point.s)
+        kappa_r = self.curvature_at(point.s)
+        dkappa_r = self.curvature_rate_at(point.s)
+        dtheta = wrap_angle(c.yaw - theta_r)
+        cos_dtheta = math.cos(dtheta)
+        tan_dtheta = math.tan(dtheta)
+        one_minus_kd = 1.0 - kappa_r * point.d
+        s_dot = c.v * cos_dtheta / one_minus_kd
+        d_prime = one_minus_kd * tan_dtheta
+        kd_term = dkappa_r * point.d + kappa_r * d_prime
+        delta_theta_prime = (c.kappa * one_minus_kd) / cos_dtheta - kappa_r
+        d_dprime = (
+            -kd_term * tan_dtheta
+            + (one_minus_kd / (cos_dtheta * cos_dtheta)) * delta_theta_prime
+        )
+        s_ddot = (
+            c.a * cos_dtheta - s_dot * s_dot * (d_prime * delta_theta_prime - kd_term)
+        ) / one_minus_kd
+        return FrenetState(point.s, s_dot, s_ddot, point.d, d_prime, d_dprime)
 
     def to_cartesian(self, frenet: FrenetPoint) -> CartesianPoint:
         """Frenet -> Cartesian: ``p(s) + d * n(s)``, s clamped to ``[0, length]``."""

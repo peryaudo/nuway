@@ -54,6 +54,8 @@ std::optional<VehicleModel> ParseVehicleModel(const std::string& text,
       model.limits.a_min_mps2 = Get(limits, "a_min", model.limits.a_min_mps2);
       model.limits.jerk_max_mps3 =
           Get(limits, "jerk_max", model.limits.jerk_max_mps3);
+      model.limits.jerk_brake_max_mps3 =
+          Get(limits, "jerk_brake_max", model.limits.jerk_max_mps3);
       model.limits.steer_rate_max_radps =
           Get(limits, "steer_rate_max", model.limits.steer_rate_max_radps);
       model.limits.kappa_max = Get(limits, "kappa_max", model.limits.kappa_max);

@@ -24,3 +24,6 @@ world_manager:
 control_adapter:
   ros__parameters:
     vehicle: configs/vehicle/lincoln_mkz_2020.yaml
+    hold_speed_mps: 0.3             # stand-still brake below this speed ... (task 17)
+    hold_accel_mps2: 0.05           # ... when the commanded accel is at most this
+    hold_brake: 0.3                 # ... with this pedal

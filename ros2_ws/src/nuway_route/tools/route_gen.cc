@@ -5,9 +5,16 @@
 // convention, as the Leaderboard writes them (nuway_ml/common/routes.py
 // converts back through carla_conv).
 //
-//   route_gen --xodr data/maps/Town03/map.xodr --town Town03 --routes 4
+//   route_gen --xodr data/maps/Town03/map.xodr --town Town03 --routes 10
 //             --min-length-m 1500 --spacing-m 50 --seed 3 --prefix dev03
+//             --protocol m1 --protocol-count 5
 //             --out tools/eval/routes/dev_town03.xml
+//
+// --protocol marks the first --protocol-count routes with protocol="NAME"
+// (an attribute of our own on the Leaderboard's <route>; the official
+// parser ignores it, M1 §3.10). A successor whose start does not coincide
+// with the lane's end (Town03 road 1608, M0 §6 (b)) is never walked: the
+// reference line builder assumes coincident joins.
 //
 // How a route is made: pick a long driving lane at random, follow a random
 // unvisited driving successor at each lane end until min_length_m is
@@ -44,7 +51,12 @@ struct Args {
   double min_length_m = 1500.0;
   double spacing_m = 50.0;
   unsigned seed = 0;
+  std::string protocol;  // mark the first protocol_count routes
+  int protocol_count = 0;
 };
+
+// Successor joins farther apart than this are not driven through.
+constexpr double kJoinToleranceM = 0.5;
 
 // Parses `--key value` pairs; nullopt (after printing usage) on an unknown
 // key or a missing --xodr/--out.
@@ -70,6 +82,11 @@ std::optional<Args> ParseArgs(int argc, char** argv) {
     } else if (key == "--seed") {
       args.seed =
           static_cast<unsigned>(std::strtol(value.c_str(), nullptr, 10));
+    } else if (key == "--protocol") {
+      args.protocol = value;
+    } else if (key == "--protocol-count") {
+      args.protocol_count =
+          static_cast<int>(std::strtol(value.c_str(), nullptr, 10));
     } else {
       std::fprintf(stderr, "unknown argument %s\n", key.c_str());
       return std::nullopt;
@@ -79,7 +96,8 @@ std::optional<Args> ParseArgs(int argc, char** argv) {
     std::fprintf(stderr,
                  "usage: route_gen --xodr <map.xodr> --out <file.xml> "
                  "[--town T] [--routes N] [--min-length-m L] "
-                 "[--spacing-m S] [--seed K] [--prefix P]\n");
+                 "[--spacing-m S] [--seed K] [--prefix P] "
+                 "[--protocol NAME --protocol-count N]\n");
     return std::nullopt;
   }
   return args;
@@ -112,10 +130,18 @@ std::optional<Route> Walk(const nuway_map::LaneGraph& graph,
     std::vector<const nuway_map::Lane*> candidates;
     for (const std::uint32_t id : lane->successors) {
       const nuway_map::Lane* next = graph.lane(id);
-      if (next != nullptr && visited.count(next->id) == 0 &&
-          next->type == nuway_map::LaneType::kDriving) {
-        candidates.push_back(next);
+      if (next == nullptr || visited.count(next->id) != 0 ||
+          next->type != nuway_map::LaneType::kDriving ||
+          next->centerline.empty()) {
+        continue;
       }
+      // A non-coincident join (the successor starts metres from this
+      // lane's end) would put a lateral step into the reference line.
+      if ((next->centerline.front() - lane->centerline.back()).norm() >
+          kJoinToleranceM) {
+        continue;
+      }
+      candidates.push_back(next);
     }
     if (candidates.empty()) {
       break;
@@ -252,7 +278,11 @@ int main(int argc, char** argv) {
   for (std::size_t i = 0; i < routes.size(); ++i) {
     char id[64];
     std::snprintf(id, sizeof(id), "%s_%02zu", args->prefix.c_str(), i);
-    out << "  <route id=\"" << id << "\" town=\"" << args->town << "\">\n"
+    out << "  <route id=\"" << id << "\" town=\"" << args->town << "\"";
+    if (!args->protocol.empty() && static_cast<int>(i) < args->protocol_count) {
+      out << " protocol=\"" << args->protocol << "\"";
+    }
+    out << ">\n"
         << "    <waypoints>\n";
     for (const Eigen::Vector3d& p : routes[i].waypoints) {
       const nuway_common::CarlaLocation loc = nuway_common::LocationFromRos(p);

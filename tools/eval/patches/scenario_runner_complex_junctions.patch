@@ -1,0 +1,13 @@
+diff --git a/srunner/scenarios/background_activity.py b/srunner/scenarios/background_activity.py
+index 6f1d8e1..1cbd6a3 100644
+--- a/srunner/scenarios/background_activity.py
++++ b/srunner/scenarios/background_activity.py
+@@ -563,7 +563,7 @@ class BackgroundBehavior(AtomicBehavior):
+             else:
+                 # New complex, add it
+                 junction_ids = [j.id for j in junction_data.junctions]
+-                for complex_junction in complex_junctions:
++                for complex_junction in complex_junctions[current_index]:
+                     if complex_junction.id not in junction_ids:
+                         junction_data.junctions.append(complex_junction)
+ 

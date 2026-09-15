@@ -27,10 +27,15 @@ SUBSYSTEMS = (
 def generate_launch_description() -> LaunchDescription:
     launch_dir = Path(get_package_share_directory("nuway_bringup")) / "launch"
     profile = LaunchConfiguration("profile")
+    delay = LaunchConfiguration("callback_delay_ms")
     includes = [
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(str(launch_dir / f"{name}.launch.py")),
-            launch_arguments={"profile": profile}.items(),
+            launch_arguments=(
+                {"profile": profile, "callback_delay_ms": delay}
+                if name == "prediction"
+                else {"profile": profile}
+            ).items(),
         )
         for name in SUBSYSTEMS
     ]
@@ -40,6 +45,12 @@ def generate_launch_description() -> LaunchDescription:
                 "profile",
                 default_value="m0_gt_all",
                 description="profile name under configs/profiles/ or a YAML path",
+            ),
+            DeclareLaunchArgument(
+                "callback_delay_ms",
+                default_value="0",
+                description="wall-clock sleep injected into const_vel_node's tick "
+                "(M1 §5 determinism check; 0 = off)",
             ),
             *includes,
         ]

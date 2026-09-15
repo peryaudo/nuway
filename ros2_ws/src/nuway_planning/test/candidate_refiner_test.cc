@@ -1,0 +1,365 @@
+#include "nuway_planning/candidate_refiner.h"
+
+#include <cmath>
+#include <cstddef>
+#include <optional>
+#include <string>
+#include <vector>
+
+#include <gtest/gtest.h>
+
+#include <nuway_common/agents.h>
+#include <nuway_common/frenet.h>
+#include <nuway_common/geometry.h>
+
+#include "nuway_planning/behavior_fsm.h"
+#include "nuway_planning/candidate.h"
+#include "nuway_planning/collision_checker.h"
+#include "nuway_planning/lattice_sampler.h"
+#include "nuway_planning/route_line.h"
+#include "nuway_planning/scene.h"
+
+namespace nuway_planning {
+namespace {
+
+using nuway_common::AgentState;
+using nuway_common::FrenetState;
+
+// A 300 m straight with 3.5 m of drivable width on each side.
+RouteLine Straight() {
+  nuway_common::Vector2dList points;
+  for (int i = 0; i <= 600; ++i) {
+    points.emplace_back(0.5 * i, 0.0);
+  }
+  return RouteLine(nuway_common::ReferenceLine::FromPoints(points), {1U},
+                   {13.9}, {3.5}, {3.5}, 250.0);
+}
+
+// A 150 m straight east, a 20 m radius half turn and 150 m back west: the
+// return leg runs 40 m north of the outbound one, the way a protocol route
+// loops back through its own junctions.
+RouteLine Hairpin() {
+  nuway_common::Vector2dList points;
+  for (int i = 0; i < 300; ++i) {
+    points.emplace_back(0.5 * i, 0.0);
+  }
+  for (int i = 0; i <= 125; ++i) {
+    const double theta = 0.5 * i / 20.0;
+    points.emplace_back(150.0 + (20.0 * std::sin(theta)),
+                        20.0 * (1.0 - std::cos(theta)));
+  }
+  for (int i = 1; i <= 300; ++i) {
+    points.emplace_back(150.0 - (0.5 * i), 40.0);
+  }
+  return RouteLine(nuway_common::ReferenceLine::FromPoints(points), {1U},
+                   {13.9}, {3.5}, {3.5}, std::nullopt);
+}
+
+FrenetState Ego(double s, double v) {
+  FrenetState f;
+  f.s = s;
+  f.s_dot = v;
+  return f;
+}
+
+// The centre-line, full-horizon velocity-keeping candidate at v_target.
+Candidate CentreCandidate(const SceneInput& in, const FrenetState& ego,
+                          double v_target) {
+  BehaviorOutput decision;
+  decision.longitudinal = Longitudinal::kFree;
+  decision.target_speed_mps = v_target;
+  const LatticeSampler sampler{LatticeOptions{}, LatticeLimits{}};
+  for (const Candidate& c : sampler.Sample(in, ego, decision)) {
+    if (!c.injected && std::abs(c.d_f_m) < 1e-9 && c.horizon_s == 8.0 &&
+        std::abs(c.v_target_mps - v_target) < 1e-9 && c.s_f_m > 60.0) {
+      return c;
+    }
+  }
+  return Candidate{};
+}
+
+AgentState Car(std::uint32_t id, double x, double y, double vx) {
+  AgentState a;
+  a.id = id;
+  a.class_id = nuway_common::AgentClass::kCar;
+  a.pose = nuway_common::SE2{x, y, 0.0};
+  a.length_m = 4.5;
+  a.width_m = 2.0;
+  a.vx_mps = vx;
+  return a;
+}
+
+nuway_common::PredictionSet ConstVel(const std::vector<AgentState>& agents) {
+  nuway_common::PredictionSet set;
+  set.num_samples = 1;
+  set.num_timesteps = 16;
+  set.dt_s = 0.5;
+  set.sample_weight = {1.0};
+  for (const AgentState& a : agents) {
+    set.agent_ids.push_back(a.id);
+    for (int t = 0; t < 16; ++t) {
+      set.xy.push_back(a.pose.x + (a.vx_mps * 0.5 * (t + 1)));
+      set.xy.push_back(a.pose.y);
+      set.yaw.push_back(0.0);
+    }
+  }
+  return set;
+}
+
+TEST(CandidateRefinerTest, ParkedCarOnTheRightShiftsThePathLeft) {
+  const RouteLine route = Straight();
+  SceneInput in;
+  in.route = &route;
+  in.agents = {Car(3, 60.0, -1.2, 0.0)};
+  in.predictions = ConstVel(in.agents);
+  const FrenetState ego = Ego(20.0, 10.0);
+  Candidate c = CentreCandidate(in, ego, 10.0);
+  ASSERT_EQ(c.trajectory.size(), 81U);
+  CandidateRefiner refiner{RefinerOptions{}, LatticeLimits{},
+                           CollisionOptions{}};
+  const RefineOutcome out = refiner.Refine(in, ego, &c);
+  EXPECT_EQ(out.path, QpOutcome::kSolved) << out.message;
+  EXPECT_EQ(out.speed, QpOutcome::kSolved) << out.message;
+  EXPECT_TRUE(out.refined());
+  EXPECT_TRUE(c.refined);
+  EXPECT_FALSE(c.qp_relaxed);
+  ASSERT_EQ(c.frenet.size(), 81U);
+  // Clearance: -1.2 + 1.0 + 0.2 + 0.92 + 0.4 = 1.32 m alongside the car.
+  bool passed = false;
+  for (const FrenetState& f : c.frenet) {
+    if (f.s > 58.0 && f.s < 62.0) {
+      EXPECT_GE(f.d, 1.32 - 1e-2);
+      passed = true;
+    }
+    EXPECT_LE(std::abs(f.d), 3.5 - 0.92 + 1e-2);
+  }
+  EXPECT_TRUE(passed);
+  EXPECT_NEAR(c.frenet.front().d, 0.0, 1e-3);
+  EXPECT_LT(std::abs(c.frenet.back().d), 0.5);  // back toward the centre
+  // The map-frame samples follow the refined offset.
+  EXPECT_GT(c.trajectory[45].y, 1.0);
+}
+
+TEST(CandidateRefinerTest, SlowLeadBoundsTheSpeedProfile) {
+  const RouteLine route = Straight();
+  SceneInput in;
+  in.route = &route;
+  in.agents = {Car(4, 45.0, 0.0, 4.0)};
+  in.predictions = ConstVel(in.agents);
+  const FrenetState ego = Ego(20.0, 10.0);
+  Candidate c = CentreCandidate(in, ego, 10.0);
+  ASSERT_EQ(c.trajectory.size(), 81U);
+  CandidateRefiner refiner{RefinerOptions{}, LatticeLimits{},
+                           CollisionOptions{}};
+  refiner.OnPlanningTick();  // no solution yet: a no-op
+  const RefineOutcome out = refiner.Refine(in, ego, &c);
+  EXPECT_TRUE(out.refined()) << out.message;
+  EXPECT_FALSE(c.qp_relaxed) << out.message;
+  EXPECT_LT(out.speed_iterations, 2000);
+  // Behind the lead's rear minus the margins: 45 - 2.25 - 0.2 - 3.9 - 1.0
+  // + 4 t. The lattice profile at 10 m/s would have crossed it at 3.3 s.
+  for (std::size_t i = 0; i < c.frenet.size(); ++i) {
+    const double t = c.trajectory[i].t;
+    EXPECT_LE(c.frenet[i].s, 45.0 - 7.35 + (4.0 * t) + 1e-2) << t;
+    EXPECT_GE(c.trajectory[i].v, -1e-3);
+    EXPECT_GE(c.trajectory[i].a, -6.0 - 1e-2);
+    EXPECT_LE(c.trajectory[i].a, 3.0 + 1e-2);
+  }
+  EXPECT_LT(c.trajectory.back().v, 6.0);
+  EXPECT_GT(c.trajectory.back().v, 2.0);
+  EXPECT_GT(c.frenet.back().s, 50.0);
+}
+
+TEST(CandidateRefinerTest, LeadInsideTheMarginClosesTheBoxWithoutASolve) {
+  // A lead 5 m ahead moving at 4 m/s: its inflated rear (5 - 7.35 m) is
+  // behind the ego, so no speed profile can stay behind it. The refiner
+  // reports the closed box instead of burning the QP budget.
+  const RouteLine route = Straight();
+  SceneInput in;
+  in.route = &route;
+  in.agents = {Car(4, 25.0, 0.0, 4.0)};
+  in.predictions = ConstVel(in.agents);
+  const FrenetState ego = Ego(20.0, 10.0);
+  Candidate c = CentreCandidate(in, ego, 10.0);
+  CandidateRefiner refiner{RefinerOptions{}, LatticeLimits{},
+                           CollisionOptions{}};
+  const RefineOutcome out = refiner.Refine(in, ego, &c);
+  EXPECT_FALSE(out.refined());
+  EXPECT_EQ(out.message.rfind("speed box closed", 0), 0U) << out.message;
+  EXPECT_EQ(out.speed_iterations, 0);
+  EXPECT_TRUE(c.qp_relaxed);
+}
+
+TEST(CandidateRefinerTest, AnAgentOffThisLegOfTheRouteBoundsNothing) {
+  // A car crossing the outbound leg 5 m behind the ego and driving north
+  // onto the return leg. Its box at t = 0 is behind the ego (the profile
+  // stays ahead of it); from 2.5 s on its pose is beyond the projection
+  // window of the leg the ego is on, and the global fallback of
+  // RouteLine::Project used to place it on the return leg, 350 m ahead in
+  // arc length, as a lower bound no profile could meet (protocol v2:
+  // refined profiles at 40 m/s and a car that never left a straight).
+  const RouteLine route = Hairpin();
+  SceneInput in;
+  in.route = &route;
+  AgentState car = Car(4, 15.0, 0.0, 0.0);
+  car.pose.yaw = M_PI / 2.0;
+  car.vy_mps = 8.0;
+  in.agents = {car};
+  nuway_common::PredictionSet set;
+  set.num_samples = 1;
+  set.num_timesteps = 16;
+  set.dt_s = 0.5;
+  set.sample_weight = {1.0};
+  set.agent_ids = {4};
+  for (int t = 0; t < 16; ++t) {
+    set.xy.push_back(15.0);
+    set.xy.push_back(8.0 * 0.5 * (t + 1));
+    set.yaw.push_back(M_PI / 2.0);
+  }
+  in.predictions = set;
+  const FrenetState ego = Ego(20.0, 10.0);
+  Candidate c = CentreCandidate(in, ego, 10.0);
+  ASSERT_EQ(c.trajectory.size(), 81U);
+  const double s_lattice_end = c.frenet.back().s;
+  CandidateRefiner refiner{RefinerOptions{}, LatticeLimits{},
+                           CollisionOptions{}};
+  const RefineOutcome out = refiner.Refine(in, ego, &c);
+  EXPECT_TRUE(out.refined()) << out.message;
+  EXPECT_FALSE(c.qp_relaxed) << out.message;
+  EXPECT_NEAR(c.frenet.back().s, s_lattice_end, 1.0);
+  for (const nuway_common::TrajectoryPoint& p : c.trajectory) {
+    EXPECT_LE(p.v, 10.5);
+  }
+}
+
+TEST(CandidateRefinerTest, AQueuedCarBehindAYawedEgoDoesNotBoundThePath) {
+  // A car stopped 5 m behind the ego, 1.84 m to its right: not a follower
+  // (the follower cone is 1.75 m wide, and a yawed ego in a queue sees the
+  // car straight behind it that far off its axis), so it is a static agent
+  // of the path QP, and its inflated s interval (7.35 m ahead of its
+  // front) reaches past the ego's first knot. Bounding that knot 2.4 m
+  // left of the car would fix the ego's own d outside the bound and relax
+  // every path QP; the raw footprints bound nothing ahead of the ego.
+  const RouteLine route = Straight();
+  SceneInput in;
+  in.route = &route;
+  in.agents = {Car(4, 15.0, -2.5, 0.0)};
+  in.predictions = ConstVel(in.agents);
+  FrenetState ego = Ego(20.0, 5.0);
+  ego.d = -0.66;
+  Candidate c = CentreCandidate(in, ego, 5.0);
+  ASSERT_EQ(c.trajectory.size(), 81U);
+  CandidateRefiner refiner{RefinerOptions{}, LatticeLimits{},
+                           CollisionOptions{}};
+  const RefineOutcome out = refiner.Refine(in, ego, &c);
+  EXPECT_EQ(out.path, QpOutcome::kSolved) << out.message;
+  EXPECT_TRUE(out.refined()) << out.message;
+  EXPECT_FALSE(c.qp_relaxed) << out.message;
+}
+
+TEST(CandidateRefinerTest,
+     AStoppedCarAcrossTheLaneAheadIsPassedOnRawFootprints) {
+  // A car stopped across the lane 6.5 m ahead, its near side 1.3 m left
+  // of the line: 0.38 m clear of the ego's flank, 0.12 m short of the
+  // tuned margins. The inflated box reached 0.5 m behind the ego's s and closed
+  // the speed window at t = 0 for every top-K candidate, while the
+  // collision check had passed them on raw footprints (the inflated boxes
+  // already overlapped); on raw footprints the car is beside the path and
+  // bounds nothing, and the ego may creep past it.
+  const RouteLine route = Straight();
+  SceneInput in;
+  in.route = &route;
+  AgentState car = Car(4, 26.5, 4.0, 0.0);
+  car.pose.yaw = M_PI / 2.0;
+  car.length_m = 5.4;
+  car.width_m = 1.8;
+  in.agents = {car};
+  in.predictions = ConstVel(in.agents);
+  const FrenetState ego = Ego(20.0, 1.0);
+  Candidate c = CentreCandidate(in, ego, 1.0);
+  ASSERT_EQ(c.trajectory.size(), 81U);
+  const double s_lattice_end = c.frenet.back().s;
+  CollisionOptions collision;  // the tuned margins of M1 §3.4 (task 17)
+  collision.margin_lon_m = 2.0;
+  collision.margin_lat_m = 0.3;
+  CandidateRefiner refiner{RefinerOptions{}, LatticeLimits{}, collision};
+  const RefineOutcome out = refiner.Refine(in, ego, &c);
+  EXPECT_TRUE(out.refined()) << out.message;
+  EXPECT_FALSE(c.qp_relaxed) << out.message;
+  EXPECT_NEAR(c.frenet.back().s, s_lattice_end, 0.5);
+}
+
+TEST(CandidateRefinerTest, ExhaustedBudgetKeepsTheLatticeShape) {
+  const RouteLine route = Straight();
+  SceneInput in;
+  in.route = &route;
+  const FrenetState ego = Ego(20.0, 10.0);
+  Candidate c = CentreCandidate(in, ego, 10.0);
+  const Candidate before = c;
+  RefinerOptions options;
+  options.qp.max_iter = 1;
+  options.qp.check_termination = 1;
+  CandidateRefiner refiner{options, LatticeLimits{}, CollisionOptions{}};
+  const RefineOutcome out = refiner.Refine(in, ego, &c);
+  EXPECT_FALSE(out.refined());
+  // (The path QP's zero start is already optimal for a centre-line
+  // candidate, so it may converge in that one iteration; the speed QP
+  // cannot.)
+  EXPECT_EQ(out.speed, QpOutcome::kFailed);
+  EXPECT_NE(out.message.find("max_iter_reached"), std::string::npos)
+      << out.message;
+  EXPECT_FALSE(c.refined);
+  EXPECT_TRUE(c.qp_relaxed);
+  ASSERT_EQ(c.trajectory.size(), before.trajectory.size());
+  for (std::size_t i = 0; i < c.trajectory.size(); ++i) {
+    EXPECT_EQ(c.trajectory[i].x, before.trajectory[i].x);
+    EXPECT_EQ(c.frenet[i].s, before.frenet[i].s);
+  }
+  // A short candidate near the line end skips the path QP.
+  const FrenetState late = Ego(298.0, 1.0);
+  Candidate hold = CentreCandidate(in, late, 1.0);
+  if (hold.trajectory.empty()) {
+    BehaviorOutput decision;
+    decision.longitudinal = Longitudinal::kFree;
+    decision.target_speed_mps = 1.0;
+    const LatticeSampler sampler{LatticeOptions{}, LatticeLimits{}};
+    hold = sampler.Sample(in, late, decision).front();
+  }
+  CandidateRefiner fine{RefinerOptions{}, LatticeLimits{}, CollisionOptions{}};
+  const RefineOutcome skipped = fine.Refine(in, late, &hold);
+  EXPECT_TRUE(skipped.path_skipped);
+  EXPECT_TRUE(skipped.refined()) << skipped.message;
+  fine.Reset();
+}
+
+// An ego that has understeered out of the drivable box (0.42 m past the
+// bound the hero fits in) still gets a converged, unrelaxed path QP that
+// brings it back: the box is widened by the start's own excess (the
+// sampler's relative band rule), not enforced at the fixed first knot,
+// where it made every top-K solve fail and left the injected stop the only
+// choice (task 17, protocol v5, a bus into the standing car).
+TEST(CandidateRefinerTest, AnEgoOutsideTheBoxAtTheStartIsBroughtBackIn) {
+  const RouteLine route = Straight();
+  SceneInput in;
+  in.route = &route;
+  in.predictions = ConstVel({});
+  FrenetState ego = Ego(20.0, 10.0);
+  ego.d = 3.0;  // bound 3.5, half width 0.92: the box ends at 2.58
+  Candidate c = CentreCandidate(in, ego, 10.0);
+  ASSERT_EQ(c.trajectory.size(), 81U);
+  CandidateRefiner refiner{RefinerOptions{}, LatticeLimits{},
+                           CollisionOptions{}};
+  const RefineOutcome out = refiner.Refine(in, ego, &c);
+  EXPECT_EQ(out.path, QpOutcome::kSolved) << out.message;
+  EXPECT_TRUE(c.refined);
+  EXPECT_FALSE(c.qp_relaxed) << out.message;
+  ASSERT_EQ(c.frenet.size(), 81U);
+  EXPECT_NEAR(c.frenet.front().d, 3.0, 1e-3);
+  for (const FrenetState& f : c.frenet) {
+    EXPECT_LE(f.d, 3.0 + 1e-2);  // never farther out than the start
+  }
+  EXPECT_LT(std::abs(c.frenet.back().d), 0.5);  // back toward the centre
+}
+
+}  // namespace
+}  // namespace nuway_planning

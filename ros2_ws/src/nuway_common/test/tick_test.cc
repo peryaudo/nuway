@@ -55,8 +55,13 @@ TEST(TickTest, BarrierCompletesWhenEveryInputArrivedForTheTick) {
   barrier.Arrive("pose", 5);
   EXPECT_TRUE(barrier.IsComplete(5));
   EXPECT_TRUE(barrier.IsDegraded("agents"));
+  EXPECT_FALSE(barrier.AllDegraded());
+  barrier.Degrade("pose");
+  EXPECT_TRUE(barrier.AllDegraded());
+  EXPECT_TRUE(barrier.IsComplete(6));  // nothing left to wait for
   barrier.Reset();
   EXPECT_FALSE(barrier.IsDegraded("agents"));
+  EXPECT_FALSE(barrier.AllDegraded());
   EXPECT_FALSE(barrier.IsComplete(5));
 }
 

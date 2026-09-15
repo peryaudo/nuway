@@ -66,3 +66,24 @@ def test_accel_splits_into_pedals_at_the_given_speed(
     assert out.throttle == 0.0
     assert out.brake > 0.0
     assert out.steer == 0.0
+
+
+def test_hold_at_rest_brakes_instead_of_creeping(
+    vehicle: tuple[LongitudinalMap, float],
+) -> None:
+    lon, max_steer = vehicle
+    hold = ca.HoldAtRest(speed_mps=0.3, accel_mps2=0.05, brake=0.3)
+    cmd = ControlCommand()
+    cmd.accel = 0.0  # "stay put": the pedal map alone would give rolling throttle
+    cmd.steering_angle = max_steer / 2.0
+    out = ca.carla_control_from_command(cmd, lon, max_steer, 0.1, hold)
+    assert out.throttle == 0.0
+    assert out.brake == pytest.approx(0.3)
+    assert out.steer == pytest.approx(-0.5)  # the wheel is still converted
+    # A positive command releases the hold; so does any speed.
+    cmd.accel = 0.5
+    assert ca.carla_control_from_command(cmd, lon, max_steer, 0.1, hold).throttle > 0.0
+    cmd.accel = 0.0
+    assert ca.carla_control_from_command(cmd, lon, max_steer, 1.0, hold).brake == 0.0
+    # Without a hold the old behaviour stands.
+    assert ca.carla_control_from_command(cmd, lon, max_steer, 0.1).brake == 0.0

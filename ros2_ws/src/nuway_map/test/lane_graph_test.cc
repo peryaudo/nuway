@@ -298,6 +298,86 @@ TEST(LaneGraph, NeighborsAndChangeFlags) {
             std::vector<std::uint32_t>{Id(1, 0, -1)});
 }
 
+TEST(LaneGraph, StopSignSidecarBoxesGovernTheLaneTheyFace) {
+  // world_manager's stop_signs.csv (M0 §2.1): boxes in the map frame.
+  const std::filesystem::path dir =
+      std::filesystem::temp_directory_path() / "nuway_lane_graph_test";
+  std::filesystem::create_directories(dir);
+  const std::filesystem::path csv = dir / "stop_signs.csv";
+  {
+    std::ofstream out(csv);
+    out << "x_m,y_m,yaw_rad,half_length_m,half_width_m\n"
+        // On lane -1 of road 1 (y = -1.75), box axis along +x: governs it.
+        << "10.0,-1.75,0.0,1.7,1.7\n"
+        // On lane -1 with the box turned 90 deg (CARLA rotates the props'
+        // boxes arbitrarily): still lane -1, and the polygon keeps the turn.
+        << "20.0,-1.75,1.5707963,2.6,1.3\n"
+        // The OpenDRIVE sign 101 already governs lane 1 at x = 2: a prop
+        // 2 m from it on the same lane is that sign, not a second one.
+        << "4.0,1.75,3.14159,1.7,1.7\n"
+        // Off the road entirely.
+        << "10.0,40.0,0.0,1.7,1.7\n"
+        // No area: a misplaced prop no vehicle can enter.
+        << "25.0,-1.75,0.0,2.4,0.0\n";
+  }
+  std::string error;
+  const std::optional<std::vector<StopSignSite>> sites =
+      LoadStopSignSites(csv.string(), &error);
+  ASSERT_TRUE(sites.has_value()) << error;
+  const std::vector<StopSignSite> boxes =
+      sites.value_or(std::vector<StopSignSite>{});
+  ASSERT_EQ(boxes.size(), 5U);
+  EXPECT_NEAR(boxes[1].yaw_rad, 1.5707963, 1e-9);
+
+  LaneGraph graph = BuildTestGraph();
+  ASSERT_EQ(graph.stop_signs().size(), 1U);
+  EXPECT_EQ(graph.AddStopSigns(boxes), 2U);
+  ASSERT_EQ(graph.stop_signs().size(), 3U);
+  const StopSign& sign = graph.stop_signs()[1];
+  EXPECT_NE(sign.id, graph.stop_signs().front().id);
+  EXPECT_NE(sign.id, graph.stop_signs().back().id);
+  EXPECT_EQ(sign.affected_lane_ids, std::vector<std::uint32_t>{Id(1, 0, -1)});
+  EXPECT_NEAR(sign.stop_line.x(), 10.0, 1e-6);
+  EXPECT_NEAR(sign.stop_line.y(), -1.75, 1e-6);
+  ASSERT_EQ(sign.trigger_volume.size(), 4U);
+  EXPECT_NEAR(sign.trigger_volume[0].x(), 8.3, 1e-9);  // -hl, +hw
+  EXPECT_NEAR(sign.trigger_volume[0].y(), -0.05, 1e-9);
+  EXPECT_NEAR(sign.trigger_volume[2].x(), 11.7, 1e-9);  // +hl, -hw
+  EXPECT_NEAR(sign.trigger_volume[2].y(), -3.45, 1e-9);
+  const StopSign& turned = graph.stop_signs().back();
+  EXPECT_EQ(turned.affected_lane_ids, std::vector<std::uint32_t>{Id(1, 0, -1)});
+  EXPECT_NEAR(turned.stop_line.x(), 20.0, 1e-6);
+  ASSERT_EQ(turned.trigger_volume.size(), 4U);
+  // Axis along +y: the 2.6 m half length spans y, the 1.3 m half width x.
+  // Corner 0 is -hl along the axis (+y) and +hw to its left (-x).
+  EXPECT_NEAR(turned.trigger_volume[0].x(), 18.7, 1e-6);
+  EXPECT_NEAR(turned.trigger_volume[0].y(), -4.35, 1e-6);
+  EXPECT_NEAR(turned.trigger_volume[2].x(), 21.3, 1e-6);
+  EXPECT_NEAR(turned.trigger_volume[2].y(), 0.85, 1e-6);
+  const Eigen::Vector3d stop =
+      graph.StopLineForLane(Id(1, 0, -1)).value_or(Eigen::Vector3d::Zero());
+  EXPECT_NEAR(stop.x(), 10.0, 1e-6);
+  // The wire message carries them like any other sign.
+  const LaneGraph back = LaneGraph::FromMsg(graph.ToMsg());
+  EXPECT_EQ(back.stop_signs().size(), 3U);
+
+  // A header alone is an empty sidecar; a malformed row is an error.
+  {
+    std::ofstream out(csv);
+    out << "x_m,y_m,yaw_rad,half_length_m,half_width_m\n";
+  }
+  EXPECT_EQ(LoadStopSignSites(csv.string(), &error).value_or(boxes).size(), 0U);
+  {
+    std::ofstream out(csv);
+    out << "x_m,y_m,yaw_rad,half_length_m,half_width_m\n1.0,2.0\n";
+  }
+  EXPECT_FALSE(LoadStopSignSites(csv.string(), &error).has_value());
+  EXPECT_NE(error.find("malformed row 2"), std::string::npos);
+  EXPECT_FALSE(
+      LoadStopSignSites((dir / "missing.csv").string(), &error).has_value());
+  std::filesystem::remove_all(dir);
+}
+
 TEST(LaneGraph, SignalsAndObjects) {
   const LaneGraph graph = BuildTestGraph();
   ASSERT_EQ(graph.traffic_lights().size(), 1U);

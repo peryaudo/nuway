@@ -36,14 +36,24 @@ PROFILE_PARAMS: dict[str, tuple[tuple[str, str], ...]] = {
         ("carla.lockstep_timeout_s", "carla.lockstep_timeout_s"),
         ("carla.lockstep_startup_timeout_s", "carla.lockstep_startup_timeout_s"),
         ("carla.realtime_factor", "carla.realtime_factor"),
-        ("carla.traffic.tm_port", "carla.traffic.tm_port"),
+        ("carla.traffic.n_vehicles", "carla.traffic.n_vehicles"),
+        ("carla.traffic.n_walkers", "carla.traffic.n_walkers"),
         ("carla.traffic.seed", "carla.traffic.seed"),
+        ("carla.traffic.tm_port", "carla.traffic.tm_port"),
+        ("carla.traffic.hybrid_physics", "carla.traffic.hybrid_physics"),
         ("sensors", "sensors"),
         ("vehicle", "vehicle"),
+        (
+            "eval.chase_cam",
+            "spawn_viz_only_sensors",
+        ),  # the cam_chase rig entry (docs/02 §8.3)
     ),
     "control_adapter": (("vehicle", "vehicle"),),
     "map_server_node": (("carla.town", "town"),),
     "pure_pursuit_pid_node": (("vehicle", "vehicle"),),
+    "mpc_node": (("vehicle", "vehicle"),),
+    "planner_node": (("vehicle", "vehicle"),),
+    "safety_layer_node": (("vehicle", "vehicle"),),
 }
 
 
@@ -150,6 +160,26 @@ def use_gt(profile: Mapping[str, Any], module: str) -> bool:
     return bool(get(profile, f"use_gt.{module}", True))
 
 
+def runner(profile: Mapping[str, Any]) -> str:
+    """``carla.runner``: world_manager | leaderboard (docs/02 §5); missing means world_manager.
+
+    Under ``leaderboard`` the official evaluator owns the tick, the sensors
+    and the hero: the stack launches no world_manager and no control_adapter,
+    and the modules without a non-GT implementation yet launch nothing
+    (M1 §3.12).
+    """
+    return str(get(profile, "carla.runner", "world_manager"))
+
+
+def prediction_source(profile: Mapping[str, Any]) -> str:
+    """``prediction.source``: const_vel | learned (docs/02 §5); missing means const_vel."""
+    return str(get(profile, "prediction.source", "const_vel"))
+
+
 def controller(profile: Mapping[str, Any]) -> str:
-    """``control.controller``: pure_pursuit | mpc | none (docs/02 §5)."""
-    return str(get(profile, "control.controller", "pure_pursuit"))
+    """``control.controller``: pure_pursuit | mpc | none (docs/02 §5).
+
+    Missing means ``mpc``: an M1+ profile that omits the key must not launch
+    the M0 controller silently (M1 §3.8); the M0 profiles name pure_pursuit.
+    """
+    return str(get(profile, "control.controller", "mpc"))

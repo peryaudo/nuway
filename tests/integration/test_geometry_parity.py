@@ -20,6 +20,7 @@ from nuway_ml.common import (
     geometry,
     longitudinal_map,
     occupancy,
+    polynomial,
     tick,
 )
 
@@ -216,6 +217,79 @@ def test_frenet_parity() -> None:
             assert (n_py is None) == (n_cpp is None)
             if n_py is not None and n_cpp is not None:
                 assert (n_py.s, n_py.d) == pytest.approx((n_cpp.s, n_cpp.d), abs=1e-7)
+
+
+def test_frenet_state_parity() -> None:
+    """The M1 state conversions agree on random states along a wiggly line."""
+    for _ in range(3):
+        line_py, line_cpp = _random_line()
+        for _ in range(100):
+            f_py = frenet.FrenetState(
+                s=float(RNG.uniform(1, line_py.length - 1)),
+                s_dot=float(RNG.uniform(0, 15)),
+                s_ddot=float(RNG.uniform(-3, 3)),
+                d=float(RNG.uniform(-3, 3)),
+                d_prime=float(RNG.uniform(-0.3, 0.3)),
+                d_dprime=float(RNG.uniform(-0.05, 0.05)),
+            )
+            f_cpp = nuway_py.FrenetState(
+                f_py.s, f_py.s_dot, f_py.s_ddot, f_py.d, f_py.d_prime, f_py.d_dprime
+            )
+            assert line_py.curvature_rate_at(f_py.s) == pytest.approx(
+                line_cpp.curvature_rate_at(f_py.s), abs=ATOL
+            )
+            c_py = line_py.to_cartesian_state(f_py)
+            c_cpp = line_cpp.to_cartesian_state(f_cpp)
+            assert (c_py.x, c_py.y, c_py.yaw, c_py.v, c_py.a, c_py.kappa) == (
+                pytest.approx(
+                    (c_cpp.x, c_cpp.y, c_cpp.yaw, c_cpp.v, c_cpp.a, c_cpp.kappa),
+                    abs=1e-7,
+                )
+            )
+            b_py = line_py.to_frenet_state(c_py)
+            b_cpp = line_cpp.to_frenet_state(
+                nuway_py.CartesianState(
+                    c_py.x, c_py.y, c_py.yaw, c_py.v, c_py.a, c_py.kappa
+                )
+            )
+            assert b_py is not None
+            assert b_cpp is not None
+            assert (
+                b_py.s,
+                b_py.s_dot,
+                b_py.s_ddot,
+                b_py.d,
+                b_py.d_prime,
+                b_py.d_dprime,
+            ) == pytest.approx(
+                (
+                    b_cpp.s,
+                    b_cpp.s_dot,
+                    b_cpp.s_ddot,
+                    b_cpp.d,
+                    b_cpp.d_prime,
+                    b_cpp.d_dprime,
+                ),
+                abs=1e-6,
+            )
+
+
+def test_polynomial_parity() -> None:
+    for _ in range(200):
+        x0, dx0, ddx0, x1, dx1, ddx1 = (float(v) for v in RNG.uniform(-5, 5, 6))
+        length = float(RNG.uniform(0.5, 10))
+        q_py = polynomial.Polynomial5.quintic(x0, dx0, ddx0, x1, dx1, ddx1, length)
+        q_cpp = nuway_py.Polynomial5.quintic(x0, dx0, ddx0, x1, dx1, ddx1, length)
+        np.testing.assert_allclose(q_py.c, q_cpp.c, atol=ATOL)
+        k_py = polynomial.Polynomial5.quartic(x0, dx0, ddx0, dx1, ddx1, length)
+        k_cpp = nuway_py.Polynomial5.quartic(x0, dx0, ddx0, dx1, ddx1, length)
+        np.testing.assert_allclose(k_py.c, k_cpp.c, atol=ATOL)
+        t = float(RNG.uniform(0, length))
+        for p_py, p_cpp in ((q_py, q_cpp), (k_py, k_cpp)):
+            assert p_py.eval(t) == pytest.approx(p_cpp.eval(t), abs=1e-8)
+            assert p_py.eval_first(t) == pytest.approx(p_cpp.eval_first(t), abs=1e-8)
+            assert p_py.eval_second(t) == pytest.approx(p_cpp.eval_second(t), abs=1e-8)
+            assert p_py.eval_third(t) == pytest.approx(p_cpp.eval_third(t), abs=1e-8)
 
 
 def test_windowed_projection_parity_on_a_self_crossing_line() -> None:

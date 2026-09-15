@@ -1,9 +1,10 @@
-// map_server_node (M0 §2.4): waits for <map_dir>/<town>/map.xodr, which
-// world_manager writes after connecting to CARLA, builds the LaneGraph and
-// publishes it latched on /nuway/map/lane_graph. Serves /nuway/map/nearest_lane
-// for tools and tests. The 1 s wall-clock poll is the one timer in the stack:
-// it runs at start-up only, before any tick exists, so it cannot affect results
-// (docs/02_interfaces.md §2).
+// map_server_node (M0 §2.4): waits for <map_dir>/<town>/map.xodr and
+// stop_signs.csv, which world_manager writes after connecting to CARLA,
+// builds the LaneGraph (the OpenDRIVE plus the sidecar's stop-sign boxes)
+// and publishes it latched on /nuway/map/lane_graph. Serves
+// /nuway/map/nearest_lane for tools and tests. The 1 s wall-clock poll is the
+// one timer in the stack: it runs at start-up only, before any tick exists, so
+// it cannot affect results (docs/02_interfaces.md §2).
 //
 // "Latched" is the transient_local + reliable QoS profile
 // (docs/02_interfaces.md §3.11): the publisher keeps its last message and
@@ -39,7 +40,8 @@ class MapServerNode final : public rclcpp::Node {
  public:
   MapServerNode() : rclcpp::Node(kNodeName), diag_(this) {
     map_dir_ = nuway_common::DeclareParam<std::string>(
-        this, "map_dir", "data/maps", "directory holding <town>/map.xodr");
+        this, "map_dir", "data/maps",
+        "directory holding <town>/map.xodr and stop_signs.csv");
     town_ = nuway_common::DeclareParam<std::string>(this, "town", "Town03",
                                                     "CARLA town name");
     options_.default_speed_limit_mps = nuway_common::DeclareParam<double>(
@@ -48,7 +50,7 @@ class MapServerNode final : public rclcpp::Node {
     options_.centerline_spacing_m = nuway_common::DeclareParam<double>(
         this, "centerline_spacing_m", 1.0, "lane centerline sample spacing");
     const auto poll_period_s = nuway_common::DeclareParam<double>(
-        this, "poll_period_s", 1.0, "start-up poll interval for map.xodr");
+        this, "poll_period_s", 1.0, "start-up poll interval for the map files");
 
     pub_lane_graph_ = create_publisher<nuway_msgs::msg::LaneGraph>(
         nuway_common::kTopicLaneGraph, nuway_common::qos::Latched());
@@ -68,6 +70,23 @@ class MapServerNode final : public rclcpp::Node {
   std::string MapPath() const {
     return (std::filesystem::path(map_dir_) / town_ / "map.xodr").string();
   }
+  // <map_dir>/<town>/stop_signs.csv: the world's stop-sign props, exported by
+  // world_manager before the OpenDRIVE (M0 §2.1).
+  std::string StopSignsPath() const {
+    return (std::filesystem::path(map_dir_) / town_ / "stop_signs.csv")
+        .string();
+  }
+  // Both files exist and are non-empty.
+  bool MapFilesPresent() const {
+    std::error_code ec;
+    for (const std::string& path : {MapPath(), StopSignsPath()}) {
+      if (!std::filesystem::exists(path, ec) ||
+          std::filesystem::file_size(path, ec) == 0) {
+        return false;
+      }
+    }
+    return true;
+  }
 
   // One poll: if the file exists and parses, build the graph, publish it
   // once, report the build time on diag and cancel the timer; otherwise
@@ -78,11 +97,10 @@ class MapServerNode final : public rclcpp::Node {
       return;
     }
     const std::string path = MapPath();
-    std::error_code ec;
-    if (!std::filesystem::exists(path, ec) ||
-        std::filesystem::file_size(path, ec) == 0) {
+    if (!MapFilesPresent()) {
       if (!waiting_logged_) {
-        RCLCPP_INFO(get_logger(), "waiting for %s", path.c_str());
+        RCLCPP_INFO(get_logger(), "waiting for %s and %s", path.c_str(),
+                    StopSignsPath().c_str());
         waiting_logged_ = true;
       }
       return;
@@ -97,20 +115,29 @@ class MapServerNode final : public rclcpp::Node {
                            path.c_str(), error.c_str());
       return;
     }
+    const auto sites = LoadStopSignSites(StopSignsPath(), &error);
+    if (!sites.has_value()) {
+      RCLCPP_WARN_THROTTLE(get_logger(), steady_clock_, 5000, "%s",
+                           error.c_str());
+      return;
+    }
     double build_ms = 0.0;
+    std::size_t added = 0;
     {
       const nuway_common::ScopedTimer timer(&build_ms);
       graph_ = std::make_unique<LaneGraph>(LaneGraph::Build(*map, options_));
+      added = graph_->AddStopSigns(*sites);
     }
     nuway_msgs::msg::LaneGraph msg = graph_->ToMsg();
     msg.header.stamp = now();
     pub_lane_graph_->publish(msg);
     RCLCPP_INFO(get_logger(),
-                "%s: %zu lanes, %zu traffic lights, %zu stop signs, %zu "
-                "crosswalks, georeference %s (%.0f ms)",
+                "%s: %zu lanes, %zu traffic lights, %zu stop signs (%zu of "
+                "%zu sidecar boxes added), %zu crosswalks, georeference %s "
+                "(%.0f ms)",
                 path.c_str(), graph_->lanes().size(),
                 graph_->traffic_lights().size(), graph_->stop_signs().size(),
-                graph_->crosswalks().size(),
+                added, sites->size(), graph_->crosswalks().size(),
                 graph_->geo_reference().valid ? "yes" : "no", build_ms);
     diag_.Publish(msg.header.stamp, build_ms, 0.0,
                   nuway_common::DiagStatus::kOk, "lane graph published");

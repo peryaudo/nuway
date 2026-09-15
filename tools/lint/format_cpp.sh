@@ -24,7 +24,9 @@ if [ "${#files[@]}" -eq 0 ]; then
     find tests -type f \( -name '*.h' -o -name '*.cc' \) 2>/dev/null | sort
   )
   while IFS= read -r f; do cmake_files+=("$f"); done < <(
-    find ros2_ws/src -path 'ros2_ws/src/nuway_*' \( -name 'CMakeLists.txt' -o -name '*.cmake' \) | sort
+    # Our own packages and our own vendor packages (carla_msgs is upstream's).
+    find ros2_ws/src \( -path 'ros2_ws/src/nuway_*' -o -path 'ros2_ws/src/*_vendor/*' \) \
+      \( -name 'CMakeLists.txt' -o -name '*.cmake' \) | sort
   )
 else
   for f in "${files[@]}"; do

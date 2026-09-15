@@ -2,7 +2,25 @@
 // polyline sampled along arc length s (meters, map frame) with per-sample
 // heading (rad) and curvature (1/m); Frenet coordinates are (s, d) with d
 // positive to the left of the line (ROS convention). Mirrored by
-// nuway_ml/common/frenet.py (parity-tested). Introduced in M0.
+// nuway_ml/common/frenet.py (parity-tested). Introduced in M0; the state
+// conversions (velocity and acceleration projection) arrive with M1.
+//
+// Why Frenet. A road is a curve; describing motion relative to it turns
+// "stay in lane, keep the speed" into two one-dimensional problems: s(t)
+// along the line and d(s) across it. The lattice planner (M1 §3.3) samples
+// polynomials in exactly those coordinates and needs to move each candidate
+// back into the map frame with a consistent heading, speed, acceleration
+// and curvature for the collision checker and the controller. The formulas
+// (ToCartesianState / ToFrenetState) are the standard ones of Werling et al.,
+// "Optimal trajectory generation for dynamic street scenarios in a Frenet
+// frame" (ICRA 2010), in the form Apollo's CartesianFrenetConverter uses:
+// with the projection distance d, the heading difference dtheta = theta -
+// theta_r, and one_minus_kd = 1 - kappa_r d (the metric stretch: a point
+// left of a left bend travels a shorter arc than the line),
+//   s_dot = v cos(dtheta) / one_minus_kd
+//   d'    = one_minus_kd tan(dtheta)                (d' = dd/ds)
+// and the second derivatives follow by differentiating once more, which
+// brings in the curvature rate kappa_r' along the line.
 #ifndef NUWAY_COMMON_FRENET_H_
 #define NUWAY_COMMON_FRENET_H_
 
@@ -28,6 +46,28 @@ struct CartesianPoint {
   double x = 0.0;
   double y = 0.0;
   double heading = 0.0;  // rad, heading of the line at s
+};
+
+// The full Frenet state of a moving point (M1): s and its time derivatives,
+// d and its derivatives with respect to s (d' = dd/ds, d'' = d^2d/ds^2).
+struct FrenetState {
+  double s = 0.0;
+  double s_dot = 0.0;   // m/s
+  double s_ddot = 0.0;  // m/s^2
+  double d = 0.0;
+  double d_prime = 0.0;   // dd/ds, dimensionless
+  double d_dprime = 0.0;  // d^2d/ds^2, 1/m
+};
+
+// The full Cartesian state of a moving point (M1): pose, speed along its
+// own heading, tangential acceleration and path curvature.
+struct CartesianState {
+  double x = 0.0;
+  double y = 0.0;
+  double yaw = 0.0;    // rad
+  double v = 0.0;      // m/s along yaw
+  double a = 0.0;      // m/s^2 along the path
+  double kappa = 0.0;  // 1/m, positive left
 };
 
 // Polyline reference line. Samples must be strictly increasing in s.
@@ -138,6 +178,121 @@ class ReferenceLine {
     return curvature_[idx] + (alpha * (curvature_[idx + 1] - curvature_[idx]));
   }
 
+  // Curvature rate dkappa/ds at arc length s: a central difference over
+  // kCurvatureRateStepM, clamped to the line. The Menger curvature of a
+  // polyline is piecewise linear, so this is the slope of the interpolant.
+  double CurvatureRateAt(double s) const {
+    if (size() < 2) {
+      return 0.0;
+    }
+    const double lo = std::max(0.0, s - kCurvatureRateStepM);
+    const double hi = std::min(length(), s + kCurvatureRateStepM);
+    if (hi - lo <= 0.0) {
+      return 0.0;
+    }
+    return (CurvatureAt(hi) - CurvatureAt(lo)) / (hi - lo);
+  }
+
+  // Frenet state -> Cartesian state (Werling 2010 / Apollo
+  // frenet_to_cartesian). The point is p(s) + d n(s); its heading is the
+  // line heading plus dtheta = atan2(d', 1 - kappa_r d); speed, curvature
+  // and acceleration follow from differentiating the position twice:
+  //   v     = s_dot one_minus_kd / cos(dtheta)
+  //   kappa = ((d'' + (kappa_r' d + kappa_r d') tan(dtheta)) cos^2(dtheta)
+  //            / one_minus_kd + kappa_r) cos(dtheta) / one_minus_kd
+  //   a     = s_ddot one_minus_kd / cos(dtheta)
+  //           + s_dot^2 / cos(dtheta) (d' (kappa one_minus_kd / cos(dtheta)
+  //             - kappa_r) - (kappa_r' d + kappa_r d'))
+  // Valid while |d| kappa_r < 1 (the point is inside the line's centre of
+  // curvature otherwise and the map is singular).
+  CartesianState ToCartesianState(const FrenetState& f) const {
+    const CartesianPoint base = ToCartesian(FrenetPoint{f.s, f.d});
+    const double kappa_r = CurvatureAt(f.s);
+    const double dkappa_r = CurvatureRateAt(f.s);
+    const double one_minus_kd = 1.0 - (kappa_r * f.d);
+    const double dtheta = std::atan2(f.d_prime, one_minus_kd);
+    const double cos_dtheta = std::cos(dtheta);
+    const double tan_dtheta = std::tan(dtheta);
+    const double kd_term = (dkappa_r * f.d) + (kappa_r * f.d_prime);
+    CartesianState out;
+    out.x = base.x;
+    out.y = base.y;
+    out.yaw = WrapAngle(base.heading + dtheta);
+    out.v = f.s_dot * one_minus_kd / cos_dtheta;
+    out.kappa =
+        ((((f.d_dprime + (kd_term * tan_dtheta)) * cos_dtheta * cos_dtheta) /
+          one_minus_kd) +
+         kappa_r) *
+        cos_dtheta / one_minus_kd;
+    const double delta_theta_prime =
+        ((out.kappa * one_minus_kd) / cos_dtheta) - kappa_r;
+    out.a = ((f.s_ddot * one_minus_kd) / cos_dtheta) +
+            ((f.s_dot * f.s_dot / cos_dtheta) *
+             ((f.d_prime * delta_theta_prime) - kd_term));
+    return out;
+  }
+
+  // Cartesian state -> Frenet state at the global projection of (x, y);
+  // nullopt when the projection fails (see ToFrenet).
+  std::optional<FrenetState> ToFrenetState(const CartesianState& c,
+                                           double max_dist = 1e9) const {
+    const std::optional<FrenetPoint> point = ToFrenet(c.x, c.y, max_dist);
+    if (!point.has_value()) {
+      return std::nullopt;
+    }
+    return FrenetStateAt(c, *point);
+  }
+
+  // Cartesian state -> Frenet state with the windowed projection of
+  // ToFrenetNear (a follower's previous s as the hint).
+  std::optional<FrenetState> ToFrenetStateNear(const CartesianState& c,
+                                               double max_dist, double s_hint,
+                                               double back_m,
+                                               double ahead_m) const {
+    const std::optional<FrenetPoint> point =
+        ToFrenetNear(c.x, c.y, max_dist, s_hint, back_m, ahead_m);
+    if (!point.has_value()) {
+      return std::nullopt;
+    }
+    return FrenetStateAt(c, *point);
+  }
+
+  // The derivative part of the Cartesian -> Frenet conversion at a known
+  // projection (Werling 2010 / Apollo cartesian_to_frenet):
+  //   s_dot  = v cos(dtheta) / one_minus_kd
+  //   d'     = one_minus_kd tan(dtheta)
+  //   d''    = -(kappa_r' d + kappa_r d') tan(dtheta)
+  //            + one_minus_kd / cos^2(dtheta)
+  //              (kappa one_minus_kd / cos(dtheta) - kappa_r)
+  //   s_ddot = (a cos(dtheta) - s_dot^2 (d' delta_theta' - (kappa_r' d
+  //             + kappa_r d'))) / one_minus_kd
+  FrenetState FrenetStateAt(const CartesianState& c,
+                            const FrenetPoint& point) const {
+    const double theta_r = HeadingAt(point.s);
+    const double kappa_r = CurvatureAt(point.s);
+    const double dkappa_r = CurvatureRateAt(point.s);
+    const double dtheta = WrapAngle(c.yaw - theta_r);
+    const double cos_dtheta = std::cos(dtheta);
+    const double tan_dtheta = std::tan(dtheta);
+    const double one_minus_kd = 1.0 - (kappa_r * point.d);
+    FrenetState out;
+    out.s = point.s;
+    out.d = point.d;
+    out.s_dot = c.v * cos_dtheta / one_minus_kd;
+    out.d_prime = one_minus_kd * tan_dtheta;
+    const double kd_term = (dkappa_r * point.d) + (kappa_r * out.d_prime);
+    const double delta_theta_prime =
+        ((c.kappa * one_minus_kd) / cos_dtheta) - kappa_r;
+    out.d_dprime =
+        (-kd_term * tan_dtheta) +
+        ((one_minus_kd / (cos_dtheta * cos_dtheta)) * delta_theta_prime);
+    out.s_ddot =
+        ((c.a * cos_dtheta) - (out.s_dot * out.s_dot *
+                               ((out.d_prime * delta_theta_prime) - kd_term))) /
+        one_minus_kd;
+    return out;
+  }
+
   // Frenet -> Cartesian: p(s) + d * n(s) with n the left normal of the
   // interpolated heading. s is clamped to [0, length].
   CartesianPoint ToCartesian(const FrenetPoint& frenet) const {
@@ -187,6 +342,9 @@ class ReferenceLine {
  private:
   static constexpr int kNewtonIterations = 12;
   static constexpr double kNewtonTolerance = 1e-10;
+  // Half-width of the central difference behind CurvatureRateAt: the
+  // reference line is sampled every 0.5 m, so a wider step only blurs.
+  static constexpr double kCurvatureRateStepM = 0.5;
 
   // The projection itself over the segments [first, last): the nearest
   // segment gives the start, Newton steps on the tangent condition refine it.

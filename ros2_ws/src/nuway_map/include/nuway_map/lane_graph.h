@@ -46,6 +46,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -118,6 +119,26 @@ struct StopSign {
   nuway_common::Vector2dList trigger_volume;            // map frame, m
 };
 
+// A stop sign's trigger volume as exported by world_manager to
+// data/maps/<town>/stop_signs.csv (M0 §2.1): a map-frame box lying across
+// the governed lane. Its yaw is the box's own axis, which CARLA rotates by
+// 0, 90 or 180 deg from prop to prop, so nothing here says which way the
+// lane runs. CARLA's towns place most stop signs as level props absent from
+// the OpenDRIVE (Town05: 33 props, 5 signals), so the graph learns them from
+// this sidecar (AddStopSigns).
+struct StopSignSite {
+  Eigen::Vector2d center = Eigen::Vector2d::Zero();  // map frame, m
+  double yaw_rad = 0.0;
+  double half_length_m = 0.0;  // along yaw
+  double half_width_m = 0.0;   // across
+};
+
+// Parses the sidecar (header x_m,y_m,yaw_rad,half_length_m,half_width_m,
+// then one row per box). nullopt with *error set on an unreadable file or a
+// malformed row; a header alone is an empty list.
+std::optional<std::vector<StopSignSite>> LoadStopSignSites(
+    const std::string& path, std::string* error);
+
 // A crosswalk polygon (map frame) and every lane whose centerline enters it.
 struct Crosswalk {
   std::uint32_t id = 0;
@@ -140,6 +161,14 @@ struct LaneGraphOptions {
   // Heading tolerance for NearestLane; lanes whose local heading differs by
   // more than this from the query yaw are skipped.
   double heading_tolerance_rad = 1.3;
+  // AddStopSigns: a lane is governed by a sidecar box when its heading at
+  // the box is within this of one of the box's axes (either way along it), a
+  // box this close to an existing sign's stop line on a shared lane is that
+  // sign again, and a box with a half extent under stop_sign_min_extent_m
+  // has no area.
+  double stop_sign_heading_tol_rad = 0.5;
+  double stop_sign_merge_dist_m = 5.0;
+  double stop_sign_min_extent_m = 0.3;
 };
 
 // Stable lane id for (road, section, OpenDRIVE lane id); never 0. Packs the
@@ -198,6 +227,22 @@ class LaneGraph {
   // The stop line governing this lane: a stop sign's first, else the first
   // traffic light's, else nullopt.
   std::optional<Eigen::Vector3d> StopLineForLane(std::uint32_t id) const;
+
+  // Adds the sidecar's boxes as stop signs (M0 §2.4): a box governs the
+  // drivable lanes whose centerline passes through it (foot point inside
+  // the box, half a metre of slack) running along one of its axes (heading
+  // modulo pi/2 within
+  // stop_sign_heading_tol_rad, which keeps out a junction lane crossing the
+  // box obliquely; the box centre lies in the governed lane, so the opposite
+  // lane of a two-way road is a lane width away and never matches), its
+  // stop line is the nearest such lane's centre at the box,
+  // and its trigger volume is the box itself. A box on a lane an existing
+  // sign already governs within stop_sign_merge_dist_m is the same sign and
+  // is skipped, as is a box on no lane or one with no area (a Town03 prop
+  // carries a 2.4 x 0.0 m box that no vehicle can enter). Returns the number
+  // added. Ids are hashed from the rounded centre and linear-probed on
+  // collision, like signal ids.
+  std::size_t AddStopSigns(const std::vector<StopSignSite>& sites);
 
   // Lane id for an OpenDRIVE (road, lane) at arc length s along the road
   // (section boundaries are only known for graphs built from a map; a graph

@@ -59,6 +59,13 @@ def test_vehicle_yaml_loads(repo_root_ml):
     throttle, brake = lm.inverse(10.0, 1.0)
     assert 0.0 < throttle < 1.0
     assert brake == 0.0
+    # The shipped coast curve is the sustained drag, not the gearbox's
+    # downshift bursts (M1 task 17): a hard brake request at town speed
+    # must reach the brake pedal, and no bin may coast harder than -3.5.
+    throttle, brake = lm.inverse(7.0, -5.0)
+    assert throttle == 0.0
+    assert brake > 0.1
+    assert all(-3.5 <= c <= 0.0 for c in lm.coast_accel)
 
 
 def test_validate_rejects_bad_shapes():

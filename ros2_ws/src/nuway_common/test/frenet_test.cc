@@ -118,3 +118,95 @@ TEST(FrenetTest, WindowedProjectionStaysOnTheHintedLeg) {
 
 }  // namespace
 }  // namespace nuway_common
+
+namespace nuway_common {
+namespace {
+
+// A full circle of radius r sampled every `step` m (kappa_r constant, so
+// the state conversion has no curvature-rate term and round-trips exactly
+// up to the polyline's own curvature error).
+ReferenceLine MakeCircle(double radius, double step) {
+  Vector2dList points;
+  const double total = 2.0 * kPi * radius;
+  const int n = static_cast<int>(std::floor(total / step)) + 1;
+  for (int i = 0; i < n; ++i) {
+    const double theta = (i * step) / radius;
+    points.emplace_back(radius * std::cos(theta), radius * std::sin(theta));
+  }
+  return ReferenceLine::FromPoints(points);
+}
+
+// See Unwrap above: ASSERT_TRUE is opaque to the optional-access check.
+FrenetState UnwrapState(const std::optional<FrenetState>& maybe) {
+  EXPECT_TRUE(maybe.has_value());
+  return maybe.value_or(FrenetState{});
+}
+
+TEST(FrenetTest, StateRoundTripOnAnArc) {
+  const ReferenceLine line = MakeCircle(40.0, 0.5);
+  for (int i = 0; i < 40; ++i) {
+    FrenetState f;
+    f.s = 5.0 + (i * 4.0);
+    f.s_dot = 8.0 + (0.1 * i);
+    f.s_ddot = -0.5 + (0.05 * i);
+    f.d = -2.0 + (0.1 * i);
+    f.d_prime = 0.05 * ((i % 5) - 2);
+    f.d_dprime = 0.01 * ((i % 3) - 1);
+    const CartesianState c = line.ToCartesianState(f);
+    const FrenetState back = UnwrapState(line.ToFrenetState(c));
+    // The polyline curvature is Menger on 0.5 m chords (1e-4 relative), so
+    // the derivative terms round-trip to ~1e-5.
+    EXPECT_NEAR(back.s, f.s, 1e-6);
+    EXPECT_NEAR(back.d, f.d, 1e-6);
+    EXPECT_NEAR(back.s_dot, f.s_dot, 1e-6);
+    EXPECT_NEAR(back.d_prime, f.d_prime, 1e-6);
+    EXPECT_NEAR(back.s_ddot, f.s_ddot, 1e-4);
+    EXPECT_NEAR(back.d_dprime, f.d_dprime, 1e-4);
+  }
+}
+
+TEST(FrenetTest, StateOnTheLineHasTheLineHeadingAndCurvature) {
+  const ReferenceLine line = MakeCircle(40.0, 0.5);
+  FrenetState f;
+  f.s = 30.0;
+  f.s_dot = 10.0;
+  f.s_ddot = 1.0;
+  const CartesianState c = line.ToCartesianState(f);
+  EXPECT_NEAR(c.yaw, line.HeadingAt(30.0), 1e-9);
+  EXPECT_NEAR(c.v, 10.0, 1e-9);
+  EXPECT_NEAR(c.a, 1.0, 1e-9);
+  EXPECT_NEAR(c.kappa, 1.0 / 40.0, 1e-4);
+  // Left of a left bend the same s_dot is a slower ground speed: the arc
+  // radius shrinks to 40 - d.
+  f.d = 2.0;
+  const CartesianState inner = line.ToCartesianState(f);
+  EXPECT_NEAR(inner.v, 10.0 * (1.0 - (2.0 / 40.0)), 1e-3);
+  EXPECT_NEAR(inner.kappa, 1.0 / 38.0, 1e-4);
+}
+
+TEST(FrenetTest, VelocityProjectionOnAStraightLine) {
+  Vector2dList points;
+  for (int i = 0; i <= 100; ++i) {
+    points.emplace_back(0.5 * i, 0.0);
+  }
+  const ReferenceLine line = ReferenceLine::FromPoints(points);
+  // Heading 30 deg off the line at 10 m/s: s_dot = v cos, d' = tan.
+  CartesianState c;
+  c.x = 20.0;
+  c.y = 1.0;
+  c.yaw = kPi / 6.0;
+  c.v = 10.0;
+  c.a = 0.0;
+  c.kappa = 0.0;
+  const FrenetState f = UnwrapState(line.ToFrenetState(c));
+  EXPECT_NEAR(f.s_dot, 10.0 * std::cos(kPi / 6.0), 1e-9);
+  EXPECT_NEAR(f.d_prime, std::tan(kPi / 6.0), 1e-9);
+  EXPECT_NEAR(f.d_dprime, 0.0, 1e-9);
+  EXPECT_NEAR(f.s_ddot, 0.0, 1e-9);
+  const FrenetState near =
+      UnwrapState(line.ToFrenetStateNear(c, 5.0, 18.0, 5.0, 10.0));
+  EXPECT_NEAR(near.s, 20.0, 1e-9);
+}
+
+}  // namespace
+}  // namespace nuway_common

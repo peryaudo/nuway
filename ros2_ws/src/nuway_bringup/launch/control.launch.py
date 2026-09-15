@@ -22,8 +22,7 @@ def setup(_context: LaunchContext, profile: dict[str, Any]) -> list[Any]:
             )
         ]
     if choice == "mpc":
-        msg = "control.controller: mpc needs the M1 mpc_node"
-        raise NotImplementedError(msg)
+        return [stack_node(profile, "nuway_control", "mpc_node", "mpc_node")]
     msg = f"control.controller: unknown value {choice!r}"
     raise ValueError(msg)
 

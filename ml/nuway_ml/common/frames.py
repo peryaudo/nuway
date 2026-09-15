@@ -1,4 +1,7 @@
-"""Frame ids and shared topic names (M0). Mirrors ``nuway_common/frames.h``."""
+"""Frame ids and shared topic names (M0; prediction and planning topics M1).
+
+Mirrors ``nuway_common/frames.h``.
+"""
 
 FRAME_MAP = "map"
 FRAME_ODOM = "odom"
@@ -22,7 +25,15 @@ TOPIC_POSE = "/nuway/loc/pose"
 TOPIC_PERCEPTION_AGENTS = "/nuway/perception/agents"
 TOPIC_PERCEPTION_OCCUPANCY = "/nuway/perception/occupancy"
 TOPIC_PERCEPTION_TRAFFIC_LIGHTS = "/nuway/perception/traffic_lights"
+TOPIC_PREDICTION_SAMPLES = "/nuway/prediction/samples"
+TOPIC_PREDICTION_FALLBACK_SAMPLES = "/nuway/prediction/fallback_samples"
+TOPIC_PLANNING_BEHAVIOR = "/nuway/planning/behavior"
+TOPIC_PLANNING_CANDIDATES = "/nuway/planning/candidates"
+TOPIC_PLANNING_TRAJECTORY = "/nuway/planning/trajectory"
+TOPIC_PLANNING_SAFE_TRAJECTORY = "/nuway/planning/safe_trajectory"
 TOPIC_CONTROL_COMMAND = "/nuway/control/command"
 TOPIC_CONTROL_DEBUG = "/nuway/control/debug"
 TOPIC_DIAG_PREFIX = "/nuway/diag/"
 TOPIC_CAMERA_INFO_FMT = "/nuway/sensors/{cam}/camera_info"
+TOPIC_VIZ_CHASE_CAM = "/nuway/viz/chase_cam"  # eval.chase_cam only (docs/02 §8.3)
+CHASE_CAM_ID = "cam_chase"  # the viz-only rig entry behind the chase camera

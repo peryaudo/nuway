@@ -1,0 +1,313 @@
+{
+  "configById": {
+    "3D!bev": {
+      "cameraState": {
+        "perspective": false,
+        "distance": 90,
+        "phi": 60,
+        "thetaOffset": 90,
+        "targetOffset": [
+          0,
+          0,
+          0
+        ],
+        "target": [
+          0,
+          0,
+          0
+        ],
+        "targetOrientation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "fovy": 45,
+        "near": 0.5,
+        "far": 5000
+      },
+      "followMode": "follow-pose",
+      "followTf": "base_link",
+      "scene": {
+        "backgroundColor": "#101418",
+        "transforms": {
+          "axisScale": 3,
+          "showLabel": true
+        }
+      },
+      "transforms": {
+        "frame:map": {
+          "visible": false
+        },
+        "frame:odom": {
+          "visible": false
+        },
+        "frame:base_link": {
+          "visible": true
+        },
+        "frame:lidar_top": {
+          "visible": false
+        },
+        "frame:imu": {
+          "visible": false
+        },
+        "frame:gnss": {
+          "visible": false
+        }
+      },
+      "topics": {
+        "/nuway/viz/lanes": {
+          "visible": true
+        },
+        "/nuway/viz/reference_line": {
+          "visible": true
+        },
+        "/nuway/viz/agents": {
+          "visible": true
+        },
+        "/nuway/viz/gt_agents": {
+          "visible": false
+        },
+        "/nuway/viz/predictions": {
+          "visible": true
+        },
+        "/nuway/viz/candidates": {
+          "visible": true
+        },
+        "/nuway/viz/trajectory": {
+          "visible": true
+        },
+        "/nuway/viz/safe_trajectory": {
+          "visible": true
+        },
+        "/nuway/viz/mpc_horizon": {
+          "visible": true
+        },
+        "/carla/hero/lidar_top/point_cloud": {
+          "visible": false,
+          "pointSize": 2,
+          "colorField": "z",
+          "colorMode": "colormap",
+          "colorMap": "turbo"
+        }
+      },
+      "layers": {
+        "grid": {
+          "layerId": "foxglove.Grid",
+          "visible": true,
+          "frameId": "map",
+          "size": 1000,
+          "divisions": 100,
+          "color": "#2a2f36"
+        }
+      },
+      "publish": {
+        "type": "point",
+        "poseTopic": "/nuway/route/waypoints"
+      }
+    },
+    "Image!occupancy": {
+      "cameraState": {},
+      "imageMode": {
+        "imageTopic": "/nuway/viz/occupancy",
+        "calibrationTopic": ""
+      },
+      "topics": {},
+      "layers": {},
+      "transforms": {}
+    },
+    "Plot!control": {
+      "title": "control",
+      "paths": [
+        {
+          "value": "/nuway/control/command.accel",
+          "enabled": true,
+          "label": "accel cmd [m/s^2]"
+        },
+        {
+          "value": "/nuway/control/command.steering_angle",
+          "enabled": true,
+          "label": "steer cmd [rad]"
+        },
+        {
+          "value": "/nuway/control/debug.lateral_error",
+          "enabled": true,
+          "label": "lateral error [m]"
+        },
+        {
+          "value": "/nuway/control/debug.heading_error",
+          "enabled": true,
+          "label": "heading error [rad]"
+        },
+        {
+          "value": "/nuway/control/debug.speed_error",
+          "enabled": true,
+          "label": "speed error [m/s]"
+        }
+      ],
+      "showXAxisLabels": true,
+      "showYAxisLabels": true,
+      "showLegend": true,
+      "legendDisplay": "floating",
+      "xAxisVal": "timestamp",
+      "followingViewWidth": 30
+    },
+    "Plot!speed": {
+      "title": "speed",
+      "paths": [
+        {
+          "value": "/nuway/loc/pose.vx",
+          "enabled": true,
+          "label": "vx [m/s]"
+        },
+        {
+          "value": "/nuway/planning/behavior.target_speed",
+          "enabled": true,
+          "label": "behavior target [m/s]"
+        },
+        {
+          "value": "/nuway/sim/vehicle_state.throttle",
+          "enabled": true,
+          "label": "throttle"
+        },
+        {
+          "value": "/nuway/sim/vehicle_state.brake",
+          "enabled": true,
+          "label": "brake"
+        }
+      ],
+      "showXAxisLabels": true,
+      "showYAxisLabels": true,
+      "showLegend": true,
+      "legendDisplay": "floating",
+      "xAxisVal": "timestamp",
+      "followingViewWidth": 30
+    },
+    "Plot!cycles": {
+      "title": "cycle times",
+      "paths": [
+        {
+          "value": "/nuway/diag/planner_node.cycle_ms",
+          "enabled": true,
+          "label": "planner [ms]"
+        },
+        {
+          "value": "/nuway/diag/safety_layer_node.cycle_ms",
+          "enabled": true,
+          "label": "safety layer [ms]"
+        },
+        {
+          "value": "/nuway/diag/mpc_node.cycle_ms",
+          "enabled": true,
+          "label": "mpc [ms]"
+        },
+        {
+          "value": "/nuway/control/debug.solve_time_ms",
+          "enabled": true,
+          "label": "osqp solve [ms]"
+        }
+      ],
+      "showXAxisLabels": true,
+      "showYAxisLabels": true,
+      "showLegend": true,
+      "legendDisplay": "floating",
+      "xAxisVal": "timestamp",
+      "followingViewWidth": 30
+    },
+    "RawMessages!behavior": {
+      "topicPath": "/nuway/planning/behavior",
+      "diffEnabled": false,
+      "expansion": "all"
+    },
+    "RawMessages!costs": {
+      "topicPath": "/nuway/planning/candidates.cost_breakdown_names",
+      "diffEnabled": false,
+      "expansion": "all"
+    },
+    "Table!costs": {
+      "topicPath": "/nuway/planning/candidates.cost"
+    },
+    "RawMessages!selected": {
+      "topicPath": "/nuway/planning/candidates.selected_index",
+      "diffEnabled": false,
+      "expansion": "all"
+    },
+    "RawMessages!safety": {
+      "topicPath": "/nuway/diag/safety_layer_node",
+      "diffEnabled": false,
+      "expansion": "all"
+    },
+    "RawMessages!planner": {
+      "topicPath": "/nuway/diag/planner_node",
+      "diffEnabled": false,
+      "expansion": "all"
+    },
+    "RawMessages!mpc": {
+      "topicPath": "/nuway/diag/mpc_node",
+      "diffEnabled": false,
+      "expansion": "all"
+    },
+    "Topics!list": {}
+  },
+  "globalVariables": {},
+  "userNodes": {},
+  "playbackConfig": {
+    "speed": 1
+  },
+  "layout": {
+    "direction": "row",
+    "first": {
+      "direction": "column",
+      "first": "3D!bev",
+      "second": "Image!occupancy",
+      "splitPercentage": 72
+    },
+    "second": {
+      "direction": "column",
+      "first": {
+        "direction": "row",
+        "first": "Plot!control",
+        "second": "Plot!speed",
+        "splitPercentage": 50
+      },
+      "second": {
+        "direction": "column",
+        "first": {
+          "direction": "row",
+          "first": "Plot!cycles",
+          "second": "RawMessages!behavior",
+          "splitPercentage": 50
+        },
+        "second": {
+          "direction": "row",
+          "first": {
+            "direction": "column",
+            "first": "Table!costs",
+            "second": {
+              "direction": "row",
+              "first": "RawMessages!costs",
+              "second": "RawMessages!selected",
+              "splitPercentage": 60
+            },
+            "splitPercentage": 50
+          },
+          "second": {
+            "direction": "column",
+            "first": "RawMessages!safety",
+            "second": {
+              "direction": "column",
+              "first": "RawMessages!planner",
+              "second": "RawMessages!mpc",
+              "splitPercentage": 50
+            },
+            "splitPercentage": 34
+          },
+          "splitPercentage": 50
+        },
+        "splitPercentage": 40
+      },
+      "splitPercentage": 30
+    },
+    "splitPercentage": 58
+  }
+}

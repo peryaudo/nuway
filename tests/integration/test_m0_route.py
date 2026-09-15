@@ -1,7 +1,7 @@
 """M0 integration test (task 14): the m0_gt_all stack drives a Town03 route (slow, needs CARLA).
 
 Launches one stack on Town03 (``realtime_factor: 0``, no Foxglove), drives
-the first dev route twice through the v0 harness, and asserts completion,
+the first dev route twice through the harness (one run, no recording), and asserts completion,
 the lateral-error bounds of the M0 completion criteria, no TickTimeout, and
 the lockstep criterion as degraded by M0 §6: the two runs' ``/nuway/gt/ego_odom``
 sequences agree up to CARLA's own measured spread. Run with ``uv run pytest -m "slow and carla" tests/integration``
@@ -42,6 +42,7 @@ pytestmark = [
 
 rclpy = pytest.importorskip("rclpy")
 route_runner = pytest.importorskip("nuway_eval.route_runner")
+driving_score = pytest.importorskip("nuway_eval.driving_score")
 routes = pytest.importorskip("nuway_ml.common.routes")
 
 ROUTE_FILE = "tools/eval/routes/dev_town03.xml"
@@ -77,28 +78,45 @@ def repo_root_module() -> Path:
 def results(repo_root_module: Path, run_dir: Path, stack: Any) -> list[Any]:
     del stack
     route = routes.load_route_xml(repo_root_module / ROUTE_FILE)[0]
+    run = route_runner.RouteRun(route, "ClearNoon", 0)
+    scoring = driving_score.ScoringConfig.load(
+        repo_root_module / "configs/eval/scoring_lb20.yaml"
+    )
     rclpy.init()
     node = route_runner.RouteRunnerNode()
     out: list[Any] = []
     try:
         for i in range(2):
-            out.append(node.drive(route, route_runner.RunLimits(), run_dir / f"run{i}"))
-            shutil.copy(
-                run_dir / f"run{i}" / route.route_id / "ego_odom.csv",
-                run_dir / f"odom{i}.csv",
-            )
+            limits = route_runner.RunLimits(record=False)
+            out.append(node.drive(run, limits, run_dir / f"run{i}", scoring))
+            for name in ("ego_odom", "control_debug"):
+                shutil.copy(
+                    run_dir / f"run{i}" / run.dir_name / f"{name}.csv",
+                    run_dir / f"{name}{i}.csv",
+                )
     finally:
         node.destroy_node()
         rclpy.shutdown()
     return out
 
 
-def test_route_completes_within_lateral_bounds(results: list[Any]) -> None:
-    for r in results:
+def _lateral_stats(path: Path) -> tuple[float, float]:
+    """|mean| and max of the lateral error over the ticks with solver_ok."""
+    with path.open(newline="") as f:
+        rows = [r for r in csv.DictReader(f) if r["solver_ok"] == "1"]
+    lat = [abs(float(r["lateral_error"])) for r in rows]
+    return (sum(lat) / len(lat), max(lat)) if lat else (0.0, 0.0)
+
+
+def test_route_completes_within_lateral_bounds(
+    results: list[Any], run_dir: Path
+) -> None:
+    for i, r in enumerate(results):
         assert r.status == "completed", r
-        assert r.timeouts == 0, r
-        assert r.lat_abs_mean_m < LAT_MEAN_MAX_M, r
-        assert r.lat_max_m < LAT_MAX_M, r
+        assert r.n_tick_timeouts == 0, r
+        lat_mean, lat_max = _lateral_stats(run_dir / f"control_debug{i}.csv")
+        assert lat_mean < LAT_MEAN_MAX_M, r
+        assert lat_max < LAT_MAX_M, r
 
 
 def test_lockstep_runs_are_reproducible(results: list[Any], run_dir: Path) -> None:
@@ -138,5 +156,6 @@ def test_lockstep_runs_are_reproducible(results: list[Any], run_dir: Path) -> No
     )
     assert along_max < ALONG_TRACK_SPREAD_M, along_max
     assert cross_max < CROSS_TRACK_SPREAD_M, cross_max
-    assert abs(results[0].lat_abs_mean_m - results[1].lat_abs_mean_m) < 0.01
-    assert abs(results[0].lat_max_m - results[1].lat_max_m) < 0.05
+    stats = [_lateral_stats(run_dir / f"control_debug{i}.csv") for i in range(2)]
+    assert abs(stats[0][0] - stats[1][0]) < 0.01
+    assert abs(stats[0][1] - stats[1][1]) < 0.05

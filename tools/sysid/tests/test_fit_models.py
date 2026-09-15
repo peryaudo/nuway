@@ -8,6 +8,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -162,12 +163,16 @@ def test_yaml_round_trip(
         "wheelbase": 2.86,
         "max_steer_angle": 1.2217,
         "tau_steer": 0.0,
+        "limits": {"a_max": 3.0, "jerk_brake_max": 15.0},
     }
     data = fm.build_vehicle_yaml(existing, lon, lat, source="synthetic")
     path = tmp_path / "vehicle.yaml"
     fm.write_vehicle_yaml(path, data)
     text = path.read_text()
     assert text.startswith("# configs/vehicle/lincoln_mkz_2020.yaml")
+    # The hand-maintained limits block keeps its values and its comment.
+    assert "\n" + fm.LIMITS_COMMENT + "limits:" in text
+    assert yaml.safe_load(text)["limits"] == existing["limits"]
     loaded = LongitudinalMap.from_yaml(path)
     loaded.validate()
     assert data["sysid"]["status"] == "fitted"
@@ -231,3 +236,31 @@ def test_samples_past_the_last_bin_are_dropped_not_folded() -> None:
     means, counts = fm.bin_means(v, a, fm.V_BINS)
     assert counts[30] == 2
     assert means[30] == pytest.approx(1.0)
+
+
+def test_coast_fit_ignores_gearbox_downshift_spikes() -> None:
+    """Bursts of extra engine braking must not bend the drag curve.
+
+    Three coast-downs with a 0.4 s downshift burst at -7 m/s^2 in the 4-7 and
+    9-11 m/s bins, as the Lincoln shows on the dev box; the binned mean used
+    to carry the burst into the table (-6.8 m/s^2 at 6 m/s).
+    """
+    runs: list[fm.Run] = []
+    for run, v0 in enumerate((10.0, 20.0, 30.0)):
+        t = np.arange(0.0, 40.0, TICK_DT_S)
+        v = np.zeros(len(t))
+        a = np.zeros(len(t))
+        v[0] = v0
+        for i in range(1, len(t)):
+            spike = (4.0 <= v[i - 1] < 7.0) or (9.0 <= v[i - 1] < 11.0)
+            a[i - 1] = drag(v[i - 1]) - (7.0 if spike else 0.0)
+            v[i] = max(0.0, v[i - 1] + a[i - 1] * TICK_DT_S)
+        a[-1] = a[-2]
+        runs.append(
+            fm.Run("coast", run, v0, 0.0, t, v, a, np.zeros(len(t)), np.zeros(len(t)))
+        )
+    coast = fm.fit_coast(runs)
+    for i, v in enumerate(fm.V_BINS):
+        if v <= 25.0:
+            assert coast[i] == pytest.approx(drag(float(v)), abs=0.15), v
+    assert np.all(coast <= 0.0)

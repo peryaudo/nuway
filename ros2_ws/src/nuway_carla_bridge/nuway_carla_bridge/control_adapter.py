@@ -30,6 +30,7 @@ of ``max_steer_angle``, the wheel angle at full lock.
 from __future__ import annotations
 
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 import rclpy
@@ -69,11 +70,33 @@ CARLA_CONTROL_QOS = QoSProfile(
 )
 
 
+@dataclass(frozen=True, slots=True)
+class HoldAtRest:
+    """Brake instead of coasting when the car should stand still.
+
+    The pedal map's zero-acceleration throttle at rest is the rolling
+    resistance's (0.1-0.2 on the Lincoln), so a controller holding a stop
+    with ``accel`` near zero would creep, and on a grade roll back: the task
+    11 smoke drive rolled back at 5 cm/s for 300 s at a corner. Below
+    ``speed_mps`` with ``accel`` at most ``accel_mps2`` the adapter brakes
+    with ``brake`` instead; a positive command releases it.
+    """
+
+    speed_mps: float = 0.3
+    accel_mps2: float = 0.05
+    brake: float = 0.3
+
+    def applies(self, speed_mps: float, accel_mps2: float) -> bool:
+        """Whether the stand-still brake replaces the pedal map this tick."""
+        return abs(speed_mps) < self.speed_mps and accel_mps2 <= self.accel_mps2
+
+
 def carla_control_from_command(
     msg: ControlCommand,
     lon_map: LongitudinalMap,
     max_steer_rad: float,
     speed_mps: float,
+    hold: HoldAtRest | None = None,
 ) -> CarlaEgoVehicleControl:
     """Map ``accel`` to pedals at ``speed_mps``, flip the steer sign; e-stop is brake 1.
 
@@ -81,6 +104,7 @@ def carla_control_from_command(
     no-input output of the controller (docs/02 §2): full brake, wheels
     straight, whatever the other fields say. Gear 0 with manual shifting off
     leaves CARLA's automatic gearbox in charge; reverse is never used.
+    ``hold`` applies the stand-still brake of :class:`HoldAtRest`.
     """
     out = CarlaEgoVehicleControl()
     out.header.stamp = msg.header.stamp
@@ -88,6 +112,10 @@ def carla_control_from_command(
         out.throttle = 0.0
         out.brake = 1.0
         out.steer = 0.0
+    elif hold is not None and hold.applies(speed_mps, float(msg.accel)):
+        out.throttle = 0.0
+        out.brake = hold.brake
+        out.steer = float(steer_from_ros(float(msg.steering_angle), max_steer_rad))
     else:
         throttle, brake = lon_map.inverse(speed_mps, float(msg.accel))
         out.throttle = float(throttle)
@@ -112,6 +140,14 @@ class ControlAdapterNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs
         """Load the vehicle model and wire the topics."""
         super().__init__(NODE_NAME)
         self.declare_parameter("vehicle", "configs/vehicle/lincoln_mkz_2020.yaml")
+        self.declare_parameter("hold_speed_mps", 0.3)
+        self.declare_parameter("hold_accel_mps2", 0.05)
+        self.declare_parameter("hold_brake", 0.3)
+        self._hold = HoldAtRest(
+            float(self.get_parameter("hold_speed_mps").value),
+            float(self.get_parameter("hold_accel_mps2").value),
+            float(self.get_parameter("hold_brake").value),
+        )
         vehicle_path = Path(str(self.get_parameter("vehicle").value))
         with vehicle_path.open() as f:
             cfg = yaml.safe_load(f)
@@ -157,7 +193,9 @@ class ControlAdapterNode(Node):  # type: ignore[misc]  # rclpy.Node has no stubs
         """
         k = tick_index(msg.header.stamp)
         speed = self._speed_by_tick.get(k, self._latest_speed)
-        out = carla_control_from_command(msg, self._map, self._max_steer_rad, speed)
+        out = carla_control_from_command(
+            msg, self._map, self._max_steer_rad, speed, self._hold
+        )
         self._pub_carla.publish(out)
         diag = NodeDiag()
         diag.header.stamp = msg.header.stamp

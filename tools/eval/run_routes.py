@@ -35,6 +35,7 @@ from nuway_eval.report import (
     read_results,
     render_full,
     render_incidents,
+    write_collisions,
     write_report,
     write_results,
 )
@@ -208,6 +209,7 @@ class Harness:
         """Replace or append the row and rewrite the files."""
         self.results = [r for r in self.results if r.key != result.key]
         self.results.append(result)
+        write_collisions(self.out_dir, result)
         write_results(self.results, self.out_dir)
         write_report(self.results, self.out_dir, self.scoring)
 

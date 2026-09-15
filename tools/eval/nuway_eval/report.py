@@ -199,11 +199,80 @@ def write_results(results: Iterable[RouteResult], out_dir: Path) -> Path:
 
 
 def read_results(path: Path) -> list[RouteResult]:
-    """Read ``results.csv``; an absent file is an empty run."""
+    """Read ``results.csv`` and each row's ``collisions.csv``; an absent file is an empty run."""
     if not path.exists():
         return []
     with path.open(newline="") as f:
-        return [RouteResult.from_row(row) for row in csv.DictReader(f)]
+        results = [RouteResult.from_row(row) for row in csv.DictReader(f)]
+    for r in results:
+        r.collisions = read_collisions(path.parent, r)
+    return results
+
+
+COLLISION_COLUMNS = (
+    "tick",
+    "kind",
+    "other_type",
+    "other_speed_mps",
+    "visible",
+    "ego_speed_mps",
+    "bearing_deg",
+)
+
+
+def write_collisions(out_dir: Path, result: RouteResult) -> Path | None:
+    """Write ``<route dir>/collisions.csv``, the collision rows' detail that ``results.csv`` lacks.
+
+    A resume rebuilds ``report.md`` from ``results.csv``; without this sidecar
+    the earlier rows' collision lines lost the other actor's speed and bearing
+    that M1's criterion 3 reads (protocol v10).
+    """
+    if not result.collisions:
+        return None
+    route_dir = out_dir / result.run_dir_name
+    route_dir.mkdir(parents=True, exist_ok=True)
+    path = route_dir / "collisions.csv"
+    with path.open("w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(COLLISION_COLUMNS)
+        for t, k, other_type, speed, visible, ego_speed, bearing in result.collisions:
+            w.writerow(
+                [
+                    t,
+                    k,
+                    other_type,
+                    round(speed, 3),
+                    int(visible),
+                    round(ego_speed, 3),
+                    "" if bearing is None else round(bearing, 1),
+                ]
+            )
+    return path
+
+
+def read_collisions(
+    out_dir: Path, result: RouteResult
+) -> list[tuple[int, str, str, float, bool, float, float | None]]:
+    """Inverse of :func:`write_collisions`; no file means no counted collision."""
+    path = out_dir / result.run_dir_name / "collisions.csv"
+    if not path.exists():
+        return []
+    out: list[tuple[int, str, str, float, bool, float, float | None]] = []
+    with path.open(newline="") as f:
+        for row in csv.DictReader(f):
+            bearing = row.get("bearing_deg", "")
+            out.append(
+                (
+                    int(row["tick"]),
+                    row["kind"],
+                    row["other_type"],
+                    float(row["other_speed_mps"]),
+                    row["visible"] not in ("0", "", "False", "false"),
+                    float(row["ego_speed_mps"]),
+                    None if bearing in ("", None) else float(bearing),
+                )
+            )
+    return out
 
 
 def _mean(values: Sequence[float]) -> float:

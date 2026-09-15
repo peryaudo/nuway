@@ -12,8 +12,10 @@ from nuway_eval.report import (
     RouteResult,
     coalesce_incidents,
     percentile,
+    read_collisions,
     read_results,
     render_incidents,
+    write_collisions,
     write_report,
     write_results,
 )
@@ -165,3 +167,21 @@ def test_percentile_is_nearest_rank() -> None:
     assert percentile([3.0, 1.0, 2.0], 50) == 2.0
     assert percentile([3.0, 1.0, 2.0], 99) == 3.0
     assert percentile([3.0, 1.0, 2.0], 0) == 1.0
+
+
+def test_collisions_survive_a_resume(tmp_path: Path) -> None:
+    # A resume rebuilds the report from results.csv, which carries only the
+    # counts; the sidecar keeps the other actor's speed and bearing that
+    # criterion 3 reads (protocol v10 lost a row's note that way).
+    r = RouteResult("dev03_00", "Town03", "ClearNoon", 0)
+    r.status = "completed"
+    r.collisions = [
+        (300, "collision_vehicle", "vehicle.audi.a2", 7.7, True, 1.4, 169.0)
+    ]
+    assert write_collisions(tmp_path, r) == tmp_path / r.run_dir_name / "collisions.csv"
+    write_results([r], tmp_path)
+    back = read_results(tmp_path / "results.csv")
+    assert back[0].collisions == r.collisions
+    none = RouteResult("dev03_01", "Town03", "ClearNoon", 0)
+    assert write_collisions(tmp_path, none) is None
+    assert read_collisions(tmp_path, none) == []

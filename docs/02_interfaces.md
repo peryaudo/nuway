@@ -629,6 +629,7 @@ data/eval_runs/<run_id>/
 ├── results.csv
 └── <route>_<weather>_<seed>/
     ├── run.mcap
+    ├── collisions.csv                   # the collision rows' other actor: type, speed, visible, ego speed, bearing (only when one was counted)
     ├── frames/{tick:06d}.png            # render: full only
     ├── sheets/{first:06d}_{last:06d}.png
     ├── incidents/{tick:06d}_<kind>.png

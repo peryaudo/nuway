@@ -91,7 +91,7 @@ struct BehaviorFsmOptions {
   double passed_line_m = 1.0;     // a line this far behind the ego is passed
   double unknown_confidence = 0.5;        // below: the light state is unknown
   double stop_sign_speed_mps = 0.2;       // honoured: slower than this ...
-  double stop_sign_dist_m = 2.5;          // ... within this of stop_s ...
+  double stop_sign_dist_m = 2.9;          // ... within this of stop_s ...
   double stop_sign_hold_s = 1.0;          // ... for this long
   double stop_line_lane_window_m = 15.0;  // a light or sign governs the route
                                           // where a governed lane is the route
@@ -175,7 +175,10 @@ class BehaviorFsm {
   std::optional<double> StopLineAhead(const SceneInput& in, double s_ego,
                                       double v, std::string* reason);
   // Dilemma-zone rule for a light seen yellow (M1 §3.2), latched per light.
-  bool YellowMeansStop(const TrafficLightObs& light, double d_stop, double v);
+  // v_clear is the speed the approach will be driven at (v capped by the
+  // bends within the speed horizon, as the sampler caps its keep targets).
+  bool YellowMeansStop(const TrafficLightObs& light, double d_stop, double v,
+                       double v_clear);
   // The nearest predicted crossing of the ego corridor before the ego gets
   // there (the arc length where the crossing body first reaches the route);
   // nullopt when none.

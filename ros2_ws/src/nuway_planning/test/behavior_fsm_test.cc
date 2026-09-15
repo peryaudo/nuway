@@ -84,6 +84,22 @@ RouteLine RouteWithLegs(std::uint32_t first, std::uint32_t second,
   return RouteLine(nuway_common::ReferenceLine::FromPoints(points), lanes,
                    limits, {1.75}, {1.75}, goal_s);
 }
+// A route along y = -1.75 to x = 65 that then turns left on an R = 5 m arc
+// (kappa 0.2): the bend past a stop line at x = 60.
+RouteLine RouteWithBendPast65() {
+  nuway_common::Vector2dList points;
+  for (int i = 0; i <= 130; ++i) {
+    points.emplace_back(0.5 * i, -1.75);
+  }
+  for (int i = 1; i <= 16; ++i) {
+    const double phi = 0.1 * i;
+    points.emplace_back(65.0 + (5.0 * std::sin(phi)),
+                        3.25 - (5.0 * std::cos(phi)));
+  }
+  return RouteLine(nuway_common::ReferenceLine::FromPoints(points),
+                   {kLaneOuter}, {13.9}, {1.75}, {1.75}, std::nullopt);
+}
+
 AgentState Car(std::uint32_t id, double x, double y, double yaw, double speed) {
   AgentState agent;
   agent.id = id;
@@ -299,6 +315,41 @@ TEST(BehaviorFsmTest, YellowIsLatchedByTheDilemmaZoneRule) {
   const BehaviorOutput out = fresh.Step(in);
   EXPECT_EQ(out.longitudinal, Longitudinal::kStop);
   EXPECT_EQ(out.reason, "yellow_light");
+}
+
+TEST(BehaviorFsmTest, YellowClearingUsesTheSpeedTheBendAheadAllows) {
+  TrafficLightObs light;
+  light.id = 11;
+  light.state = TrafficLightColor::kYellow;
+  light.stop_line = Eigen::Vector2d(60.0, -1.75);
+  light.affected_lane_ids = {kLaneOuter};
+  light.yellow_duration_s = 3.0;
+  light.time_in_state_s = 0.0;
+  // 5 m/s, 11.6 m out: d_brake = 1.5 + 5 = 6.5 < 11.6, and at 5 m/s the
+  // line is cleared in 2.3 s of the 3 s yellow: proceed on a straight.
+  const RouteLine straight = RouteOnLane(kLaneOuter, -1.75, 200.0);
+  BehaviorFsm on_straight{BehaviorFsmOptions{}};
+  SceneInput in = Scene(&straight, nullptr, 48.4, -1.75, 5.0);
+  in.lights = {light};
+  EXPECT_EQ(on_straight.Step(in).longitudinal, Longitudinal::kFree);
+  // The same approach with an R = 5 m turn past the line: the sampler drives
+  // it at sqrt(2 / 0.2) = 3.2 m/s, which takes 3.7 s to the line: the
+  // latched decision is a stop. STOP itself begins one stopping distance
+  // plus stop_lookahead_m (10 m) out, so the first tick is FREE with the
+  // approach bound and the next, 9 m out, is the stop.
+  const RouteLine bend = RouteWithBendPast65();
+  EXPECT_NEAR(bend.CurvatureSpeedCap(48.4, 60.0, 2.0), 3.16, 0.3);
+  BehaviorFsm on_bend{BehaviorFsmOptions{}};
+  in.route = &bend;
+  EXPECT_EQ(on_bend.Step(in).longitudinal, Longitudinal::kFree);
+  in.ego.pose.x = 51.0;
+  const BehaviorOutput out = on_bend.Step(in);
+  EXPECT_EQ(out.longitudinal, Longitudinal::kStop);
+  EXPECT_EQ(out.reason, "yellow_light");
+  // And a straight from 9 m out proceeds: the latch is per approach.
+  BehaviorFsm late{BehaviorFsmOptions{}};
+  in.route = &straight;
+  EXPECT_EQ(late.Step(in).longitudinal, Longitudinal::kFree);
 }
 
 TEST(BehaviorFsmTest, CrossingAgentAheadMeansYield) {

@@ -223,9 +223,14 @@ void BehaviorFsm::StepLateral(const SceneInput& in, double s_ego, double d_ego,
 // The dilemma-zone rule of M1 §3.2, evaluated on the first yellow tick and
 // latched: with d_brake = v t_react + v^2 / (2 a_comf) the car cannot stop
 // comfortably when d_brake > d_stop (proceed); otherwise it stops unless it
-// clears the line before the red (d_stop / v <= remaining yellow).
+// clears the line before the red (d_stop / v_clear <= remaining yellow).
+// The clearing speed is not the current one: the sampler caps its keep
+// targets by the bends its paths reach (§3.3), so an approach with a turn
+// past the line is driven at that cap. A proceed decided at 5 m/s, 11.6 m
+// out with 2.9 s of yellow, was driven at 3.1-3.9 m/s toward an R = 7.7 m
+// turn and crossed 0.4 s into the red (protocol v10, dev03_03 ClearNoon).
 bool BehaviorFsm::YellowMeansStop(const TrafficLightObs& light, double d_stop,
-                                  double v) {
+                                  double v, double v_clear) {
   const auto latched = yellow_latch_.find(light.id);
   if (latched != yellow_latch_.end()) {
     return latched->second;
@@ -240,7 +245,7 @@ bool BehaviorFsm::YellowMeansStop(const TrafficLightObs& light, double d_stop,
         light.time_in_state_s >= 0.0
             ? light.yellow_duration_s - light.time_in_state_s
             : light.yellow_duration_s;
-    stop = d_stop / std::max(v, 0.1) > t_yellow;
+    stop = d_stop / std::max(std::min(v, v_clear), 0.1) > t_yellow;
   }
   yellow_latch_[light.id] = stop;
   return stop;
@@ -281,6 +286,9 @@ std::optional<double> BehaviorFsm::StopLineAhead(const SceneInput& in,
   };
   const double d_brake =
       (v * options_.t_react_s) + ((v * v) / (2.0 * options_.a_comf_mps2));
+  // The speed the approach to a line will be driven at (YellowMeansStop).
+  const double v_clear = in.route->CurvatureSpeedCap(
+      s_ego, options_.speed.curvature_horizon_m, options_.speed.a_lat_max_mps2);
   // Traffic lights.
   for (const TrafficLightObs& light : in.lights) {
     const std::optional<nuway_common::FrenetPoint> f =
@@ -309,7 +317,7 @@ std::optional<double> BehaviorFsm::StopLineAhead(const SceneInput& in,
         consider(f->s, "red_light");
         break;
       case TrafficLightColor::kYellow:
-        if (YellowMeansStop(light, d_stop, v)) {
+        if (YellowMeansStop(light, d_stop, v, v_clear)) {
           consider(f->s, "yellow_light");
         }
         break;
